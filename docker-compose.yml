@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: kubeops
+      POSTGRES_USER: kubeops
+      POSTGRES_PASSWORD: kubeops
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kubeops -d kubeops"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - kubeops-postgres:/var/lib/postgresql
+
+volumes:
+  kubeops-postgres:

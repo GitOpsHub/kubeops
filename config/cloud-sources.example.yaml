@@ -1,0 +1,44 @@
+sources:
+  - id: aws-platform
+    provider: aws
+    name: AWS Platform
+    scope_id: "123456789012"
+    regions: [us-east-1, us-west-2]
+    enabled: false
+    role_arn: arn:aws:iam::123456789012:role/KubeOpsInventory
+
+  - id: gcp-platform
+    provider: gcp
+    name: Google Cloud Platform
+    scope_id: example-project
+    regions: ["-"]
+    enabled: false
+    impersonate_service_account: kubeops@example-project.iam.gserviceaccount.com
+
+  - id: azure-platform
+    provider: azure
+    name: Azure Platform
+    scope_id: 00000000-0000-0000-0000-000000000000
+    regions: ["*"]
+    enabled: false
+    tenant_id: 00000000-0000-0000-0000-000000000000
+
+  - id: docker-local
+    provider: docker
+    name: Docker Kubernetes
+    scope_id: local-docker
+    regions: [local]
+    enabled: false
+    kubeconfig_path: ~/.kube/config
+    # Optional. If omitted, docker-desktop, kind-*, and k3d-* contexts are detected.
+    contexts: [docker-desktop]
+
+  - id: minikube-local
+    provider: minikube
+    name: Minikube
+    scope_id: local-minikube
+    regions: [local]
+    enabled: false
+    kubeconfig_path: ~/.kube/config
+    # Optional. If omitted, minikube and minikube-* contexts are detected.
+    contexts: [minikube]

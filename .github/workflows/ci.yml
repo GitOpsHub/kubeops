@@ -28,6 +28,22 @@ jobs:
 
   backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: kubeops_test
+          POSTGRES_USER: kubeops
+          POSTGRES_PASSWORD: kubeops
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kubeops -d kubeops_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://kubeops:kubeops@127.0.0.1:5432/kubeops_test?sslmode=disable
     defaults:
       run:
         working-directory: backend

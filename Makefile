@@ -1,4 +1,10 @@
-.PHONY: dev-frontend dev-backend test lint build
+.PHONY: db-up db-down dev-frontend dev-backend test test-integration lint build
+
+db-up:
+	docker compose up -d postgres
+
+db-down:
+	docker compose down
 
 dev-frontend:
 	cd frontend && npm run dev
@@ -9,6 +15,9 @@ dev-backend:
 test:
 	cd frontend && npm test
 	cd backend && go test ./...
+
+test-integration:
+	cd backend && TEST_DATABASE_URL=postgres://kubeops:kubeops@127.0.0.1:5432/kubeops?sslmode=disable go test ./internal/store -run TestInventoryLifecycle -count=1
 
 lint:
 	cd frontend && npm run lint
