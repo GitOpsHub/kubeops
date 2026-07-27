@@ -153,3 +153,7 @@ config/cloud-sources.yaml
 config/argo-targets.yaml
 config/argocd-local-ca.crt
 config/.argocd-local-tls/
+
+# Local tool state
+.claude/settings.local.json
+.serena/

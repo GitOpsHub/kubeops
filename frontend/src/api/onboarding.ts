@@ -8,6 +8,7 @@ export type ApplicationDeployment = {
   onboardingId: string
   clusterId: string
   clusterName: string
+  region: string
   sourceId: string
   providerResourceId: string
   argoApplication: string
@@ -44,6 +45,7 @@ export type CreateOnboardingInput = {
   namespace: string
   clusterIds: string[]
   valuesYaml: string
+  regionValues?: Record<string, string>
 }
 
 export type OnboardingDefaults = {

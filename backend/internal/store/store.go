@@ -583,17 +583,17 @@ func (s *Store) CreateApplicationOnboarding(
 		var target model.ApplicationDeployment
 		err := tx.QueryRow(ctx, `
 			INSERT INTO application_deployments (
-				onboarding_id, cluster_id, cluster_name, source_id,
+				onboarding_id, cluster_id, cluster_name, region, source_id,
 				provider_resource_id, argo_application
-			) VALUES ($1, $2, $3, $4, $5, $6)
+			) VALUES ($1, $2, $3, $4, $5, $6, $7)
 			RETURNING id::text, onboarding_id::text, cluster_id::text, cluster_name,
-				source_id, provider_resource_id, argo_application, status,
+				region, source_id, provider_resource_id, argo_application, status,
 				sync_status, health_status, message, created_at, updated_at, completed_at`,
-			onboarding.ID, cluster.ID, cluster.Name, cluster.SourceID,
+			onboarding.ID, cluster.ID, cluster.Name, cluster.Location, cluster.SourceID,
 			cluster.ProviderResourceID, onboarding.Name,
 		).Scan(
 			&target.ID, &target.OnboardingID, &target.ClusterID, &target.ClusterName,
-			&target.SourceID, &target.ProviderResourceID, &target.ArgoApplication,
+			&target.Region, &target.SourceID, &target.ProviderResourceID, &target.ArgoApplication,
 			&target.Status, &target.SyncStatus, &target.HealthStatus, &target.Message,
 			&target.CreatedAt, &target.UpdatedAt, &target.CompletedAt,
 		)
@@ -687,7 +687,7 @@ func (s *Store) listApplicationDeployments(
 ) ([]model.ApplicationDeployment, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id::text, onboarding_id::text, cluster_id::text, cluster_name,
-			source_id, provider_resource_id, argo_application, status,
+			region, source_id, provider_resource_id, argo_application, status,
 			sync_status, health_status, message, created_at, updated_at, completed_at
 		FROM application_deployments
 		WHERE onboarding_id::text = $1
@@ -701,7 +701,7 @@ func (s *Store) listApplicationDeployments(
 		var target model.ApplicationDeployment
 		if err := rows.Scan(
 			&target.ID, &target.OnboardingID, &target.ClusterID, &target.ClusterName,
-			&target.SourceID, &target.ProviderResourceID, &target.ArgoApplication,
+			&target.Region, &target.SourceID, &target.ProviderResourceID, &target.ArgoApplication,
 			&target.Status, &target.SyncStatus, &target.HealthStatus, &target.Message,
 			&target.CreatedAt, &target.UpdatedAt, &target.CompletedAt,
 		); err != nil {
@@ -717,7 +717,7 @@ func (s *Store) ListActiveApplicationDeployments(
 ) ([]model.ApplicationDeployment, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id::text, onboarding_id::text, cluster_id::text, cluster_name,
-			source_id, provider_resource_id, argo_application, status,
+			region, source_id, provider_resource_id, argo_application, status,
 			sync_status, health_status, message, created_at, updated_at, completed_at
 		FROM application_deployments
 		WHERE status IN ('creating', 'progressing')
@@ -731,7 +731,7 @@ func (s *Store) ListActiveApplicationDeployments(
 		var target model.ApplicationDeployment
 		if err := rows.Scan(
 			&target.ID, &target.OnboardingID, &target.ClusterID, &target.ClusterName,
-			&target.SourceID, &target.ProviderResourceID, &target.ArgoApplication,
+			&target.Region, &target.SourceID, &target.ProviderResourceID, &target.ArgoApplication,
 			&target.Status, &target.SyncStatus, &target.HealthStatus, &target.Message,
 			&target.CreatedAt, &target.UpdatedAt, &target.CompletedAt,
 		); err != nil {

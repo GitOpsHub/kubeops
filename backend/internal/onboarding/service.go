@@ -41,6 +41,9 @@ type CreateInput struct {
 	Namespace  string   `json:"namespace"`
 	ClusterIDs []string `json:"clusterIds"`
 	ValuesYAML string   `json:"valuesYaml"`
+	// RegionValues holds per-region override files keyed by region, layered over
+	// ValuesYAML by Argo CD. Regions without an entry deploy the base values alone.
+	RegionValues map[string]string `json:"regionValues,omitempty"`
 }
 
 type Defaults struct {
@@ -111,7 +114,15 @@ func NewService(repository Repository, cfg config.OnboardingConfig) (*Service, e
 			return nil, fmt.Errorf("persist Argo CD UI credential: %w", err)
 		}
 	}
-	return &Service{store: repository, config: cfg, clients: clients, github: github}, nil
+	svc := &Service{store: repository, config: cfg, clients: clients}
+	// NewGitHubClient returns a nil *GitHubClient when onboarding is unconfigured.
+	// Assign it to the interface field only when non-nil, otherwise the field holds
+	// a typed nil that defeats the `s.github == nil` guard in validateInput and
+	// panics when Provision is invoked on the nil receiver.
+	if github != nil {
+		svc.github = github
+	}
+	return svc, nil
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (model.ApplicationOnboarding, error) {
@@ -140,7 +151,26 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 		}
 	}
 
-	valuesRepository, err := s.github.Provision(ctx, input.Name, input.ValuesYAML)
+	// Only the regions actually covered by the selected clusters are committed, so a
+	// stale override left in the form never creates an orphaned directory.
+	targetRegions := make(map[string]struct{}, len(clusters))
+	for _, cluster := range clusters {
+		if cluster.Location != "" {
+			targetRegions[cluster.Location] = struct{}{}
+		}
+	}
+	regionValues := make(map[string]string, len(input.RegionValues))
+	for region, values := range input.RegionValues {
+		if _, ok := targetRegions[region]; !ok {
+			continue
+		}
+		if strings.TrimSpace(values) == "" {
+			continue
+		}
+		regionValues[region] = values
+	}
+
+	valuesRepository, err := s.github.Provision(ctx, input.Name, input.ValuesYAML, regionValues)
 	if errors.Is(err, ErrRepositoryExists) {
 		return model.ApplicationOnboarding{}, ConflictError{
 			Message: "a GitHub repository with this application name already exists",
@@ -189,6 +219,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 				Revision:       s.config.HelmRevision,
 				ValuesRepoURL:  valuesRepository.CloneURL,
 				ValuesRevision: valuesRepository.Revision,
+				Region:         regionOverride(regionValues, target.Region),
 				ArgoNamespace:  s.config.ArgoNamespace,
 			})
 			status, message := stateToDeployment(state)
@@ -324,7 +355,38 @@ func (s *Service) validateInput(input CreateInput) error {
 	if len(document.Content) == 0 || document.Content[0].Kind != yaml.MappingNode {
 		return ValidationError{Message: "valuesYaml must contain a top-level mapping"}
 	}
+	for region, values := range input.RegionValues {
+		if strings.TrimSpace(values) == "" {
+			continue
+		}
+		if !validDNSLabel(region) {
+			return ValidationError{Message: "region names must be lowercase DNS labels"}
+		}
+		if len(values) > maxValuesBytes {
+			return ValidationError{
+				Message: fmt.Sprintf("%s values must not exceed 256 KiB", region),
+			}
+		}
+		var regionDocument yaml.Node
+		if err := yaml.Unmarshal([]byte(values), &regionDocument); err != nil {
+			return ValidationError{Message: fmt.Sprintf("%s values must contain valid YAML", region)}
+		}
+		if len(regionDocument.Content) == 0 || regionDocument.Content[0].Kind != yaml.MappingNode {
+			return ValidationError{
+				Message: fmt.Sprintf("%s values must contain a top-level mapping", region),
+			}
+		}
+	}
 	return nil
+}
+
+// regionOverride returns the region only when an override file was committed for
+// it, so Argo CD is never pointed at a values file that does not exist.
+func regionOverride(regionValues map[string]string, region string) string {
+	if _, ok := regionValues[region]; ok {
+		return region
+	}
+	return ""
 }
 
 func validDNSLabel(value string) bool {

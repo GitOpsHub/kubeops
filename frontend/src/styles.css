@@ -1884,3 +1884,119 @@ pre {
     transition-duration: 0.01ms !important;
   }
 }
+
+.region-source {
+  display: grid;
+  gap: 6px;
+}
+
+.region-source-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.region-values {
+  display: grid;
+  gap: 8px;
+}
+
+.region-values-item {
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #fafbfd;
+}
+
+.region-values-item summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.region-values-item summary span {
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.region-values-item textarea {
+  display: block;
+  width: 100%;
+  min-height: 130px;
+  resize: vertical;
+  padding: 12px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  color: #273247;
+  background: #f8fafc;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.73rem;
+  line-height: 1.55;
+}
+
+.onboarding-list {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--line);
+  list-style: none;
+}
+
+.onboarding-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 13px;
+  background: #fff;
+}
+
+.onboarding-line-name {
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.onboarding-line-name a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.onboarding-line-name a:hover {
+  text-decoration: underline;
+}
+
+.onboarding-line-meta {
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sync-dot--healthy {
+  background: var(--success);
+}
+
+.sync-dot--progressing,
+.sync-dot--partial {
+  background: var(--aws);
+}

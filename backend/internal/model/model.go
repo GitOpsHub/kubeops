@@ -207,6 +207,7 @@ type ApplicationDeployment struct {
 	OnboardingID       string     `json:"onboardingId"`
 	ClusterID          string     `json:"clusterId"`
 	ClusterName        string     `json:"clusterName"`
+	Region             string     `json:"region"`
 	SourceID           string     `json:"sourceId"`
 	ProviderResourceID string     `json:"providerResourceId"`
 	ArgoApplication    string     `json:"argoApplication"`
