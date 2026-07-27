@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -35,7 +36,9 @@ type ValuesRepository struct {
 }
 
 type ValuesRepositoryManager interface {
-	Provision(context.Context, string, string) (ValuesRepository, error)
+	// Provision creates the values repository with a shared base values.yaml and
+	// one <region>/values.yaml override per entry in regionValues.
+	Provision(ctx context.Context, name, baseValues string, regionValues map[string]string) (ValuesRepository, error)
 	Delete(context.Context, string) error
 }
 
@@ -110,6 +113,7 @@ func parsePrivateKey(keyPEM []byte) (*rsa.PrivateKey, error) {
 func (c *GitHubClient) Provision(
 	ctx context.Context,
 	name, valuesYAML string,
+	regionValues map[string]string,
 ) (ValuesRepository, error) {
 	token, err := c.authenticationToken(ctx)
 	if err != nil {
@@ -159,6 +163,36 @@ func (c *GitHubClient) Provision(
 	if err != nil {
 		_ = c.deleteWithToken(context.WithoutCancel(ctx), token, name)
 		return ValuesRepository{}, fmt.Errorf("create values.yaml: %w", err)
+	}
+
+	// Region overrides are layered on top of the base file by Argo CD, so they are
+	// committed in a stable order to keep the resulting history deterministic.
+	regions := make([]string, 0, len(regionValues))
+	for region := range regionValues {
+		regions = append(regions, region)
+	}
+	sort.Strings(regions)
+	for _, region := range regions {
+		var regionCommit struct {
+			Commit struct {
+				SHA string `json:"sha"`
+			} `json:"commit"`
+		}
+		_, err = c.request(ctx, token, http.MethodPut,
+			"/repos/"+url.PathEscape(c.organization)+"/"+url.PathEscape(name)+
+				"/contents/"+url.PathEscape(region)+"/values.yaml",
+			map[string]any{
+				"message": "Add " + region + " Helm values",
+				"content": base64.StdEncoding.EncodeToString([]byte(regionValues[region])),
+				"branch":  repository.DefaultBranch,
+			},
+			&regionCommit,
+		)
+		if err != nil {
+			_ = c.deleteWithToken(context.WithoutCancel(ctx), token, name)
+			return ValuesRepository{}, fmt.Errorf("create %s/values.yaml: %w", region, err)
+		}
+		commit.Commit.SHA = regionCommit.Commit.SHA
 	}
 	return ValuesRepository{
 		Name:      repository.Name,

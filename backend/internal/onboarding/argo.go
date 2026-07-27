@@ -30,6 +30,7 @@ type ApplicationSpec struct {
 	Revision       string
 	ValuesRepoURL  string
 	ValuesRevision string
+	Region         string
 	ArgoNamespace  string
 }
 
@@ -83,6 +84,11 @@ func (c *HTTPArgoClient) CreateApplication(
 	ctx context.Context,
 	spec ApplicationSpec,
 ) (ApplicationState, error) {
+	// The base file is listed first so the region override wins on conflicting keys.
+	valueFiles := []string{"$values/values.yaml"}
+	if spec.Region != "" {
+		valueFiles = append(valueFiles, "$values/"+spec.Region+"/values.yaml")
+	}
 	payload := map[string]any{
 		"metadata": map[string]any{
 			"name":      spec.Name,
@@ -96,7 +102,7 @@ func (c *HTTPArgoClient) CreateApplication(
 					"chart":          spec.Chart,
 					"targetRevision": spec.Revision,
 					"helm": map[string]any{
-						"valueFiles": []string{"$values/values.yaml"},
+						"valueFiles": valueFiles,
 					},
 				},
 				map[string]any{

@@ -88,7 +88,7 @@ func TestGitHubClientProvisionsValuesRepository(t *testing.T) {
 		appID: 1, installationID: 2, privateKey: privateKey,
 		client: &http.Client{Timeout: time.Second},
 	}
-	repository, err := client.Provision(context.Background(), "payments", "replicaCount: 2\n")
+	repository, err := client.Provision(context.Background(), "payments", "replicaCount: 2\n", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestGitHubClientMapsConflictWithoutExposingBody(t *testing.T) {
 		appID: 1, installationID: 2, privateKey: privateKey,
 		client: &http.Client{Timeout: time.Second},
 	}
-	_, err := client.Provision(context.Background(), "payments", "{}\n")
+	_, err := client.Provision(context.Background(), "payments", "{}\n", nil)
 	if !errors.Is(err, ErrRepositoryExists) || strings.Contains(err.Error(), "secret-value") {
 		t.Fatalf("unexpected safe conflict: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestGitHubClientCleansUpWhenValuesCommitFails(t *testing.T) {
 		appID: 1, installationID: 2, privateKey: privateKey,
 		client: &http.Client{Timeout: time.Second},
 	}
-	if _, err := client.Provision(context.Background(), "payments", "{}\n"); err == nil {
+	if _, err := client.Provision(context.Background(), "payments", "{}\n", nil); err == nil {
 		t.Fatal("expected values commit failure")
 	}
 	if !deleted {

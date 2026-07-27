@@ -33,7 +33,8 @@ func (f *fakeRepository) CreateApplicationOnboarding(
 	for index, cluster := range clusters {
 		record.Targets = append(record.Targets, model.ApplicationDeployment{
 			ID: "target-" + string(rune('1'+index)), OnboardingID: record.ID,
-			ClusterID: cluster.ID, ClusterName: cluster.Name, SourceID: cluster.SourceID,
+			ClusterID: cluster.ID, ClusterName: cluster.Name, Region: cluster.Location,
+			SourceID:           cluster.SourceID,
 			ProviderResourceID: cluster.ProviderResourceID, ArgoApplication: record.Name,
 			Status: "creating", SyncStatus: "Unknown", HealthStatus: "Unknown",
 			CreatedAt: time.Now(),
@@ -98,13 +99,16 @@ type fakeValuesRepositoryManager struct {
 	repository ValuesRepository
 	err        error
 	deleted    string
+	regions    map[string]string
 }
 
 func (f *fakeValuesRepositoryManager) Provision(
-	context.Context,
-	string,
-	string,
+	_ context.Context,
+	_ string,
+	_ string,
+	regionValues map[string]string,
 ) (ValuesRepository, error) {
+	f.regions = regionValues
 	return f.repository, f.err
 }
 func (f *fakeValuesRepositoryManager) Delete(_ context.Context, name string) error {
@@ -168,6 +172,63 @@ func TestCreateApplicationOnboarding(t *testing.T) {
 	if client.created.ValuesRepoURL != valuesManager.repository.CloneURL ||
 		record.ValuesRepositoryURL != valuesManager.repository.URL {
 		t.Fatalf("unexpected values repository: %#v, %#v", client.created, record)
+	}
+}
+
+func TestCreateApplicationOnboardingLayersRegionValues(t *testing.T) {
+	east := model.Cluster{
+		ID: "cluster-1", Name: "prod-east", SourceID: "aws",
+		ProviderResourceID: "arn:cluster/east", Location: "us-east-1",
+	}
+	west := model.Cluster{
+		ID: "cluster-2", Name: "prod-west", SourceID: "aws",
+		ProviderResourceID: "arn:cluster/west", Location: "eu-west-1",
+	}
+	repository := &fakeRepository{clusters: []model.Cluster{east, west}}
+	state := ApplicationState{SyncStatus: "OutOfSync", HealthStatus: "Progressing"}
+	eastClient := &fakeArgoClient{state: state}
+	westClient := &fakeArgoClient{state: state}
+	valuesManager := &fakeValuesRepositoryManager{repository: ValuesRepository{
+		Name: "payments", CloneURL: "https://github.com/GitOpsHub/payments.git",
+		Revision: "main",
+	}}
+	service := &Service{
+		store: repository,
+		config: config.OnboardingConfig{
+			HelmRepoURL: "https://charts.example.test", HelmChart: "global-app",
+			HelmRevision: "1.2.3", ArgoProject: "platform", ArgoNamespace: "argo-cd",
+			RequestTimeout: time.Second, HelmDefaultsYAML: "replicaCount: 2\n",
+		},
+		clients: map[string]ArgoClient{
+			targetKey("aws", "arn:cluster/east"): eastClient,
+			targetKey("aws", "arn:cluster/west"): westClient,
+		},
+		github: valuesManager,
+	}
+
+	_, err := service.Create(context.Background(), CreateInput{
+		Name: "payments", Namespace: "payments",
+		ClusterIDs: []string{"cluster-1", "cluster-2"},
+		ValuesYAML: "replicaCount: 2\n",
+		RegionValues: map[string]string{
+			"us-east-1": "replicaCount: 5\n",
+			// Blank and untargeted regions must never reach the values repository.
+			"eu-west-1":  "   ",
+			"ap-south-1": "replicaCount: 9\n",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(valuesManager.regions) != 1 || valuesManager.regions["us-east-1"] != "replicaCount: 5\n" {
+		t.Fatalf("unexpected committed region values: %#v", valuesManager.regions)
+	}
+	// Only the region with a committed override may be layered by Argo CD.
+	if eastClient.created.Region != "us-east-1" {
+		t.Fatalf("expected us-east-1 override, got %q", eastClient.created.Region)
+	}
+	if westClient.created.Region != "" {
+		t.Fatalf("expected no override for eu-west-1, got %q", westClient.created.Region)
 	}
 }
 

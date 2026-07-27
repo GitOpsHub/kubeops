@@ -37,6 +37,7 @@ function mockAPI() {
               onboardingId: 'onboarding-1',
               clusterId: submitted.clusterIds[0],
               clusterName: 'prod-us-east',
+              region: 'us-east-1',
               sourceId: 'aws-platform',
               providerResourceId: 'arn:aws:eks:us-east-1:123:cluster/prod',
               argoApplication: submitted.name,
@@ -346,7 +347,7 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()
   })
 
-  it('onboards an application to selected clusters', async () => {
+  it('onboards an application to selected regions', async () => {
     const fetchMock = mockAPI()
     render(<App />)
     const user = userEvent.setup()
@@ -369,14 +370,15 @@ describe('App', () => {
             namespace: 'payments',
             clusterIds: ['cluster-1'],
             valuesYaml: 'replicaCount: 2\nimage:\n  repository: nginx\n',
+            regionValues: {},
           }),
         }),
       )
     })
     expect(
-      await screen.findByText((_, element) => element?.textContent === 'payments · global-app@1.2.3'),
+      await screen.findByText((_, element) => element?.textContent === 'payments · us-east-1'),
     ).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /payments-api\/values.yaml/ })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /payments-api/ })).toHaveAttribute(
       'href',
       'https://github.com/GitOpsHub/payments-api',
     )
