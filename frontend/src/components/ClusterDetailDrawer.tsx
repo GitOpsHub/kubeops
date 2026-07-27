@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   type Cluster,
   type ClusterDetails,
+  type ArgoAccess,
   type NodePool,
+  getClusterArgoAccess,
   getClusterDetails,
   scaleNodePool,
 } from '../api/inventory'
@@ -97,6 +99,9 @@ export function ClusterDetailDrawer({
   const [details, setDetails] = useState<ClusterDetails | null>(null)
   const [loading, setLoading] = useState(true)
   const [detailError, setDetailError] = useState('')
+  const [argoAccess, setArgoAccess] = useState<ArgoAccess | null>(null)
+  const [argoError, setArgoError] = useState('')
+  const [argoMessage, setArgoMessage] = useState('')
   const [desiredCounts, setDesiredCounts] = useState<Record<string, string>>({})
   const [pending, setPending] = useState<PendingScale | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -135,6 +140,16 @@ export function ClusterDetailDrawer({
   useEffect(() => {
     const controller = new AbortController()
     void loadDetails(controller.signal)
+    void getClusterArgoAccess(cluster.id, controller.signal)
+      .then((access) => {
+        setArgoAccess(access)
+        setArgoError('')
+      })
+      .catch((error) => {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) {
+          setArgoError(error instanceof Error ? error.message : 'Argo CD access is unavailable')
+        }
+      })
     closeButton.current?.focus()
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose()
@@ -144,7 +159,17 @@ export function ClusterDetailDrawer({
       controller.abort()
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [loadDetails, onClose])
+  }, [cluster.id, loadDetails, onClose])
+
+  async function copyArgoPassword() {
+    if (!argoAccess) return
+    try {
+      await navigator.clipboard.writeText(argoAccess.password)
+      setArgoMessage('Password copied.')
+    } catch {
+      setArgoMessage('Password could not be copied.')
+    }
+  }
 
   useEffect(() => {
     if (!pollTarget) return
@@ -339,6 +364,35 @@ export function ClusterDetailDrawer({
             </dl>
           ) : (
             <div className="drawer-state">Networking details are unavailable.</div>
+          )}
+        </section>
+
+        <section className="operations-section" aria-labelledby="argo-heading">
+          <div className="operations-heading">
+            <div>
+              <p className="section-label">GitOps</p>
+              <h3 id="argo-heading">Argo CD</h3>
+            </div>
+          </div>
+          {argoAccess ? (
+            <div className="argo-access">
+              <dl className="network-grid">
+                <div><dt>URL</dt><dd>{argoAccess.url}</dd></div>
+                <div><dt>Username</dt><dd>{argoAccess.username}</dd></div>
+                <div><dt>Password</dt><dd aria-label="Stored password">••••••••••••</dd></div>
+              </dl>
+              <div className="argo-access-actions">
+                <a href={argoAccess.url} target="_blank" rel="noreferrer">
+                  Open Argo CD
+                </a>
+                <button type="button" onClick={() => void copyArgoPassword()}>
+                  Copy password
+                </button>
+              </div>
+              {argoMessage && <p className="scale-message" role="status">{argoMessage}</p>}
+            </div>
+          ) : (
+            <div className="drawer-state">{argoError || 'Loading Argo CD access…'}</div>
           )}
         </section>
 

@@ -108,6 +108,43 @@ func TestInventoryLifecycle(t *testing.T) {
 	if err != nil || page.Total != 6 {
 		t.Fatalf("expected six active clusters, got %#v, %v", page, err)
 	}
+	accessInput := model.EncryptedArgoAccess{
+		SourceID: page.Items[0].SourceID, ProviderResourceID: page.Items[0].ProviderResourceID,
+		URL: "https://argo.example.test", Username: "kubeops",
+		PasswordCiphertext: []byte("encrypted-password"), PasswordNonce: []byte("nonce-value"),
+	}
+	if err := repository.UpsertArgoAccess(ctx, accessInput); err != nil {
+		t.Fatal(err)
+	}
+	access, err := repository.GetArgoAccessByClusterID(ctx, page.Items[0].ID)
+	if err != nil || access.URL != accessInput.URL || access.Username != accessInput.Username ||
+		string(access.PasswordCiphertext) != "encrypted-password" {
+		t.Fatalf("unexpected Argo access: %#v, %v", access, err)
+	}
+
+	onboarding, err := repository.CreateApplicationOnboarding(ctx, model.ApplicationOnboarding{
+		Name: "payments", Namespace: "payments", ChartRepoURL: "https://charts.example.test",
+		ChartName: "global-app", ChartRevision: "1.2.3", ValuesDigest: "sha256:test",
+		ValuesRepositoryURL:  "https://github.com/GitOpsHub/payments",
+		ValuesRepositoryName: "payments", ValuesRevision: "main", ValuesCommitSHA: "commit-1",
+	}, []model.Cluster{page.Items[0]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(onboarding.Targets) != 1 || onboarding.Targets[0].Status != "creating" {
+		t.Fatalf("unexpected onboarding: %#v", onboarding)
+	}
+	if err := repository.UpdateApplicationDeployment(
+		ctx, onboarding.Targets[0].ID, "healthy", "Synced", "Healthy", "",
+	); err != nil {
+		t.Fatal(err)
+	}
+	storedOnboarding, err := repository.GetApplicationOnboarding(ctx, onboarding.ID)
+	if err != nil || storedOnboarding.Status != "healthy" ||
+		storedOnboarding.Targets[0].HealthStatus != "Healthy" ||
+		storedOnboarding.ValuesCommitSHA != "commit-1" {
+		t.Fatalf("unexpected stored onboarding: %#v, %v", storedOnboarding, err)
+	}
 
 	run, err = repository.QueueSync(ctx, sources[0].ID, "scheduled")
 	if err != nil {

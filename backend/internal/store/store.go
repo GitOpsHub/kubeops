@@ -272,6 +272,48 @@ func (s *Store) GetCluster(ctx context.Context, id string) (model.Cluster, error
 	return cluster, nil
 }
 
+func (s *Store) UpsertArgoAccess(
+	ctx context.Context,
+	access model.EncryptedArgoAccess,
+) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO argo_cluster_access (
+			source_id, provider_resource_id, server_url, username,
+			password_ciphertext, password_nonce
+		) VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (source_id, provider_resource_id) DO UPDATE SET
+			server_url = EXCLUDED.server_url,
+			username = EXCLUDED.username,
+			password_ciphertext = EXCLUDED.password_ciphertext,
+			password_nonce = EXCLUDED.password_nonce,
+			updated_at = NOW()`,
+		access.SourceID, access.ProviderResourceID, access.URL, access.Username,
+		access.PasswordCiphertext, access.PasswordNonce,
+	)
+	return err
+}
+
+func (s *Store) GetArgoAccessByClusterID(
+	ctx context.Context,
+	clusterID string,
+) (model.EncryptedArgoAccess, error) {
+	var access model.EncryptedArgoAccess
+	err := s.pool.QueryRow(ctx, `
+		SELECT a.source_id, a.provider_resource_id, a.server_url, a.username,
+			a.password_ciphertext, a.password_nonce
+		FROM argo_cluster_access a
+		JOIN clusters c
+		  ON c.source_id = a.source_id
+		 AND c.provider_resource_id = a.provider_resource_id
+		WHERE c.id = $1`,
+		clusterID,
+	).Scan(
+		&access.SourceID, &access.ProviderResourceID, &access.URL, &access.Username,
+		&access.PasswordCiphertext, &access.PasswordNonce,
+	)
+	return access, err
+}
+
 func (s *Store) ListSyncRuns(ctx context.Context, limit int) ([]model.SyncRun, error) {
 	if limit < 1 || limit > 200 {
 		limit = 50
@@ -473,4 +515,281 @@ func (s *Store) FailSync(ctx context.Context, run model.SyncRun, message string)
 			last_sync_at = NOW(), last_sync_error = $2, updated_at = NOW()
 		WHERE id = (SELECT source_id FROM updated)`, run.ID, message)
 	return err
+}
+
+func (s *Store) GetClustersByIDs(ctx context.Context, ids []string) ([]model.Cluster, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT c.id::text, c.source_id, s.name, c.provider, c.provider_resource_id,
+			c.name, c.location, c.kubernetes_version, c.status, c.endpoint_access,
+			c.node_count, c.metadata, c.first_seen_at, c.last_seen_at, c.updated_at, c.removed_at
+		FROM clusters c
+		JOIN cloud_sources s ON s.id = c.source_id
+		WHERE c.id::text = ANY($1)
+		ORDER BY c.name`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	clusters := make([]model.Cluster, 0, len(ids))
+	for rows.Next() {
+		var cluster model.Cluster
+		var metadata []byte
+		if err := rows.Scan(
+			&cluster.ID, &cluster.SourceID, &cluster.SourceName, &cluster.Provider,
+			&cluster.ProviderResourceID, &cluster.Name, &cluster.Location,
+			&cluster.KubernetesVersion, &cluster.Status, &cluster.EndpointAccess,
+			&cluster.NodeCount, &metadata, &cluster.FirstSeenAt, &cluster.LastSeenAt,
+			&cluster.UpdatedAt, &cluster.RemovedAt,
+		); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(metadata, &cluster.Metadata); err != nil {
+			return nil, err
+		}
+		clusters = append(clusters, cluster)
+	}
+	return clusters, rows.Err()
+}
+
+func (s *Store) CreateApplicationOnboarding(
+	ctx context.Context,
+	onboarding model.ApplicationOnboarding,
+	clusters []model.Cluster,
+) (model.ApplicationOnboarding, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return model.ApplicationOnboarding{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	err = tx.QueryRow(ctx, `
+		INSERT INTO application_onboardings (
+			name, namespace, chart_repo_url, chart_name, chart_revision, values_digest,
+			values_repository_url, values_repository_name, values_revision, values_commit_sha
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		RETURNING id::text, status, created_at, updated_at`,
+		onboarding.Name, onboarding.Namespace, onboarding.ChartRepoURL,
+		onboarding.ChartName, onboarding.ChartRevision, onboarding.ValuesDigest,
+		onboarding.ValuesRepositoryURL, onboarding.ValuesRepositoryName,
+		onboarding.ValuesRevision, onboarding.ValuesCommitSHA,
+	).Scan(&onboarding.ID, &onboarding.Status, &onboarding.CreatedAt, &onboarding.UpdatedAt)
+	if err != nil {
+		return model.ApplicationOnboarding{}, err
+	}
+
+	onboarding.Targets = make([]model.ApplicationDeployment, 0, len(clusters))
+	for _, cluster := range clusters {
+		var target model.ApplicationDeployment
+		err := tx.QueryRow(ctx, `
+			INSERT INTO application_deployments (
+				onboarding_id, cluster_id, cluster_name, source_id,
+				provider_resource_id, argo_application
+			) VALUES ($1, $2, $3, $4, $5, $6)
+			RETURNING id::text, onboarding_id::text, cluster_id::text, cluster_name,
+				source_id, provider_resource_id, argo_application, status,
+				sync_status, health_status, message, created_at, updated_at, completed_at`,
+			onboarding.ID, cluster.ID, cluster.Name, cluster.SourceID,
+			cluster.ProviderResourceID, onboarding.Name,
+		).Scan(
+			&target.ID, &target.OnboardingID, &target.ClusterID, &target.ClusterName,
+			&target.SourceID, &target.ProviderResourceID, &target.ArgoApplication,
+			&target.Status, &target.SyncStatus, &target.HealthStatus, &target.Message,
+			&target.CreatedAt, &target.UpdatedAt, &target.CompletedAt,
+		)
+		if err != nil {
+			return model.ApplicationOnboarding{}, err
+		}
+		onboarding.Targets = append(onboarding.Targets, target)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return model.ApplicationOnboarding{}, err
+	}
+	return onboarding, nil
+}
+
+func (s *Store) GetApplicationOnboarding(ctx context.Context, id string) (model.ApplicationOnboarding, error) {
+	var onboarding model.ApplicationOnboarding
+	err := s.pool.QueryRow(ctx, `
+		SELECT id::text, name, namespace, chart_repo_url, chart_name, chart_revision,
+			values_digest, values_repository_url, values_repository_name,
+			values_revision, values_commit_sha, status, created_at, updated_at, completed_at
+		FROM application_onboardings
+		WHERE id::text = $1`, id).Scan(
+		&onboarding.ID, &onboarding.Name, &onboarding.Namespace,
+		&onboarding.ChartRepoURL, &onboarding.ChartName, &onboarding.ChartRevision,
+		&onboarding.ValuesDigest, &onboarding.ValuesRepositoryURL,
+		&onboarding.ValuesRepositoryName, &onboarding.ValuesRevision,
+		&onboarding.ValuesCommitSHA, &onboarding.Status, &onboarding.CreatedAt,
+		&onboarding.UpdatedAt, &onboarding.CompletedAt,
+	)
+	if err != nil {
+		return model.ApplicationOnboarding{}, err
+	}
+	targets, err := s.listApplicationDeployments(ctx, onboarding.ID)
+	if err != nil {
+		return model.ApplicationOnboarding{}, err
+	}
+	onboarding.Targets = targets
+	return onboarding, nil
+}
+
+func (s *Store) ListApplicationOnboardings(
+	ctx context.Context,
+	limit int,
+) ([]model.ApplicationOnboarding, error) {
+	if limit < 1 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id::text, name, namespace, chart_repo_url, chart_name, chart_revision,
+			values_digest, values_repository_url, values_repository_name,
+			values_revision, values_commit_sha, status, created_at, updated_at, completed_at
+		FROM application_onboardings
+		ORDER BY created_at DESC
+		LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]model.ApplicationOnboarding, 0)
+	for rows.Next() {
+		var onboarding model.ApplicationOnboarding
+		if err := rows.Scan(
+			&onboarding.ID, &onboarding.Name, &onboarding.Namespace,
+			&onboarding.ChartRepoURL, &onboarding.ChartName, &onboarding.ChartRevision,
+			&onboarding.ValuesDigest, &onboarding.ValuesRepositoryURL,
+			&onboarding.ValuesRepositoryName, &onboarding.ValuesRevision,
+			&onboarding.ValuesCommitSHA, &onboarding.Status, &onboarding.CreatedAt,
+			&onboarding.UpdatedAt, &onboarding.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, onboarding)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range items {
+		targets, err := s.listApplicationDeployments(ctx, items[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		items[i].Targets = targets
+	}
+	return items, nil
+}
+
+func (s *Store) listApplicationDeployments(
+	ctx context.Context,
+	onboardingID string,
+) ([]model.ApplicationDeployment, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id::text, onboarding_id::text, cluster_id::text, cluster_name,
+			source_id, provider_resource_id, argo_application, status,
+			sync_status, health_status, message, created_at, updated_at, completed_at
+		FROM application_deployments
+		WHERE onboarding_id::text = $1
+		ORDER BY cluster_name`, onboardingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	targets := make([]model.ApplicationDeployment, 0)
+	for rows.Next() {
+		var target model.ApplicationDeployment
+		if err := rows.Scan(
+			&target.ID, &target.OnboardingID, &target.ClusterID, &target.ClusterName,
+			&target.SourceID, &target.ProviderResourceID, &target.ArgoApplication,
+			&target.Status, &target.SyncStatus, &target.HealthStatus, &target.Message,
+			&target.CreatedAt, &target.UpdatedAt, &target.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		targets = append(targets, target)
+	}
+	return targets, rows.Err()
+}
+
+func (s *Store) ListActiveApplicationDeployments(
+	ctx context.Context,
+) ([]model.ApplicationDeployment, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id::text, onboarding_id::text, cluster_id::text, cluster_name,
+			source_id, provider_resource_id, argo_application, status,
+			sync_status, health_status, message, created_at, updated_at, completed_at
+		FROM application_deployments
+		WHERE status IN ('creating', 'progressing')
+		ORDER BY updated_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	targets := make([]model.ApplicationDeployment, 0)
+	for rows.Next() {
+		var target model.ApplicationDeployment
+		if err := rows.Scan(
+			&target.ID, &target.OnboardingID, &target.ClusterID, &target.ClusterName,
+			&target.SourceID, &target.ProviderResourceID, &target.ArgoApplication,
+			&target.Status, &target.SyncStatus, &target.HealthStatus, &target.Message,
+			&target.CreatedAt, &target.UpdatedAt, &target.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		targets = append(targets, target)
+	}
+	return targets, rows.Err()
+}
+
+func (s *Store) UpdateApplicationDeployment(
+	ctx context.Context,
+	id, status, syncStatus, healthStatus, message string,
+) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var onboardingID string
+	err = tx.QueryRow(ctx, `
+		UPDATE application_deployments
+		SET status = $2, sync_status = $3, health_status = $4, message = $5,
+			updated_at = NOW(),
+			completed_at = CASE WHEN $2 IN ('healthy', 'failed') THEN NOW() ELSE NULL END
+		WHERE id::text = $1
+		RETURNING onboarding_id::text`,
+		id, status, syncStatus, healthStatus, message,
+	).Scan(&onboardingID)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(ctx, `
+		WITH totals AS (
+			SELECT COUNT(*) AS total,
+				COUNT(*) FILTER (WHERE status = 'healthy') AS healthy,
+				COUNT(*) FILTER (WHERE status = 'failed') AS failed
+			FROM application_deployments
+			WHERE onboarding_id::text = $1
+		), next AS (
+			SELECT CASE
+				WHEN healthy = total THEN 'healthy'
+				WHEN failed = total THEN 'failed'
+				WHEN healthy + failed = total AND failed > 0 THEN 'partial'
+				ELSE 'progressing'
+			END AS status
+			FROM totals
+		)
+		UPDATE application_onboardings
+		SET status = next.status, updated_at = NOW(),
+			completed_at = CASE WHEN next.status IN ('healthy', 'failed', 'partial')
+				THEN NOW() ELSE NULL END
+		FROM next
+		WHERE id::text = $1`, onboardingID)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }

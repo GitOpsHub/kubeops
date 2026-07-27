@@ -1,0 +1,12 @@
+targets:
+  - source_id: aws-platform
+    provider_resource_id: arn:aws:eks:us-east-1:123456789012:cluster/prod-us-east
+    server_url: https://argo-cd.prod-us-east.example.com
+    token_env: ARGO_PROD_US_EAST_TOKEN
+    # Optional PEM certificate bundle for a private certificate authority.
+    # ca_file: /etc/kubeops/certs/prod-us-east-ca.pem
+    # Optional UI access. When configured, all three fields are required.
+    # The password is encrypted before it is stored in PostgreSQL.
+    # ui_url: https://argo-cd.prod-us-east.example.com
+    # username: kubeops
+    # password_env: ARGO_PROD_US_EAST_PASSWORD

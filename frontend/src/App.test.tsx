@@ -6,13 +6,75 @@ import App from './App'
 const timestamp = new Date().toISOString()
 
 function mockAPI() {
-  return vi.spyOn(globalThis, 'fetch').mockImplementation(async (request) => {
+  return vi.spyOn(globalThis, 'fetch').mockImplementation(async (request, init) => {
     const url = String(request)
+    if (url.endsWith('/application-onboardings') && init?.method === 'POST') {
+      const submitted = JSON.parse(String(init.body)) as {
+        name: string
+        namespace: string
+        clusterIds: string[]
+      }
+      return Response.json(
+        {
+          id: 'onboarding-1',
+          name: submitted.name,
+          namespace: submitted.namespace,
+          chartRepoUrl: 'https://charts.example.test',
+          chartName: 'global-app',
+          chartRevision: '1.2.3',
+          valuesDigest: 'sha256:test',
+          valuesRepositoryUrl: `https://github.com/GitOpsHub/${submitted.name}`,
+          valuesRepositoryName: submitted.name,
+          valuesRevision: 'main',
+          valuesCommitSha: 'commit-1',
+          status: 'progressing',
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          completedAt: null,
+          targets: [
+            {
+              id: 'target-1',
+              onboardingId: 'onboarding-1',
+              clusterId: submitted.clusterIds[0],
+              clusterName: 'prod-us-east',
+              sourceId: 'aws-platform',
+              providerResourceId: 'arn:aws:eks:us-east-1:123:cluster/prod',
+              argoApplication: submitted.name,
+              status: 'progressing',
+              syncStatus: 'OutOfSync',
+              healthStatus: 'Progressing',
+              createdAt: timestamp,
+              updatedAt: timestamp,
+              completedAt: null,
+            },
+          ],
+        },
+        { status: 201 },
+      )
+    }
+    if (url.includes('/application-onboardings?')) {
+      return Response.json({ items: [] })
+    }
+    if (url.endsWith('/application-onboardings/defaults')) {
+      return Response.json({
+        chartRepoUrl: 'ghcr.io/gitopshub/charts',
+        chartName: 'kubeops',
+        chartRevision: '0.0.1',
+        valuesYaml: 'replicaCount: 2\nimage:\n  repository: nginx\n',
+      })
+    }
     if (url.includes('/clusters/cluster-1/node-pools/workers/scale')) {
       return Response.json(
         { nodePoolId: 'workers', desiredCount: 5, status: 'accepted', providerOperationId: 'update-1' },
         { status: 202 },
       )
+    }
+    if (url.endsWith('/clusters/cluster-1/argo-access')) {
+      return Response.json({
+        url: 'https://argo.example.test',
+        username: 'kubeops',
+        password: 'cluster-password',
+      })
     }
     if (url.endsWith('/clusters/cluster-1/details')) {
       return Response.json({
@@ -246,6 +308,12 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: 'Node pools' })).toBeInTheDocument()
     expect(await screen.findByText('vpc-123')).toBeInTheDocument()
     expect(screen.getByText('subnet-a, subnet-b')).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: 'Open Argo CD' })).toHaveAttribute(
+      'href',
+      'https://argo.example.test',
+    )
+    expect(screen.getByText('kubeops')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Copy password' })).toBeInTheDocument()
 
     const desiredInput = screen.getByRole('spinbutton', { name: 'Desired nodes' })
     await user.clear(desiredInput)
@@ -276,5 +344,42 @@ describe('App', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('database is unavailable')
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()
+  })
+
+  it('onboards an application to selected clusters', async () => {
+    const fetchMock = mockAPI()
+    render(<App />)
+    const user = userEvent.setup()
+
+    await user.click(await screen.findByRole('button', { name: 'Onboard application' }))
+    expect(await screen.findByRole('heading', { name: 'Onboard an application' })).toBeInTheDocument()
+
+    await user.type(screen.getByLabelText('Application name'), 'payments-api')
+    await user.type(screen.getByLabelText('Namespace'), 'payments')
+    await user.click(await screen.findByRole('checkbox'))
+    await user.click(screen.getByRole('button', { name: 'Onboard application' }))
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/application-onboardings'),
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            name: 'payments-api',
+            namespace: 'payments',
+            clusterIds: ['cluster-1'],
+            valuesYaml: 'replicaCount: 2\nimage:\n  repository: nginx\n',
+          }),
+        }),
+      )
+    })
+    expect(
+      await screen.findByText((_, element) => element?.textContent === 'payments · global-app@1.2.3'),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /payments-api\/values.yaml/ })).toHaveAttribute(
+      'href',
+      'https://github.com/GitOpsHub/payments-api',
+    )
+    expect(screen.getAllByText('progressing').length).toBeGreaterThan(0)
   })
 })

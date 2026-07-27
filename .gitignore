@@ -150,3 +150,6 @@ backend/bin/
 
 # Local cloud source configuration
 config/cloud-sources.yaml
+config/argo-targets.yaml
+config/argocd-local-ca.crt
+config/.argocd-local-tls/

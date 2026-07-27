@@ -11,7 +11,9 @@ import (
 
 	"github.com/GitOpsHub/kubeops/backend/internal/config"
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
+	"github.com/GitOpsHub/kubeops/backend/internal/onboarding"
 	"github.com/GitOpsHub/kubeops/backend/internal/provider"
+	"github.com/GitOpsHub/kubeops/backend/internal/secure"
 	"github.com/GitOpsHub/kubeops/backend/internal/store"
 	"github.com/jackc/pgx/v5"
 )
@@ -21,6 +23,7 @@ type Repository interface {
 	ListSources(context.Context) ([]model.SourceSummary, error)
 	ListClusters(context.Context, model.ClusterFilter) (model.ClusterPage, error)
 	GetCluster(context.Context, string) (model.Cluster, error)
+	GetArgoAccessByClusterID(context.Context, string) (model.EncryptedArgoAccess, error)
 	ListSyncRuns(context.Context, int) ([]model.SyncRun, error)
 	QueueSync(context.Context, string, string) (model.SyncRun, error)
 }
@@ -30,10 +33,18 @@ type ClusterManager interface {
 	ScaleNodePool(context.Context, model.CloudSource, model.Cluster, string, int32) (model.ScaleResult, error)
 }
 
+type ApplicationOnboarder interface {
+	Create(context.Context, onboarding.CreateInput) (model.ApplicationOnboarding, error)
+	Get(context.Context, string) (model.ApplicationOnboarding, error)
+	List(context.Context, int) ([]model.ApplicationOnboarding, error)
+	Defaults() onboarding.Defaults
+}
+
 type API struct {
-	config  config.Config
-	store   Repository
-	manager ClusterManager
+	config    config.Config
+	store     Repository
+	manager   ClusterManager
+	onboarder ApplicationOnboarder
 }
 
 func NewHandler(cfg config.Config, repository Repository, managers ...ClusterManager) http.Handler {
@@ -41,16 +52,42 @@ func NewHandler(cfg config.Config, repository Repository, managers ...ClusterMan
 	if len(managers) > 0 && managers[0] != nil {
 		manager = managers[0]
 	}
-	api := &API{config: cfg, store: repository, manager: manager}
+	return newHandler(cfg, repository, manager, nil)
+}
+
+func NewHandlerWithOnboarding(
+	cfg config.Config,
+	repository Repository,
+	manager ClusterManager,
+	onboarder ApplicationOnboarder,
+) http.Handler {
+	if manager == nil {
+		manager = provider.ManagementRegistry{}
+	}
+	return newHandler(cfg, repository, manager, onboarder)
+}
+
+func newHandler(
+	cfg config.Config,
+	repository Repository,
+	manager ClusterManager,
+	onboarder ApplicationOnboarder,
+) http.Handler {
+	api := &API{config: cfg, store: repository, manager: manager, onboarder: onboarder}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", api.health)
 	mux.HandleFunc("GET /api/ready", api.ready)
 	mux.HandleFunc("GET /api/clusters", api.clusters)
 	mux.HandleFunc("GET /api/clusters/{id}/details", api.clusterDetails)
+	mux.HandleFunc("GET /api/clusters/{id}/argo-access", api.clusterArgoAccess)
 	mux.HandleFunc("POST /api/clusters/{id}/node-pools/{pool}/scale", api.scaleNodePool)
 	mux.HandleFunc("GET /api/cloud-sources", api.sources)
 	mux.HandleFunc("GET /api/sync-runs", api.syncRuns)
 	mux.HandleFunc("POST /api/cloud-sources/{id}/sync", api.queueSync)
+	mux.HandleFunc("POST /api/application-onboardings", api.createApplicationOnboarding)
+	mux.HandleFunc("GET /api/application-onboardings", api.applicationOnboardings)
+	mux.HandleFunc("GET /api/application-onboardings/defaults", api.applicationOnboardingDefaults)
+	mux.HandleFunc("GET /api/application-onboardings/{id}", api.applicationOnboarding)
 	return withCORS(withRequestLog(mux), cfg.CORSAllowedOrigin)
 }
 
@@ -99,6 +136,37 @@ func (api *API) clusterDetails(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, details)
+}
+
+func (api *API) clusterArgoAccess(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "cluster id is required")
+		return
+	}
+	encrypted, err := api.store.GetArgoAccessByClusterID(r.Context(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "Argo CD access is not configured for this cluster")
+		return
+	}
+	if err != nil {
+		slog.Error("get Argo CD access", "cluster", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "unable to load Argo CD access")
+		return
+	}
+	password, err := secure.Decrypt(
+		api.config.Onboarding.ArgoCredentialKey,
+		encrypted.PasswordCiphertext,
+		encrypted.PasswordNonce,
+	)
+	if err != nil {
+		slog.Error("decrypt Argo CD access", "cluster", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "unable to load Argo CD access")
+		return
+	}
+	writeJSON(w, http.StatusOK, model.ArgoAccess{
+		URL: encrypted.URL, Username: encrypted.Username, Password: string(password),
+	})
 }
 
 func (api *API) scaleNodePool(w http.ResponseWriter, r *http.Request) {
@@ -240,6 +308,96 @@ func (api *API) queueSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, run)
+}
+
+func (api *API) createApplicationOnboarding(w http.ResponseWriter, r *http.Request) {
+	if api.onboarder == nil {
+		writeError(w, http.StatusServiceUnavailable, "application onboarding is not available")
+		return
+	}
+	var input onboarding.CreateInput
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 300*1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "request body must contain valid onboarding JSON")
+		return
+	}
+	result, err := api.onboarder.Create(r.Context(), input)
+	var validationError onboarding.ValidationError
+	var conflictError onboarding.ConflictError
+	var externalError onboarding.ExternalError
+	switch {
+	case errors.As(err, &validationError):
+		writeError(w, http.StatusUnprocessableEntity, validationError.Message)
+		return
+	case errors.As(err, &conflictError):
+		writeError(w, http.StatusConflict, conflictError.Message)
+		return
+	case errors.As(err, &externalError):
+		slog.Error("GitHub application onboarding dependency failed", "error", externalError)
+		writeError(w, http.StatusBadGateway, "GitHub could not provision the application repository")
+		return
+	case err != nil:
+		slog.Error("create application onboarding", "error", err)
+		writeError(w, http.StatusInternalServerError, "unable to create application onboarding")
+		return
+	}
+	writeJSON(w, http.StatusCreated, result)
+}
+
+func (api *API) applicationOnboardingDefaults(w http.ResponseWriter, _ *http.Request) {
+	if api.onboarder == nil {
+		writeError(w, http.StatusServiceUnavailable, "application onboarding is not available")
+		return
+	}
+	defaults := api.onboarder.Defaults()
+	if defaults.ValuesYAML == "" {
+		writeError(w, http.StatusServiceUnavailable, "application onboarding defaults are not configured")
+		return
+	}
+	writeJSON(w, http.StatusOK, defaults)
+}
+
+func (api *API) applicationOnboardings(w http.ResponseWriter, r *http.Request) {
+	if api.onboarder == nil {
+		writeError(w, http.StatusServiceUnavailable, "application onboarding is not available")
+		return
+	}
+	limit := intQuery(r.URL.Query().Get("limit"), 20)
+	if limit < 1 || limit > 200 {
+		writeError(w, http.StatusBadRequest, "limit must be between 1 and 200")
+		return
+	}
+	items, err := api.onboarder.List(r.Context(), limit)
+	if err != nil {
+		slog.Error("list application onboardings", "error", err)
+		writeError(w, http.StatusInternalServerError, "unable to list application onboardings")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (api *API) applicationOnboarding(w http.ResponseWriter, r *http.Request) {
+	if api.onboarder == nil {
+		writeError(w, http.StatusServiceUnavailable, "application onboarding is not available")
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "application onboarding id is required")
+		return
+	}
+	item, err := api.onboarder.Get(r.Context(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "application onboarding not found")
+		return
+	}
+	if err != nil {
+		slog.Error("get application onboarding", "onboarding", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "unable to load application onboarding")
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
 }
 
 func withCORS(next http.Handler, allowedOrigin string) http.Handler {

@@ -11,6 +11,7 @@ import {
 } from './api/inventory'
 import { KubernetesLogo, ProviderLogo } from './components/BrandIcons'
 import { ClusterDetailDrawer } from './components/ClusterDetailDrawer'
+import { ApplicationOnboarding } from './components/ApplicationOnboarding'
 
 const providerLabels: Record<Provider, string> = {
   aws: 'EKS',
@@ -55,6 +56,7 @@ function App() {
   const [error, setError] = useState('')
   const [refreshing, setRefreshing] = useState('')
   const [selectedCluster, setSelectedCluster] = useState<Cluster | null>(null)
+  const [showOnboarding, setShowOnboarding] = useState(false)
 
   const search = provider ? providerSearch : globalSearch
 
@@ -180,16 +182,29 @@ function App() {
         </header>
 
         <div className="dashboard-content">
+          {showOnboarding ? (
+            <ApplicationOnboarding onBack={() => setShowOnboarding(false)} />
+          ) : (
+          <>
           <header className="page-heading">
             <div>
               <p className="kicker">Kubernetes estate</p>
               <h1>Fleet control center</h1>
               <p>Search, filter, and reconcile every managed and local cluster from one view.</p>
             </div>
-            <div className="fleet-metric" aria-label={`${fleetTotal} clusters across ${activeSources} sources`}>
-              <span>Fleet size</span>
-              <strong>{fleetTotal}</strong>
-              <small>{activeSources} active sources</small>
+            <div className="heading-actions">
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => setShowOnboarding(true)}
+              >
+                Onboard application
+              </button>
+              <div className="fleet-metric" aria-label={`${fleetTotal} clusters across ${activeSources} sources`}>
+                <span>Fleet size</span>
+                <strong>{fleetTotal}</strong>
+                <small>{activeSources} active sources</small>
+              </div>
             </div>
           </header>
 
@@ -497,6 +512,8 @@ function App() {
               </div>
             </div>
           </section>
+          </>
+          )}
         </div>
       </main>
 

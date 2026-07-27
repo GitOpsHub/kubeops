@@ -2,8 +2,10 @@ package config
 
 import (
 	"bufio"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -23,6 +25,43 @@ type Config struct {
 	SyncWorkers       int
 	CloudSourcesFile  string
 	CloudSources      []model.CloudSource
+	Onboarding        OnboardingConfig
+}
+
+type ArgoTarget struct {
+	SourceID           string `yaml:"source_id"`
+	ProviderResourceID string `yaml:"provider_resource_id"`
+	ServerURL          string `yaml:"server_url"`
+	TokenEnv           string `yaml:"token_env"`
+	CAFile             string `yaml:"ca_file,omitempty"`
+	UIURL              string `yaml:"ui_url,omitempty"`
+	Username           string `yaml:"username,omitempty"`
+	PasswordEnv        string `yaml:"password_env,omitempty"`
+	Token              string `yaml:"-"`
+	Password           string `yaml:"-"`
+}
+
+type OnboardingConfig struct {
+	HelmRepoURL       string
+	HelmChart         string
+	HelmRevision      string
+	HelmDefaultsFile  string
+	HelmDefaultsYAML  string
+	ArgoProject       string
+	ArgoNamespace     string
+	ArgoTargetsFile   string
+	ArgoTargets       []ArgoTarget
+	ArgoCredentialKey []byte
+	GitHubAPIURL      string
+	GitHubOrg         string
+	GitHubToken       string
+	GitHubAppID       int64
+	GitHubInstallID   int64
+	GitHubKeyFile     string
+	GitHubVisibility  string
+	PollInterval      time.Duration
+	DeploymentTimeout time.Duration
+	RequestTimeout    time.Duration
 }
 
 func Load(envFile string) (Config, error) {
@@ -45,6 +84,11 @@ func Load(envFile string) (Config, error) {
 		return Config{}, err
 	}
 
+	onboarding, err := loadOnboardingConfig()
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		Environment:       valueOrDefault("APP_ENV", "development"),
 		Host:              valueOrDefault("BACKEND_HOST", "127.0.0.1"),
@@ -55,7 +99,162 @@ func Load(envFile string) (Config, error) {
 		SyncWorkers:       workers,
 		CloudSourcesFile:  sourcesFile,
 		CloudSources:      sources,
+		Onboarding:        onboarding,
 	}, nil
+}
+
+func loadOnboardingConfig() (OnboardingConfig, error) {
+	pollInterval, err := time.ParseDuration(valueOrDefault("ARGO_POLL_INTERVAL", "15s"))
+	if err != nil || pollInterval <= 0 {
+		return OnboardingConfig{}, fmt.Errorf("ARGO_POLL_INTERVAL must be a positive duration")
+	}
+	deploymentTimeout, err := time.ParseDuration(valueOrDefault("ARGO_DEPLOYMENT_TIMEOUT", "15m"))
+	if err != nil || deploymentTimeout <= 0 {
+		return OnboardingConfig{}, fmt.Errorf("ARGO_DEPLOYMENT_TIMEOUT must be a positive duration")
+	}
+	requestTimeout, err := time.ParseDuration(valueOrDefault("ARGO_REQUEST_TIMEOUT", "10s"))
+	if err != nil || requestTimeout <= 0 {
+		return OnboardingConfig{}, fmt.Errorf("ARGO_REQUEST_TIMEOUT must be a positive duration")
+	}
+
+	targetsFile := valueOrDefault("ARGO_TARGETS_FILE", "../config/argo-targets.yaml")
+	targets, err := loadArgoTargets(targetsFile)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return OnboardingConfig{}, err
+	}
+	credentialKey, err := loadArgoCredentialKey(targets)
+	if err != nil {
+		return OnboardingConfig{}, err
+	}
+	appID, err := int64Value("GITHUB_APP_ID")
+	if err != nil {
+		return OnboardingConfig{}, err
+	}
+	installationID, err := int64Value("GITHUB_APP_INSTALLATION_ID")
+	if err != nil {
+		return OnboardingConfig{}, err
+	}
+	defaultsFile := valueOrDefault("GLOBAL_HELM_DEFAULT_VALUES_FILE", "../charts/kubeops/values.yaml")
+	defaultsYAML, err := os.ReadFile(defaultsFile)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return OnboardingConfig{}, fmt.Errorf("read global Helm defaults: %w", err)
+	}
+	visibility := valueOrDefault("GITHUB_REPO_VISIBILITY", "private")
+	if visibility != "private" && visibility != "public" {
+		return OnboardingConfig{}, fmt.Errorf("GITHUB_REPO_VISIBILITY must be private or public")
+	}
+
+	return OnboardingConfig{
+		HelmRepoURL:       strings.TrimSpace(os.Getenv("GLOBAL_HELM_REPO_URL")),
+		HelmChart:         strings.TrimSpace(os.Getenv("GLOBAL_HELM_CHART")),
+		HelmRevision:      strings.TrimSpace(os.Getenv("GLOBAL_HELM_REVISION")),
+		HelmDefaultsFile:  defaultsFile,
+		HelmDefaultsYAML:  string(defaultsYAML),
+		ArgoProject:       valueOrDefault("ARGO_PROJECT", "default"),
+		ArgoNamespace:     valueOrDefault("ARGO_NAMESPACE", "argo-cd"),
+		ArgoTargetsFile:   targetsFile,
+		ArgoTargets:       targets,
+		ArgoCredentialKey: credentialKey,
+		GitHubAPIURL:      valueOrDefault("GITHUB_API_URL", "https://api.github.com"),
+		GitHubOrg:         valueOrDefault("GITHUB_ORG", "GitOpsHub"),
+		GitHubToken:       strings.TrimSpace(os.Getenv("GITHUB_TOKEN")),
+		GitHubAppID:       appID,
+		GitHubInstallID:   installationID,
+		GitHubKeyFile:     strings.TrimSpace(os.Getenv("GITHUB_APP_PRIVATE_KEY_FILE")),
+		GitHubVisibility:  visibility,
+		PollInterval:      pollInterval,
+		DeploymentTimeout: deploymentTimeout,
+		RequestTimeout:    requestTimeout,
+	}, nil
+}
+
+func int64Value(key string) (int64, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return 0, nil
+	}
+	number, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || number <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", key)
+	}
+	return number, nil
+}
+
+func loadArgoTargets(path string) ([]ArgoTarget, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var document struct {
+		Targets []ArgoTarget `yaml:"targets"`
+	}
+	if err := yaml.Unmarshal(content, &document); err != nil {
+		return nil, fmt.Errorf("parse Argo targets: %w", err)
+	}
+	seen := make(map[string]struct{}, len(document.Targets))
+	for i := range document.Targets {
+		target := &document.Targets[i]
+		target.SourceID = strings.TrimSpace(target.SourceID)
+		target.ProviderResourceID = strings.TrimSpace(target.ProviderResourceID)
+		target.ServerURL = strings.TrimRight(strings.TrimSpace(target.ServerURL), "/")
+		target.TokenEnv = strings.TrimSpace(target.TokenEnv)
+		target.UIURL = strings.TrimRight(strings.TrimSpace(target.UIURL), "/")
+		target.Username = strings.TrimSpace(target.Username)
+		target.PasswordEnv = strings.TrimSpace(target.PasswordEnv)
+		if target.SourceID == "" || target.ProviderResourceID == "" ||
+			target.ServerURL == "" || target.TokenEnv == "" {
+			return nil, fmt.Errorf("Argo target %d requires source_id, provider_resource_id, server_url, and token_env", i+1)
+		}
+		key := target.SourceID + "\x00" + target.ProviderResourceID
+		if _, exists := seen[key]; exists {
+			return nil, fmt.Errorf("duplicate Argo target for source %q and resource %q", target.SourceID, target.ProviderResourceID)
+		}
+		seen[key] = struct{}{}
+		target.Token = os.Getenv(target.TokenEnv)
+		if target.Token == "" {
+			return nil, fmt.Errorf("Argo target token environment variable %s is empty", target.TokenEnv)
+		}
+		hasUIAccess := target.UIURL != "" || target.Username != "" || target.PasswordEnv != ""
+		if hasUIAccess {
+			parsed, parseErr := url.Parse(target.UIURL)
+			if target.UIURL == "" || target.Username == "" || target.PasswordEnv == "" ||
+				parseErr != nil || parsed.Scheme != "https" || parsed.Host == "" {
+				return nil, fmt.Errorf(
+					"Argo target %d UI access requires an HTTPS ui_url, username, and password_env",
+					i+1,
+				)
+			}
+			target.Password = os.Getenv(target.PasswordEnv)
+			if target.Password == "" {
+				return nil, fmt.Errorf(
+					"Argo target password environment variable %s is empty",
+					target.PasswordEnv,
+				)
+			}
+		}
+	}
+	return document.Targets, nil
+}
+
+func loadArgoCredentialKey(targets []ArgoTarget) ([]byte, error) {
+	var needsKey bool
+	for _, target := range targets {
+		if target.Password != "" {
+			needsKey = true
+			break
+		}
+	}
+	if !needsKey {
+		return nil, nil
+	}
+	encoded := strings.TrimSpace(os.Getenv("ARGO_CREDENTIAL_ENCRYPTION_KEY"))
+	key, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || len(key) != 32 {
+		return nil, errors.New(
+			"ARGO_CREDENTIAL_ENCRYPTION_KEY must be a base64-encoded 32-byte key",
+		)
+	}
+	return key, nil
 }
 
 func (c Config) Address() string {
