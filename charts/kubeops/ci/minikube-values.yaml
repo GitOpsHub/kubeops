@@ -1,0 +1,13 @@
+# Keep local resource usage low and expose the application through a node port.
+replicaCount: 1
+
+service:
+  type: NodePort
+
+resources:
+  limits:
+    cpu: 100m
+    memory: 64Mi
+  requests:
+    cpu: 25m
+    memory: 32Mi

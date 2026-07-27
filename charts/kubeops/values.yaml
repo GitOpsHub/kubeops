@@ -1,17 +1,56 @@
 replicaCount: 2
+revisionHistoryLimit: 10
 
 image:
-  repository: nginx
-  tag: "1.25"
+  repository: nginxinc/nginx-unprivileged
+  tag: "1.27-alpine"
   pullPolicy: IfNotPresent
 
+imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+deploymentStrategy:
+  type: RollingUpdate
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+container:
+  port: 8080
+  command: []
+  args: []
+  env: []
+  envFrom: []
+
 service:
+  annotations: {}
   type: ClusterIP
   port: 80
-  targetPort: 80
+  targetPort: http
+  nodePort: null
+  externalTrafficPolicy: ""
+  loadBalancerClass: ""
+  loadBalancerSourceRanges: []
+  allocateLoadBalancerNodePorts: true
+  sessionAffinity: None
 
 ingress:
   enabled: false
@@ -23,6 +62,18 @@ ingress:
         - path: /
           pathType: Prefix
   tls: []
+
+probes:
+  liveness:
+    enabled: true
+    path: /
+    initialDelaySeconds: 10
+    periodSeconds: 10
+  readiness:
+    enabled: true
+    path: /
+    initialDelaySeconds: 5
+    periodSeconds: 5
 
 resources:
   limits:
@@ -38,6 +89,11 @@ autoscaling:
   maxReplicas: 10
   targetCPUUtilizationPercentage: 80
 
+volumes: []
+volumeMounts: []
+
+terminationGracePeriodSeconds: 30
 nodeSelector: {}
 tolerations: []
 affinity: {}
+topologySpreadConstraints: []

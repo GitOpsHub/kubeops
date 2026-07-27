@@ -1,0 +1,5 @@
+# GKE provisions the configured cloud load balancer through its service
+# controller. Controller-specific annotations can be added as needed.
+service:
+  type: LoadBalancer
+  externalTrafficPolicy: Cluster

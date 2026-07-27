@@ -1,0 +1,106 @@
+name: Helm chart
+
+on:
+  pull_request:
+    paths:
+      - charts/kubeops/**
+      - .github/workflows/helm-chart.yml
+  push:
+    branches:
+      - main
+    tags:
+      - helm-v*
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: helm-chart-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+env:
+  CHART_PATH: charts/kubeops
+  HELM_VERSION: v4.0.4
+
+jobs:
+  validate:
+    name: Validate (${{ matrix.platform }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: default
+            values: charts/kubeops/ci/default-values.yaml
+          - platform: eks
+            values: charts/kubeops/ci/eks-values.yaml
+          - platform: gke
+            values: charts/kubeops/ci/gke-values.yaml
+          - platform: aks
+            values: charts/kubeops/ci/aks-values.yaml
+          - platform: minikube
+            values: charts/kubeops/ci/minikube-values.yaml
+          - platform: docker-desktop
+            values: charts/kubeops/ci/docker-desktop-values.yaml
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Lint chart
+        run: helm lint "$CHART_PATH" --strict --values "${{ matrix.values }}"
+
+      - name: Render chart
+        run: >-
+          helm template kubeops-test "$CHART_PATH"
+          --namespace kubeops-test
+          --values "${{ matrix.values }}"
+
+  publish:
+    name: Publish OCI chart
+    if: startsWith(github.ref, 'refs/tags/helm-v')
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Verify release tag
+        shell: bash
+        run: |
+          chart_version="$(helm show chart "$CHART_PATH" | awk '$1 == "version:" { print $2 }')"
+          tag_version="${GITHUB_REF_NAME#helm-v}"
+          if [[ "$tag_version" != "$chart_version" ]]; then
+            echo "Tag version $tag_version does not match Chart.yaml version $chart_version" >&2
+            exit 1
+          fi
+
+      - name: Package chart
+        run: helm package "$CHART_PATH" --destination dist
+
+      - name: Log in to GitHub Container Registry
+        shell: bash
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" |
+            helm registry login ghcr.io \
+              --username "${{ github.actor }}" \
+              --password-stdin
+
+      - name: Publish chart
+        shell: bash
+        run: |
+          owner="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          helm push "dist/kubeops-${GITHUB_REF_NAME#helm-v}.tgz" "oci://ghcr.io/${owner}/charts"

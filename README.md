@@ -68,9 +68,23 @@ never place secrets in them.
 
 ## Application onboarding
 
-The default global chart is published from `charts/kubeops` to the public OCI
-repository `ghcr.io/gitopshub/charts/kubeops:0.0.1`. Configure its fixed chart
-name, revision, and matching local defaults file in `.env`. Set `GITHUB_TOKEN`
+The reusable global chart lives in [`charts/kubeops`](charts/kubeops) and is
+published by [`.github/workflows/helm-chart.yml`](.github/workflows/helm-chart.yml)
+to the OCI repository `ghcr.io/gitopshub/charts/kubeops`. To publish version
+`0.1.0`, create and push the matching `helm-v0.1.0` Git tag. The workflow rejects
+a tag that does not match `version` in `Chart.yaml`.
+
+```sh
+git tag helm-v0.1.0
+git push origin helm-v0.1.0
+helm pull oci://ghcr.io/gitopshub/charts/kubeops --version 0.1.0
+```
+
+GitHub Container Registry creates new packages as private by default. An
+organization package administrator must change the package visibility to
+**Public** once after its first publication if anonymous Argo CD access is
+required. Configure the fixed chart name, revision, and matching local defaults
+file in `.env`. Set `GITHUB_TOKEN`
 to a PAT authorized for the `GitOpsHub` organization and private repository
 creation (`repo` for a classic PAT; `delete_repo` is recommended for compensation
 cleanup). A GitHub App ID, installation ID, and private-key file remain supported
