@@ -131,6 +131,12 @@ export type ClusterDetails = {
   networking: ClusterNetworking
 }
 
+export type ArgoAccess = {
+  url: string
+  username: string
+  password: string
+}
+
 export type ScaleResult = {
   nodePoolId: string
   desiredCount: number
@@ -178,6 +184,10 @@ export function queueSourceSync(sourceId: string) {
 
 export function getClusterDetails(clusterId: string, signal?: AbortSignal) {
   return request<ClusterDetails>(`/clusters/${encodeURIComponent(clusterId)}/details`, { signal })
+}
+
+export function getClusterArgoAccess(clusterId: string, signal?: AbortSignal) {
+  return request<ArgoAccess>(`/clusters/${encodeURIComponent(clusterId)}/argo-access`, { signal })
 }
 
 export function scaleNodePool(clusterId: string, poolId: string, desiredCount: number) {

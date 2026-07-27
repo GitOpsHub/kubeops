@@ -108,6 +108,19 @@ func TestInventoryLifecycle(t *testing.T) {
 	if err != nil || page.Total != 6 {
 		t.Fatalf("expected six active clusters, got %#v, %v", page, err)
 	}
+	accessInput := model.EncryptedArgoAccess{
+		SourceID: page.Items[0].SourceID, ProviderResourceID: page.Items[0].ProviderResourceID,
+		URL: "https://argo.example.test", Username: "kubeops",
+		PasswordCiphertext: []byte("encrypted-password"), PasswordNonce: []byte("nonce-value"),
+	}
+	if err := repository.UpsertArgoAccess(ctx, accessInput); err != nil {
+		t.Fatal(err)
+	}
+	access, err := repository.GetArgoAccessByClusterID(ctx, page.Items[0].ID)
+	if err != nil || access.URL != accessInput.URL || access.Username != accessInput.Username ||
+		string(access.PasswordCiphertext) != "encrypted-password" {
+		t.Fatalf("unexpected Argo access: %#v, %v", access, err)
+	}
 
 	onboarding, err := repository.CreateApplicationOnboarding(ctx, model.ApplicationOnboarding{
 		Name: "payments", Namespace: "payments", ChartRepoURL: "https://charts.example.test",

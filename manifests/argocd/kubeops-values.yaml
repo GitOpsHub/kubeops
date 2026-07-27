@@ -1,7 +1,7 @@
 configs:
   cm:
     admin.enabled: false
-    accounts.kubeops: apiKey
+    accounts.kubeops: apiKey, login
     accounts.kubeops.enabled: "true"
   rbac:
     policy.default: ""

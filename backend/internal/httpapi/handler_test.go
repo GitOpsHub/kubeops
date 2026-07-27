@@ -13,6 +13,7 @@ import (
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
 	"github.com/GitOpsHub/kubeops/backend/internal/onboarding"
 	"github.com/GitOpsHub/kubeops/backend/internal/provider"
+	"github.com/GitOpsHub/kubeops/backend/internal/secure"
 	"github.com/GitOpsHub/kubeops/backend/internal/store"
 )
 
@@ -22,6 +23,8 @@ type fakeRepository struct {
 	filter     model.ClusterFilter
 	cluster    model.Cluster
 	clusterErr error
+	argoAccess model.EncryptedArgoAccess
+	argoErr    error
 }
 
 func (f *fakeRepository) Ready(context.Context) error { return f.readyErr }
@@ -34,6 +37,12 @@ func (f *fakeRepository) ListClusters(_ context.Context, filter model.ClusterFil
 }
 func (f *fakeRepository) GetCluster(context.Context, string) (model.Cluster, error) {
 	return f.cluster, f.clusterErr
+}
+func (f *fakeRepository) GetArgoAccessByClusterID(
+	context.Context,
+	string,
+) (model.EncryptedArgoAccess, error) {
+	return f.argoAccess, f.argoErr
 }
 func (f *fakeRepository) ListSyncRuns(context.Context, int) ([]model.SyncRun, error) {
 	return []model.SyncRun{}, nil
@@ -204,6 +213,38 @@ func TestClusterDetails(t *testing.T) {
 	}
 	if len(details.NodePools) != 1 || details.NodePools[0].ID != "workers" {
 		t.Fatalf("unexpected details: %#v", details)
+	}
+}
+
+func TestClusterArgoAccess(t *testing.T) {
+	key := make([]byte, secure.KeyBytes)
+	ciphertext, nonce, err := secure.Encrypt(key, []byte("login-password"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHandler(config.Config{Onboarding: config.OnboardingConfig{
+		ArgoCredentialKey: key,
+	}}, &fakeRepository{argoAccess: model.EncryptedArgoAccess{
+		URL:                "https://argo.example.test",
+		Username:           "kubeops",
+		PasswordCiphertext: ciphertext,
+		PasswordNonce:      nonce,
+	}})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(
+		response,
+		httptest.NewRequest(http.MethodGet, "/api/clusters/cluster-1/argo-access", nil),
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var access model.ArgoAccess
+	if err := json.NewDecoder(response.Body).Decode(&access); err != nil {
+		t.Fatal(err)
+	}
+	if access.URL != "https://argo.example.test" || access.Username != "kubeops" ||
+		access.Password != "login-password" {
+		t.Fatalf("unexpected access: %#v", access)
 	}
 }
 

@@ -24,9 +24,11 @@ make dev
 
 `make dev` starts PostgreSQL, installs or upgrades Argo CD in both local
 clusters, creates scoped KubeOps API tokens and verified local TLS endpoints,
-generates the ignored `config/argo-targets.yaml`, and runs the API, UI, and
-Argo port-forwards together. Press Ctrl-C to stop the local processes. Override
-the defaults with `KUBEOPS_DOCKER_CONTEXT`, `KUBEOPS_MINIKUBE_CONTEXT`,
+creates separate `kubeops` UI login passwords, generates the ignored
+`config/argo-targets.yaml`, and runs the API, UI, and Argo port-forwards
+together. Cluster details include an **Open Argo CD** link and a password-copy
+control. Press Ctrl-C to stop the local processes. Override the defaults with
+`KUBEOPS_DOCKER_CONTEXT`, `KUBEOPS_MINIKUBE_CONTEXT`,
 `KUBEOPS_DOCKER_ARGO_PORT`, or `KUBEOPS_MINIKUBE_ARGO_PORT`.
 
 Set `ARGO_GITHUB_READ_TOKEN` to a dedicated read-only GitHub token when Argo CD
@@ -79,6 +81,13 @@ source ID and provider resource ID. Store each Argo CD bearer token only in the
 environment variable named by that target. Optional private CA bundles are
 supported; TLS verification cannot be disabled.
 
+Targets may also configure `ui_url`, `username`, and `password_env`. KubeOps
+encrypts the password with AES-256-GCM before storing it in PostgreSQL; set
+`ARGO_CREDENTIAL_ENCRYPTION_KEY` to a base64-encoded 32-byte key. The cluster
+details drawer retrieves the password only from the dedicated access endpoint.
+Keep the API restricted to the trusted internal network because this version
+does not include authentication or RBAC.
+
 The onboarding view creates one Argo CD Application per selected cluster with
 automated sync, pruning, self-healing, and namespace creation enabled. Argo uses
 the public OCI chart plus `$values/values.yaml` from the private application
@@ -91,6 +100,7 @@ existing Kubernetes or external secrets instead of containing secret material.
 
 - `GET /api/clusters` — filter and paginate cluster inventory
 - `GET /api/clusters/{id}/details` — load live node-pool and networking details
+- `GET /api/clusters/{id}/argo-access` — load configured Argo CD UI access
 - `POST /api/clusters/{id}/node-pools/{pool}/scale` — set a managed node pool's desired size
 - `GET /api/cloud-sources` — source counts and latest status
 - `GET /api/sync-runs` — recent reconciliation history

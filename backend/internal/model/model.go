@@ -145,6 +145,21 @@ type ClusterDetails struct {
 	Networking ClusterNetworking `json:"networking"`
 }
 
+type ArgoAccess struct {
+	URL      string `json:"url"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type EncryptedArgoAccess struct {
+	SourceID           string
+	ProviderResourceID string
+	URL                string
+	Username           string
+	PasswordCiphertext []byte
+	PasswordNonce      []byte
+}
+
 type ScaleResult struct {
 	NodePoolID          string `json:"nodePoolId"`
 	DesiredCount        int32  `json:"desiredCount"`

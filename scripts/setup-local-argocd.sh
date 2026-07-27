@@ -109,17 +109,21 @@ install_argocd() {
   if kubectl --context "$context" get crd applications.argoproj.io >/dev/null 2>&1; then
     helm_args+=(--set crds.install=false)
   fi
+  if helm upgrade --help | grep -q -- '--force-conflicts'; then
+    helm_args+=(--force-conflicts)
+  fi
   if [[ "$bootstrap_admin" == "true" ]]; then
-    helm_args+=(--set configs.cm.admin.enabled=true)
+    helm_args+=(--set-string 'configs.cm.admin\.enabled=true')
   fi
 
   helm "${helm_args[@]}" >/dev/null
 }
 
-generate_api_token() {
+configure_ui_password() {
   local context="$1"
   local port="$2"
   local context_name="$3"
+  local ui_password="$4"
   local password
 
   password="$(kubectl --context "$context" -n "$ARGO_NAMESPACE" \
@@ -133,6 +137,17 @@ generate_api_token() {
     --password "$password" \
     --insecure \
     --grpc-web >/dev/null
+
+  argocd account update-password \
+    --config "$ARGO_CLI_CONFIG" \
+    --argocd-context "$context_name" \
+    --account kubeops \
+    --current-password "$password" \
+    --new-password "$ui_password" >/dev/null
+}
+
+generate_api_token() {
+  local context_name="$1"
 
   argocd account generate-token \
     --config "$ARGO_CLI_CONFIG" \
@@ -243,12 +258,18 @@ printf '%s\n' \
   "    server_url: https://localhost:$DOCKER_PORT" \
   '    token_env: ARGO_DOCKER_LOCAL_TOKEN' \
   '    ca_file: ../config/argocd-local-ca.crt' \
+  "    ui_url: https://localhost:$DOCKER_PORT" \
+  '    username: kubeops' \
+  '    password_env: ARGO_DOCKER_LOCAL_PASSWORD' \
   '' \
   '  - source_id: minikube-local' \
   "    provider_resource_id: kubeconfig:minikube-local:$MINIKUBE_CONTEXT" \
   "    server_url: https://localhost:$MINIKUBE_PORT" \
   '    token_env: ARGO_MINIKUBE_LOCAL_TOKEN' \
   '    ca_file: ../config/argocd-local-ca.crt' \
+  "    ui_url: https://localhost:$MINIKUBE_PORT" \
+  '    username: kubeops' \
+  '    password_env: ARGO_MINIKUBE_LOCAL_PASSWORD' \
   > "$TARGETS_FILE"
 
 helm repo add argo https://argoproj.github.io/argo-helm --force-update >/dev/null
@@ -256,6 +277,22 @@ helm repo update argo >/dev/null
 
 docker_token="$(env_value ARGO_DOCKER_LOCAL_TOKEN)"
 minikube_token="$(env_value ARGO_MINIKUBE_LOCAL_TOKEN)"
+docker_password="$(env_value ARGO_DOCKER_LOCAL_PASSWORD)"
+minikube_password="$(env_value ARGO_MINIKUBE_LOCAL_PASSWORD)"
+credential_key="$(env_value ARGO_CREDENTIAL_ENCRYPTION_KEY)"
+
+if [[ ${#docker_password} -lt 8 || ${#docker_password} -gt 32 ]]; then
+  docker_password="$(openssl rand -hex 16)"
+  upsert_env_secret ARGO_DOCKER_LOCAL_PASSWORD "$docker_password"
+fi
+if [[ ${#minikube_password} -lt 8 || ${#minikube_password} -gt 32 ]]; then
+  minikube_password="$(openssl rand -hex 16)"
+  upsert_env_secret ARGO_MINIKUBE_LOCAL_PASSWORD "$minikube_password"
+fi
+if [[ -z "$credential_key" ]]; then
+  credential_key="$(openssl rand -base64 32)"
+  upsert_env_secret ARGO_CREDENTIAL_ENCRYPTION_KEY "$credential_key"
+fi
 
 install_argocd "$DOCKER_CONTEXT" true
 install_argocd "$MINIKUBE_CONTEXT" true
@@ -272,12 +309,15 @@ MINIKUBE_FORWARD_PID=$!
 wait_for_https "$DOCKER_PORT"
 wait_for_https "$MINIKUBE_PORT"
 
+configure_ui_password "$DOCKER_CONTEXT" "$DOCKER_PORT" kubeops-docker "$docker_password"
+configure_ui_password "$MINIKUBE_CONTEXT" "$MINIKUBE_PORT" kubeops-minikube "$minikube_password"
+
 if ! verify_token "$DOCKER_PORT" "$docker_token"; then
-  docker_token="$(generate_api_token "$DOCKER_CONTEXT" "$DOCKER_PORT" kubeops-docker)"
+  docker_token="$(generate_api_token kubeops-docker)"
   upsert_env_secret ARGO_DOCKER_LOCAL_TOKEN "$docker_token"
 fi
 if ! verify_token "$MINIKUBE_PORT" "$minikube_token"; then
-  minikube_token="$(generate_api_token "$MINIKUBE_CONTEXT" "$MINIKUBE_PORT" kubeops-minikube)"
+  minikube_token="$(generate_api_token kubeops-minikube)"
   upsert_env_secret ARGO_MINIKUBE_LOCAL_TOKEN "$minikube_token"
 fi
 

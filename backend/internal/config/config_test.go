@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"testing"
@@ -88,5 +89,39 @@ func TestLoadOnboardingConfigReadsGitHubToken(t *testing.T) {
 	}
 	if cfg.GitHubToken != "pat-secret" {
 		t.Fatal("expected GitHub token from environment")
+	}
+}
+
+func TestLoadArgoTargetsResolvesUIAccess(t *testing.T) {
+	t.Setenv("ARGO_LOCAL_TOKEN", "api-token")
+	t.Setenv("ARGO_LOCAL_PASSWORD", "login-password")
+	t.Setenv(
+		"ARGO_CREDENTIAL_ENCRYPTION_KEY",
+		base64.StdEncoding.EncodeToString(make([]byte, 32)),
+	)
+	path := filepath.Join(t.TempDir(), "argo-targets.yaml")
+	content := []byte(`targets:
+  - source_id: docker-local
+    provider_resource_id: kubeconfig:docker-local:docker-desktop
+    server_url: https://localhost:18081
+    token_env: ARGO_LOCAL_TOKEN
+    ui_url: https://localhost:18081
+    username: kubeops
+    password_env: ARGO_LOCAL_PASSWORD
+`)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	targets, err := loadArgoTargets(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := loadArgoCredentialKey(targets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 1 || targets[0].Password != "login-password" ||
+		targets[0].UIURL != "https://localhost:18081" || len(key) != 32 {
+		t.Fatalf("unexpected UI access configuration: %#v", targets)
 	}
 }

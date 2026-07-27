@@ -2,8 +2,10 @@ package config
 
 import (
 	"bufio"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -32,7 +34,11 @@ type ArgoTarget struct {
 	ServerURL          string `yaml:"server_url"`
 	TokenEnv           string `yaml:"token_env"`
 	CAFile             string `yaml:"ca_file,omitempty"`
+	UIURL              string `yaml:"ui_url,omitempty"`
+	Username           string `yaml:"username,omitempty"`
+	PasswordEnv        string `yaml:"password_env,omitempty"`
 	Token              string `yaml:"-"`
+	Password           string `yaml:"-"`
 }
 
 type OnboardingConfig struct {
@@ -45,6 +51,7 @@ type OnboardingConfig struct {
 	ArgoNamespace     string
 	ArgoTargetsFile   string
 	ArgoTargets       []ArgoTarget
+	ArgoCredentialKey []byte
 	GitHubAPIURL      string
 	GitHubOrg         string
 	GitHubToken       string
@@ -115,6 +122,10 @@ func loadOnboardingConfig() (OnboardingConfig, error) {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return OnboardingConfig{}, err
 	}
+	credentialKey, err := loadArgoCredentialKey(targets)
+	if err != nil {
+		return OnboardingConfig{}, err
+	}
 	appID, err := int64Value("GITHUB_APP_ID")
 	if err != nil {
 		return OnboardingConfig{}, err
@@ -143,6 +154,7 @@ func loadOnboardingConfig() (OnboardingConfig, error) {
 		ArgoNamespace:     valueOrDefault("ARGO_NAMESPACE", "argo-cd"),
 		ArgoTargetsFile:   targetsFile,
 		ArgoTargets:       targets,
+		ArgoCredentialKey: credentialKey,
 		GitHubAPIURL:      valueOrDefault("GITHUB_API_URL", "https://api.github.com"),
 		GitHubOrg:         valueOrDefault("GITHUB_ORG", "GitOpsHub"),
 		GitHubToken:       strings.TrimSpace(os.Getenv("GITHUB_TOKEN")),
@@ -186,6 +198,9 @@ func loadArgoTargets(path string) ([]ArgoTarget, error) {
 		target.ProviderResourceID = strings.TrimSpace(target.ProviderResourceID)
 		target.ServerURL = strings.TrimRight(strings.TrimSpace(target.ServerURL), "/")
 		target.TokenEnv = strings.TrimSpace(target.TokenEnv)
+		target.UIURL = strings.TrimRight(strings.TrimSpace(target.UIURL), "/")
+		target.Username = strings.TrimSpace(target.Username)
+		target.PasswordEnv = strings.TrimSpace(target.PasswordEnv)
 		if target.SourceID == "" || target.ProviderResourceID == "" ||
 			target.ServerURL == "" || target.TokenEnv == "" {
 			return nil, fmt.Errorf("Argo target %d requires source_id, provider_resource_id, server_url, and token_env", i+1)
@@ -199,8 +214,47 @@ func loadArgoTargets(path string) ([]ArgoTarget, error) {
 		if target.Token == "" {
 			return nil, fmt.Errorf("Argo target token environment variable %s is empty", target.TokenEnv)
 		}
+		hasUIAccess := target.UIURL != "" || target.Username != "" || target.PasswordEnv != ""
+		if hasUIAccess {
+			parsed, parseErr := url.Parse(target.UIURL)
+			if target.UIURL == "" || target.Username == "" || target.PasswordEnv == "" ||
+				parseErr != nil || parsed.Scheme != "https" || parsed.Host == "" {
+				return nil, fmt.Errorf(
+					"Argo target %d UI access requires an HTTPS ui_url, username, and password_env",
+					i+1,
+				)
+			}
+			target.Password = os.Getenv(target.PasswordEnv)
+			if target.Password == "" {
+				return nil, fmt.Errorf(
+					"Argo target password environment variable %s is empty",
+					target.PasswordEnv,
+				)
+			}
+		}
 	}
 	return document.Targets, nil
+}
+
+func loadArgoCredentialKey(targets []ArgoTarget) ([]byte, error) {
+	var needsKey bool
+	for _, target := range targets {
+		if target.Password != "" {
+			needsKey = true
+			break
+		}
+	}
+	if !needsKey {
+		return nil, nil
+	}
+	encoded := strings.TrimSpace(os.Getenv("ARGO_CREDENTIAL_ENCRYPTION_KEY"))
+	key, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || len(key) != 32 {
+		return nil, errors.New(
+			"ARGO_CREDENTIAL_ENCRYPTION_KEY must be a base64-encoded 32-byte key",
+		)
+	}
+	return key, nil
 }
 
 func (c Config) Address() string {

@@ -69,6 +69,13 @@ function mockAPI() {
         { status: 202 },
       )
     }
+    if (url.endsWith('/clusters/cluster-1/argo-access')) {
+      return Response.json({
+        url: 'https://argo.example.test',
+        username: 'kubeops',
+        password: 'cluster-password',
+      })
+    }
     if (url.endsWith('/clusters/cluster-1/details')) {
       return Response.json({
         cluster: {
@@ -301,6 +308,12 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: 'Node pools' })).toBeInTheDocument()
     expect(await screen.findByText('vpc-123')).toBeInTheDocument()
     expect(screen.getByText('subnet-a, subnet-b')).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: 'Open Argo CD' })).toHaveAttribute(
+      'href',
+      'https://argo.example.test',
+    )
+    expect(screen.getByText('kubeops')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Copy password' })).toBeInTheDocument()
 
     const desiredInput = screen.getByRole('spinbutton', { name: 'Desired nodes' })
     await user.clear(desiredInput)

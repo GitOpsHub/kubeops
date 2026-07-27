@@ -272,6 +272,48 @@ func (s *Store) GetCluster(ctx context.Context, id string) (model.Cluster, error
 	return cluster, nil
 }
 
+func (s *Store) UpsertArgoAccess(
+	ctx context.Context,
+	access model.EncryptedArgoAccess,
+) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO argo_cluster_access (
+			source_id, provider_resource_id, server_url, username,
+			password_ciphertext, password_nonce
+		) VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (source_id, provider_resource_id) DO UPDATE SET
+			server_url = EXCLUDED.server_url,
+			username = EXCLUDED.username,
+			password_ciphertext = EXCLUDED.password_ciphertext,
+			password_nonce = EXCLUDED.password_nonce,
+			updated_at = NOW()`,
+		access.SourceID, access.ProviderResourceID, access.URL, access.Username,
+		access.PasswordCiphertext, access.PasswordNonce,
+	)
+	return err
+}
+
+func (s *Store) GetArgoAccessByClusterID(
+	ctx context.Context,
+	clusterID string,
+) (model.EncryptedArgoAccess, error) {
+	var access model.EncryptedArgoAccess
+	err := s.pool.QueryRow(ctx, `
+		SELECT a.source_id, a.provider_resource_id, a.server_url, a.username,
+			a.password_ciphertext, a.password_nonce
+		FROM argo_cluster_access a
+		JOIN clusters c
+		  ON c.source_id = a.source_id
+		 AND c.provider_resource_id = a.provider_resource_id
+		WHERE c.id = $1`,
+		clusterID,
+	).Scan(
+		&access.SourceID, &access.ProviderResourceID, &access.URL, &access.Username,
+		&access.PasswordCiphertext, &access.PasswordNonce,
+	)
+	return access, err
+}
+
 func (s *Store) ListSyncRuns(ctx context.Context, limit int) ([]model.SyncRun, error) {
 	if limit < 1 || limit > 200 {
 		limit = 50

@@ -1,12 +1,14 @@
 package onboarding
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
 
 	"github.com/GitOpsHub/kubeops/backend/internal/config"
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
+	"github.com/GitOpsHub/kubeops/backend/internal/secure"
 )
 
 type fakeRepository struct {
@@ -14,6 +16,7 @@ type fakeRepository struct {
 	record   model.ApplicationOnboarding
 	active   []model.ApplicationDeployment
 	updates  map[string]model.ApplicationDeployment
+	access   model.EncryptedArgoAccess
 }
 
 func (f *fakeRepository) GetClustersByIDs(context.Context, []string) ([]model.Cluster, error) {
@@ -75,6 +78,13 @@ func (f *fakeRepository) UpdateApplicationDeployment(
 	target.HealthStatus = healthStatus
 	target.Message = message
 	f.updates[id] = target
+	return nil
+}
+func (f *fakeRepository) UpsertArgoAccess(
+	_ context.Context,
+	access model.EncryptedArgoAccess,
+) error {
+	f.access = access
 	return nil
 }
 
@@ -158,6 +168,35 @@ func TestCreateApplicationOnboarding(t *testing.T) {
 	if client.created.ValuesRepoURL != valuesManager.repository.CloneURL ||
 		record.ValuesRepositoryURL != valuesManager.repository.URL {
 		t.Fatalf("unexpected values repository: %#v, %#v", client.created, record)
+	}
+}
+
+func TestNewServiceEncryptsArgoUIAccess(t *testing.T) {
+	repository := &fakeRepository{}
+	key := bytes.Repeat([]byte{3}, secure.KeyBytes)
+	_, err := NewService(repository, config.OnboardingConfig{
+		ArgoCredentialKey: key,
+		RequestTimeout:    time.Second,
+		ArgoTargets: []config.ArgoTarget{{
+			SourceID: "docker-local", ProviderResourceID: "docker-desktop",
+			ServerURL: "https://localhost:18081", Token: "api-token",
+			UIURL: "https://localhost:18081", Username: "kubeops",
+			Password: "login-password",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(repository.access.PasswordCiphertext, []byte("login-password")) {
+		t.Fatal("stored Argo CD credential exposed plaintext")
+	}
+	password, err := secure.Decrypt(
+		key,
+		repository.access.PasswordCiphertext,
+		repository.access.PasswordNonce,
+	)
+	if err != nil || string(password) != "login-password" {
+		t.Fatalf("unexpected stored credential: %q, %v", password, err)
 	}
 }
 

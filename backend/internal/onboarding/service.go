@@ -14,6 +14,7 @@ import (
 
 	"github.com/GitOpsHub/kubeops/backend/internal/config"
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
+	"github.com/GitOpsHub/kubeops/backend/internal/secure"
 	"gopkg.in/yaml.v3"
 )
 
@@ -32,6 +33,7 @@ type Repository interface {
 	ListApplicationOnboardings(context.Context, int) ([]model.ApplicationOnboarding, error)
 	ListActiveApplicationDeployments(context.Context) ([]model.ApplicationDeployment, error)
 	UpdateApplicationDeployment(context.Context, string, string, string, string, string) error
+	UpsertArgoAccess(context.Context, model.EncryptedArgoAccess) error
 }
 
 type CreateInput struct {
@@ -86,6 +88,28 @@ func NewService(repository Repository, cfg config.OnboardingConfig) (*Service, e
 	github, err := NewGitHubClient(cfg)
 	if err != nil {
 		return nil, err
+	}
+	for _, target := range cfg.ArgoTargets {
+		if target.Password == "" {
+			continue
+		}
+		ciphertext, nonce, err := secure.Encrypt(
+			cfg.ArgoCredentialKey,
+			[]byte(target.Password),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("encrypt Argo CD UI credential: %w", err)
+		}
+		if err := repository.UpsertArgoAccess(context.Background(), model.EncryptedArgoAccess{
+			SourceID:           target.SourceID,
+			ProviderResourceID: target.ProviderResourceID,
+			URL:                target.UIURL,
+			Username:           target.Username,
+			PasswordCiphertext: ciphertext,
+			PasswordNonce:      nonce,
+		}); err != nil {
+			return nil, fmt.Errorf("persist Argo CD UI credential: %w", err)
+		}
 	}
 	return &Service{store: repository, config: cfg, clients: clients, github: github}, nil
 }

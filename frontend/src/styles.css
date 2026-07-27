@@ -1053,6 +1053,36 @@ pre {
   font-size: 1rem;
 }
 
+.argo-access-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.argo-access-actions a,
+.argo-access-actions button {
+  min-height: 36px;
+  padding: 8px 13px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  color: #3e4e67;
+  background: white;
+  font-size: 0.67rem;
+  font-weight: 730;
+  text-decoration: none;
+}
+
+.argo-access-actions a {
+  border-color: var(--blue);
+  color: white;
+  background: var(--blue);
+}
+
+.argo-access-actions a:hover,
+.argo-access-actions button:hover {
+  filter: brightness(0.96);
+}
+
 .overview-grid {
   grid-template-columns: repeat(3, 1fr) !important;
 }
