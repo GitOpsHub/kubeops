@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
@@ -113,11 +113,57 @@ describe('App', () => {
     mockAPI()
     render(<App />)
 
-    expect(await screen.findByRole('heading', { name: 'Fleet atlas' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Fleet control center' })).toBeInTheDocument()
     expect(await screen.findByText('prod-us-east')).toBeInTheDocument()
-    expect(screen.getAllByText('Google Cloud Platform')).not.toHaveLength(0)
-    expect(screen.getAllByText('Azure Platform')).not.toHaveLength(0)
+    expect(screen.getByRole('button', { name: /All clouds/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(screen.getByRole('button', { name: 'AWS, 1 cluster' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Azure, 3 clusters' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Google Cloud, 2 clusters' })).toBeInTheDocument()
     expect(screen.getByText('6')).toBeInTheDocument()
+  })
+
+  it('filters and searches within a selected cloud provider', async () => {
+    const fetchMock = mockAPI()
+    render(<App />)
+    const user = userEvent.setup()
+
+    await user.click(await screen.findByRole('button', { name: 'Azure, 3 clusters' }))
+    const scopedSearch = screen.getByRole('searchbox', { name: 'Search within Azure' })
+    await user.type(scopedSearch, 'payments')
+
+    await waitFor(() => {
+      const clusterRequests = fetchMock.mock.calls
+        .map(([request]) => String(request))
+        .filter((url) => url.includes('/clusters?'))
+      expect(clusterRequests.some((url) => url.includes('provider=azure'))).toBe(true)
+      expect(clusterRequests.some((url) => url.includes('search=payments'))).toBe(true)
+    })
+  })
+
+  it('uses the global search across all providers', async () => {
+    const fetchMock = mockAPI()
+    render(<App />)
+    const user = userEvent.setup()
+
+    await user.click(await screen.findByRole('button', { name: 'AWS, 1 cluster' }))
+    await user.type(
+      screen.getByRole('searchbox', { name: 'Search all clusters across providers' }),
+      'production',
+    )
+
+    await waitFor(() => {
+      const clusterRequests = fetchMock.mock.calls
+        .map(([request]) => String(request))
+        .filter((url) => url.includes('/clusters?') && url.includes('search=production'))
+      expect(clusterRequests.some((url) => !url.includes('provider='))).toBe(true)
+    })
+    expect(screen.getByRole('button', { name: /All clouds/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
   })
 
   it('queues a manual cloud source sync', async () => {

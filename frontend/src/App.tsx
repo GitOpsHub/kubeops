@@ -9,16 +9,17 @@ import {
   getSyncRuns,
   queueSourceSync,
 } from './api/inventory'
+import { KubernetesLogo, ProviderLogo } from './components/BrandIcons'
 
 const providerLabels: Record<Provider, string> = {
   aws: 'AWS',
-  gcp: 'Google Cloud',
   azure: 'Azure',
+  gcp: 'Google Cloud',
   docker: 'Docker',
   minikube: 'Minikube',
 }
 
-const providers: Provider[] = ['aws', 'gcp', 'azure', 'docker', 'minikube']
+const providers: Provider[] = ['aws', 'azure', 'gcp', 'docker', 'minikube']
 
 function relativeTime(value: string | null) {
   if (!value) return 'Never'
@@ -34,6 +35,10 @@ function isStale(value: string | null) {
   return !value || Date.now() - new Date(value).getTime() > 11 * 60 * 1000
 }
 
+function clusterCountLabel(count: number) {
+  return `${count} ${count === 1 ? 'cluster' : 'clusters'}`
+}
+
 function App() {
   const [sources, setSources] = useState<CloudSource[]>([])
   const [clusters, setClusters] = useState<Cluster[]>([])
@@ -41,13 +46,16 @@ function App() {
   const [total, setTotal] = useState(0)
   const [provider, setProvider] = useState<Provider | ''>('')
   const [source, setSource] = useState('')
-  const [search, setSearch] = useState('')
+  const [globalSearch, setGlobalSearch] = useState('')
+  const [providerSearch, setProviderSearch] = useState('')
   const [includeRemoved, setIncludeRemoved] = useState(false)
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [refreshing, setRefreshing] = useState('')
   const [selectedCluster, setSelectedCluster] = useState<Cluster | null>(null)
+
+  const search = provider ? providerSearch : globalSearch
 
   const loadDashboard = useCallback(
     async (signal?: AbortSignal, quiet = false) => {
@@ -96,12 +104,16 @@ function App() {
             .reduce((sum, entry) => sum + entry.clusterCount, 0)
           return result
         },
-        { aws: 0, gcp: 0, azure: 0, docker: 0, minikube: 0 },
+        { aws: 0, azure: 0, gcp: 0, docker: 0, minikube: 0 },
       ),
     [sources],
   )
 
-  const fleetTotal = counts.aws + counts.gcp + counts.azure
+  const fleetTotal = providers.reduce((sum, item) => sum + counts[item], 0)
+  const activeSources = sources.filter((item) => item.enabled).length
+  const availableSources = provider
+    ? sources.filter((item) => item.provider === provider)
+    : sources
   const totalPages = Math.max(1, Math.ceil(total / 25))
   const latestRun = runs[0]
 
@@ -122,21 +134,38 @@ function App() {
     setPage(1)
   }
 
+  function selectProvider(nextProvider: Provider | '') {
+    updateFilter(() => {
+      setProvider(nextProvider)
+      setSource('')
+    })
+  }
+
+  function updateGlobalSearch(value: string) {
+    updateFilter(() => {
+      setGlobalSearch(value)
+      setProvider('')
+      setSource('')
+    })
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <a className="brand" href="/" aria-label="KubeOps home">
-          <span className="brand-mark" aria-hidden="true">
-            K
+          <KubernetesLogo className="brand-mark" />
+          <span>
+            <strong>KubeOps</strong>
+            <small>Control plane</small>
           </span>
-          <span>KubeOps</span>
         </a>
+        <p className="nav-label">Workspace</p>
         <nav aria-label="Primary navigation">
           <a className="nav-item nav-item--active" href="#inventory">
-            <span aria-hidden="true">⌁</span> Fleet inventory
+            <span aria-hidden="true">◫</span> Cluster inventory
           </a>
           <a className="nav-item" href="#sources">
-            <span aria-hidden="true">◎</span> Cloud sources
+            <span aria-hidden="true">⌁</span> Cloud sources
           </a>
           <a className="nav-item" href="#activity">
             <span aria-hidden="true">↻</span> Sync activity
@@ -144,304 +173,366 @@ function App() {
         </nav>
         <div className="sidebar-foot">
           <span className="pulse" aria-hidden="true" />
-          Polling every 5 minutes
+          <span>
+            <strong>Discovery active</strong>
+            <small>Every 5 minutes</small>
+          </span>
         </div>
       </aside>
 
       <main className="dashboard" id="inventory">
-        <header className="dashboard-header">
-          <div>
-            <p className="kicker">Multi-cloud Kubernetes inventory</p>
-            <h1>Fleet atlas</h1>
+        <header className="topbar">
+          <div className="breadcrumb">
+            <span>Platform operations</span>
+            <span aria-hidden="true">/</span>
+            <strong>Cluster inventory</strong>
           </div>
+          <label className="global-search">
+            <span className="search-icon" aria-hidden="true">⌕</span>
+            <span className="sr-only">Search all clusters across providers</span>
+            <input
+              aria-label="Search all clusters across providers"
+              type="search"
+              placeholder="Search cluster names across all providers"
+              value={globalSearch}
+              onChange={(event) => updateGlobalSearch(event.target.value)}
+            />
+            <kbd>Global</kbd>
+          </label>
           <div className="sync-readout">
             <span className={`sync-dot sync-dot--${latestRun?.status || 'idle'}`} />
             <div>
-              <strong>{latestRun ? `Latest sync ${latestRun.status}` : 'Waiting for first sync'}</strong>
-              <span>{latestRun ? relativeTime(latestRun.queuedAt) : 'Cloud sources are idle'}</span>
+              <strong>{latestRun ? `Sync ${latestRun.status}` : 'Awaiting sync'}</strong>
+              <span>{latestRun ? relativeTime(latestRun.queuedAt) : 'No activity yet'}</span>
             </div>
           </div>
         </header>
 
-        {error && (
-          <div className="error-banner" role="alert">
+        <div className="dashboard-content">
+          <header className="page-heading">
             <div>
-              <strong>Inventory update failed</strong>
-              <span>{error}</span>
+              <p className="kicker">Kubernetes estate</p>
+              <h1>Fleet control center</h1>
+              <p>Search, filter, and reconcile every managed and local cluster from one view.</p>
             </div>
-            <button type="button" className="text-button" onClick={() => void loadDashboard()}>
-              Try again
-            </button>
-          </div>
-        )}
+            <div className="fleet-metric" aria-label={`${fleetTotal} clusters across ${activeSources} sources`}>
+              <span>Fleet size</span>
+              <strong>{fleetTotal}</strong>
+              <small>{activeSources} active sources</small>
+            </div>
+          </header>
 
-        <section className="fleet-rail" aria-label="Fleet summary">
-          <div className="fleet-total">
-            <span>Managed clusters</span>
-            <strong>{fleetTotal}</strong>
-            <small>across {sources.filter((item) => item.enabled).length} active sources</small>
-          </div>
-          <div className="provider-track">
-            <div className="track-bars" aria-hidden="true">
-              {providers.map((item) => (
-                <span
-                  key={item}
-                  className={`track-bar track-bar--${item}`}
-                  style={{
-                    flexGrow: fleetTotal ? Math.max(counts[item], fleetTotal * 0.04) : 1,
-                  }}
-                />
-              ))}
+          {error && (
+            <div className="error-banner" role="alert">
+              <div>
+                <strong>Inventory update failed</strong>
+                <span>{error}</span>
+              </div>
+              <button type="button" className="text-button" onClick={() => void loadDashboard()}>
+                Try again
+              </button>
             </div>
-            <div className="provider-stats">
+          )}
+
+          <section className="provider-console" aria-labelledby="provider-filter-heading">
+            <div className="console-heading">
+              <div>
+                <p className="section-label">Provider scope</p>
+                <h2 id="provider-filter-heading">Choose the estate to inspect</h2>
+              </div>
+              <span>{provider ? `${providerLabels[provider]} only` : 'All providers'}</span>
+            </div>
+
+            <div className="provider-selector" role="group" aria-label="Filter by cloud provider">
+              <button
+                type="button"
+                className={`provider-button provider-button--all ${!provider ? 'is-selected' : ''}`}
+                onClick={() => selectProvider('')}
+                aria-pressed={!provider}
+                aria-label={`All clouds, ${clusterCountLabel(fleetTotal)}`}
+              >
+                <span className="all-clouds-icon" aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
+                </span>
+                <span>
+                  <strong>All clouds</strong>
+                  <small>{clusterCountLabel(fleetTotal)}</small>
+                </span>
+              </button>
               {providers.map((item) => (
                 <button
                   type="button"
-                  className={`provider-stat provider-stat--${item} ${
-                    provider === item ? 'provider-stat--selected' : ''
+                  className={`provider-button provider-button--${item} ${
+                    provider === item ? 'is-selected' : ''
                   }`}
                   key={item}
-                  onClick={() => updateFilter(() => setProvider(provider === item ? '' : item))}
+                  onClick={() => selectProvider(item)}
                   aria-pressed={provider === item}
+                  aria-label={`${providerLabels[item]}, ${clusterCountLabel(counts[item])}`}
                 >
-                  <span>{providerLabels[item]}</span>
-                  <strong>{counts[item]}</strong>
+                  <ProviderLogo provider={item} className="provider-logo" />
+                  <span>
+                    <strong>{providerLabels[item]}</strong>
+                    <small>{clusterCountLabel(counts[item])}</small>
+                  </span>
+                  <span className="selection-check" aria-hidden="true">✓</span>
                 </button>
               ))}
             </div>
-          </div>
-        </section>
 
-        <section className="inventory-section" aria-labelledby="inventory-heading">
-          <div className="section-heading">
-            <div>
-              <p className="section-label">Live inventory</p>
-              <h2 id="inventory-heading">{total} clusters in view</h2>
-            </div>
-            <span className="quiet-note">Auto-refreshes every 30 seconds</span>
-          </div>
-
-          <div className="filters">
-            <label className="search-field">
-              <span className="sr-only">Search clusters</span>
-              <span aria-hidden="true">⌕</span>
-              <input
-                type="search"
-                placeholder="Search cluster name"
-                value={search}
-                onChange={(event) => updateFilter(() => setSearch(event.target.value))}
-              />
-            </label>
-            <label>
-              <span className="sr-only">Cloud provider</span>
-              <select
-                value={provider}
-                onChange={(event) =>
-                  updateFilter(() => setProvider(event.target.value as Provider | ''))
-                }
-              >
-                <option value="">All providers</option>
-                <option value="aws">AWS</option>
-                <option value="gcp">Google Cloud</option>
-                <option value="azure">Azure</option>
-                <option value="docker">Docker</option>
-                <option value="minikube">Minikube</option>
-              </select>
-            </label>
-            <label>
-              <span className="sr-only">Cloud source</span>
-              <select
-                value={source}
-                onChange={(event) => updateFilter(() => setSource(event.target.value))}
-              >
-                <option value="">All sources</option>
-                {sources.map((item) => (
-                  <option value={item.id} key={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="toggle">
-              <input
-                type="checkbox"
-                checked={includeRemoved}
-                onChange={(event) =>
-                  updateFilter(() => setIncludeRemoved(event.target.checked))
-                }
-              />
-              <span aria-hidden="true" />
-              Show removed
-            </label>
-          </div>
-
-          <div className="table-frame">
-            {loading ? (
-              <div className="table-state" role="status">
-                <span className="loader" aria-hidden="true" />
-                Mapping the fleet…
-              </div>
-            ) : clusters.length === 0 ? (
-              <div className="table-state">
-                <strong>No clusters match this view</strong>
-                <span>Adjust the filters or sync an enabled cloud source.</span>
-              </div>
-            ) : (
-              <div className="table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Cluster</th>
-                      <th>Provider</th>
-                      <th>Location</th>
-                      <th>Version</th>
-                      <th>Status</th>
-                      <th>Endpoint</th>
-                      <th>Nodes</th>
-                      <th>Last seen</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {clusters.map((cluster) => (
-                      <tr
-                        key={cluster.id}
-                        className={cluster.removedAt ? 'removed-row' : ''}
-                        onClick={() => setSelectedCluster(cluster)}
-                      >
-                        <td>
-                          <button
-                            type="button"
-                            className="cluster-name"
-                            onClick={() => setSelectedCluster(cluster)}
-                          >
-                            <span className={`provider-glyph provider-glyph--${cluster.provider}`}>
-                              {cluster.provider.slice(0, 1).toUpperCase()}
-                            </span>
-                            <span>
-                              <strong>{cluster.name}</strong>
-                              <small>{cluster.sourceName}</small>
-                            </span>
-                          </button>
-                        </td>
-                        <td>{providerLabels[cluster.provider]}</td>
-                        <td className="mono">{cluster.location}</td>
-                        <td className="mono">{cluster.kubernetesVersion || '—'}</td>
-                        <td>
-                          <span className={`status-pill status-pill--${cluster.status}`}>
-                            {cluster.removedAt ? 'removed' : cluster.status}
-                          </span>
-                        </td>
-                        <td>{cluster.endpointAccess}</td>
-                        <td>{cluster.nodeCount ?? '—'}</td>
-                        <td className={isStale(cluster.lastSeenAt) ? 'stale' : ''}>
-                          {relativeTime(cluster.lastSeenAt)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            {provider && (
+              <div className="provider-search-row">
+                <label className="provider-search">
+                  <span className="search-icon" aria-hidden="true">⌕</span>
+                  <span className="sr-only">Search within {providerLabels[provider]}</span>
+                  <input
+                    aria-label={`Search within ${providerLabels[provider]}`}
+                    autoFocus
+                    type="search"
+                    placeholder={`Search ${providerLabels[provider]} clusters`}
+                    value={providerSearch}
+                    onChange={(event) =>
+                      updateFilter(() => setProviderSearch(event.target.value))
+                    }
+                  />
+                </label>
+                <span>
+                  Searching within <strong>{providerLabels[provider]}</strong>
+                </span>
               </div>
             )}
-            <div className="pagination">
-              <span>
-                Page {page} of {totalPages}
-              </span>
-              <div>
-                <button
-                  type="button"
-                  disabled={page === 1}
-                  onClick={() => setPage((current) => current - 1)}
-                >
-                  Previous
-                </button>
-                <button
-                  type="button"
-                  disabled={page >= totalPages}
-                  onClick={() => setPage((current) => current + 1)}
-                >
-                  Next
-                </button>
-              </div>
-            </div>
-          </div>
-        </section>
+          </section>
 
-        <section className="lower-grid">
-          <div id="sources">
-            <div className="section-heading section-heading--compact">
+          <section className="inventory-section" aria-labelledby="inventory-heading">
+            <div className="section-heading">
               <div>
-                <p className="section-label">Connections</p>
-                <h2>Cloud sources</h2>
+                <p className="section-label">Live inventory</p>
+                <h2 id="inventory-heading">
+                  {provider ? providerLabels[provider] : 'All providers'}
+                  <span>{total} results</span>
+                </h2>
               </div>
+              <span className="quiet-note">Refreshes every 30 seconds</span>
             </div>
-            <div className="source-list">
-              {sources.length === 0 ? (
-                <div className="empty-panel">
-                  Add a source to <code>config/cloud-sources.yaml</code> to begin discovery.
+
+            <div className="filter-toolbar">
+              <label>
+                <span>Source</span>
+                <select
+                  value={source}
+                  onChange={(event) => updateFilter(() => setSource(event.target.value))}
+                >
+                  <option value="">All {provider ? providerLabels[provider] : ''} sources</option>
+                  {availableSources.map((item) => (
+                    <option value={item.id} key={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="toggle">
+                <input
+                  type="checkbox"
+                  checked={includeRemoved}
+                  onChange={(event) =>
+                    updateFilter(() => setIncludeRemoved(event.target.checked))
+                  }
+                />
+                <span aria-hidden="true" />
+                Include removed clusters
+              </label>
+              {(search || source || includeRemoved) && (
+                <button
+                  type="button"
+                  className="clear-filters"
+                  onClick={() =>
+                    updateFilter(() => {
+                      setGlobalSearch('')
+                      setProviderSearch('')
+                      setSource('')
+                      setIncludeRemoved(false)
+                    })
+                  }
+                >
+                  Clear filters
+                </button>
+              )}
+            </div>
+
+            <div className="table-frame">
+              {loading ? (
+                <div className="table-state" role="status">
+                  <span className="loader" aria-hidden="true" />
+                  Loading cluster inventory…
+                </div>
+              ) : clusters.length === 0 ? (
+                <div className="table-state">
+                  <KubernetesLogo className="empty-kubernetes-logo" />
+                  <strong>No clusters match this view</strong>
+                  <span>Clear the search or sync an enabled provider source.</span>
                 </div>
               ) : (
-                sources.map((item) => (
-                  <article className="source-row" key={item.id}>
-                    <span className={`provider-glyph provider-glyph--${item.provider}`}>
-                      {item.provider.slice(0, 1).toUpperCase()}
-                    </span>
-                    <div className="source-copy">
-                      <strong>{item.name}</strong>
-                      <span>
-                        {item.scopeId} · {item.clusterCount} clusters
-                      </span>
-                    </div>
-                    <div className="source-state">
-                      <span
-                        className={`source-status source-status--${item.lastSyncStatus}`}
-                      >
-                        {isStale(item.lastSyncAt) && item.lastSyncStatus === 'succeeded'
-                          ? 'stale'
-                          : item.lastSyncStatus}
-                      </span>
-                      <small>{relativeTime(item.lastSyncAt)}</small>
-                    </div>
-                    <button
-                      type="button"
-                      className="refresh-button"
-                      onClick={() => void refreshSource(item)}
-                      disabled={!item.enabled || refreshing === item.id}
-                    >
-                      {refreshing === item.id ? 'Queueing…' : 'Sync now'}
-                    </button>
-                  </article>
-                ))
+                <div className="table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Cluster</th>
+                        <th>Cloud provider</th>
+                        <th>Location</th>
+                        <th>Version</th>
+                        <th>Health</th>
+                        <th>Endpoint</th>
+                        <th>Nodes</th>
+                        <th>Last seen</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {clusters.map((cluster) => (
+                        <tr
+                          key={cluster.id}
+                          className={cluster.removedAt ? 'removed-row' : ''}
+                          onClick={() => setSelectedCluster(cluster)}
+                        >
+                          <td>
+                            <button
+                              type="button"
+                              className="cluster-name"
+                              onClick={() => setSelectedCluster(cluster)}
+                            >
+                              <span className="cluster-logo-stack">
+                                <KubernetesLogo className="kubernetes-logo" />
+                                <ProviderLogo
+                                  provider={cluster.provider}
+                                  className="provider-logo provider-logo--badge"
+                                />
+                              </span>
+                              <span>
+                                <strong>{cluster.name}</strong>
+                                <small>{cluster.sourceName}</small>
+                              </span>
+                            </button>
+                          </td>
+                          <td>
+                            <span className="provider-cell">
+                              <ProviderLogo provider={cluster.provider} className="provider-logo" />
+                              {providerLabels[cluster.provider]}
+                            </span>
+                          </td>
+                          <td className="mono">{cluster.location}</td>
+                          <td className="mono">{cluster.kubernetesVersion || '—'}</td>
+                          <td>
+                            <span className={`status-pill status-pill--${cluster.status}`}>
+                              {cluster.removedAt ? 'removed' : cluster.status}
+                            </span>
+                          </td>
+                          <td className="capitalize">{cluster.endpointAccess}</td>
+                          <td>{cluster.nodeCount ?? '—'}</td>
+                          <td className={isStale(cluster.lastSeenAt) ? 'stale' : ''}>
+                            {relativeTime(cluster.lastSeenAt)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
-            </div>
-          </div>
-
-          <div id="activity">
-            <div className="section-heading section-heading--compact">
-              <div>
-                <p className="section-label">Reconciliation</p>
-                <h2>Recent syncs</h2>
+              <div className="pagination">
+                <span>
+                  Page {page} of {totalPages} · {total} clusters
+                </span>
+                <div>
+                  <button
+                    type="button"
+                    disabled={page === 1}
+                    onClick={() => setPage((current) => current - 1)}
+                  >
+                    Previous
+                  </button>
+                  <button
+                    type="button"
+                    disabled={page >= totalPages}
+                    onClick={() => setPage((current) => current + 1)}
+                  >
+                    Next
+                  </button>
+                </div>
               </div>
             </div>
-            <div className="activity-list">
-              {runs.length === 0 ? (
-                <div className="empty-panel">Sync activity will appear here.</div>
-              ) : (
-                runs.slice(0, 6).map((run) => (
-                  <article className="activity-row" key={run.id}>
-                    <span className={`sync-dot sync-dot--${run.status}`} />
-                    <div>
-                      <strong>{run.sourceName}</strong>
-                      <span>
-                        {run.trigger} · {run.discoveredCount} discovered
+          </section>
+
+          <section className="lower-grid">
+            <div id="sources">
+              <div className="section-heading section-heading--compact">
+                <div>
+                  <p className="section-label">Connections</p>
+                  <h2>Cloud sources</h2>
+                </div>
+              </div>
+              <div className="source-list">
+                {sources.length === 0 ? (
+                  <div className="empty-panel">
+                    Add a source to <code>config/cloud-sources.yaml</code> to begin discovery.
+                  </div>
+                ) : (
+                  sources.map((item) => (
+                    <article className="source-row" key={item.id}>
+                      <span className="source-logo">
+                        <ProviderLogo provider={item.provider} className="provider-logo" />
                       </span>
-                    </div>
-                    <time dateTime={run.queuedAt}>{relativeTime(run.queuedAt)}</time>
-                  </article>
-                ))
-              )}
+                      <div className="source-copy">
+                        <strong>{item.name}</strong>
+                        <span>{item.scopeId} · {item.clusterCount} clusters</span>
+                      </div>
+                      <div className="source-state">
+                        <span className={`source-status source-status--${item.lastSyncStatus}`}>
+                          {isStale(item.lastSyncAt) && item.lastSyncStatus === 'succeeded'
+                            ? 'stale'
+                            : item.lastSyncStatus}
+                        </span>
+                        <small>{relativeTime(item.lastSyncAt)}</small>
+                      </div>
+                      <button
+                        type="button"
+                        className="refresh-button"
+                        onClick={() => void refreshSource(item)}
+                        disabled={!item.enabled || refreshing === item.id}
+                      >
+                        {refreshing === item.id ? 'Queueing…' : 'Sync now'}
+                      </button>
+                    </article>
+                  ))
+                )}
+              </div>
             </div>
-          </div>
-        </section>
+
+            <div id="activity">
+              <div className="section-heading section-heading--compact">
+                <div>
+                  <p className="section-label">Reconciliation</p>
+                  <h2>Recent syncs</h2>
+                </div>
+              </div>
+              <div className="activity-list">
+                {runs.length === 0 ? (
+                  <div className="empty-panel">Sync activity will appear here.</div>
+                ) : (
+                  runs.slice(0, 6).map((run) => (
+                    <article className="activity-row" key={run.id}>
+                      <span className={`sync-dot sync-dot--${run.status}`} />
+                      <div>
+                        <strong>{run.sourceName}</strong>
+                        <span>{run.trigger} · {run.discoveredCount} discovered</span>
+                      </div>
+                      <time dateTime={run.queuedAt}>{relativeTime(run.queuedAt)}</time>
+                    </article>
+                  ))
+                )}
+              </div>
+            </div>
+          </section>
+        </div>
       </main>
 
       {selectedCluster && (
@@ -461,8 +552,13 @@ function App() {
             >
               ×
             </button>
-            <p className="section-label">{providerLabels[selectedCluster.provider]}</p>
-            <h2 id="cluster-detail-title">{selectedCluster.name}</h2>
+            <div className="drawer-identity">
+              <KubernetesLogo className="drawer-kubernetes-logo" />
+              <div>
+                <p className="section-label">{providerLabels[selectedCluster.provider]}</p>
+                <h2 id="cluster-detail-title">{selectedCluster.name}</h2>
+              </div>
+            </div>
             <p className="drawer-source">
               {selectedCluster.sourceName} · {selectedCluster.location}
             </p>
