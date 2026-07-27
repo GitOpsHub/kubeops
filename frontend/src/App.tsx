@@ -10,6 +10,7 @@ import {
   queueSourceSync,
 } from './api/inventory'
 import { KubernetesLogo, ProviderLogo } from './components/BrandIcons'
+import { ClusterDetailDrawer } from './components/ClusterDetailDrawer'
 
 const providerLabels: Record<Provider, string> = {
   aws: 'EKS',
@@ -500,68 +501,10 @@ function App() {
       </main>
 
       {selectedCluster && (
-        <div className="drawer-backdrop" role="presentation" onClick={() => setSelectedCluster(null)}>
-          <aside
-            className="detail-drawer"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="cluster-detail-title"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <button
-              className="drawer-close"
-              type="button"
-              onClick={() => setSelectedCluster(null)}
-              aria-label="Close cluster details"
-            >
-              ×
-            </button>
-            <div className="drawer-identity">
-              <KubernetesLogo className="drawer-kubernetes-logo" />
-              <div>
-                <p className="section-label">{providerLabels[selectedCluster.provider]}</p>
-                <h2 id="cluster-detail-title">{selectedCluster.name}</h2>
-              </div>
-            </div>
-            <p className="drawer-source">
-              {selectedCluster.sourceName} · {selectedCluster.location}
-            </p>
-            <dl>
-              <div>
-                <dt>Status</dt>
-                <dd>{selectedCluster.removedAt ? 'removed' : selectedCluster.status}</dd>
-              </div>
-              <div>
-                <dt>Kubernetes</dt>
-                <dd>{selectedCluster.kubernetesVersion || 'Unknown'}</dd>
-              </div>
-              <div>
-                <dt>Endpoint</dt>
-                <dd>{selectedCluster.endpointAccess}</dd>
-              </div>
-              <div>
-                <dt>Nodes</dt>
-                <dd>{selectedCluster.nodeCount ?? 'Not reported'}</dd>
-              </div>
-              <div>
-                <dt>First seen</dt>
-                <dd>{new Date(selectedCluster.firstSeenAt).toLocaleString()}</dd>
-              </div>
-              <div>
-                <dt>Last seen</dt>
-                <dd>{new Date(selectedCluster.lastSeenAt).toLocaleString()}</dd>
-              </div>
-            </dl>
-            <div className="resource-id">
-              <span>Provider resource ID</span>
-              <code>{selectedCluster.providerResourceId}</code>
-            </div>
-            <div className="metadata">
-              <span>Provider metadata</span>
-              <pre>{JSON.stringify(selectedCluster.metadata, null, 2)}</pre>
-            </div>
-          </aside>
-        </div>
+        <ClusterDetailDrawer
+          cluster={selectedCluster}
+          onClose={() => setSelectedCluster(null)}
+        />
       )}
     </div>
   )

@@ -247,6 +247,31 @@ func (s *Store) ListClusters(ctx context.Context, filter model.ClusterFilter) (m
 	}, rows.Err()
 }
 
+func (s *Store) GetCluster(ctx context.Context, id string) (model.Cluster, error) {
+	var cluster model.Cluster
+	var metadata []byte
+	err := s.pool.QueryRow(ctx, `
+		SELECT c.id, c.source_id, s.name, c.provider, c.provider_resource_id, c.name,
+			c.location, c.kubernetes_version, c.status, c.endpoint_access,
+			c.node_count, c.metadata, c.first_seen_at, c.last_seen_at, c.updated_at, c.removed_at
+		FROM clusters c
+		JOIN cloud_sources s ON s.id = c.source_id
+		WHERE c.id = $1`, id).Scan(
+		&cluster.ID, &cluster.SourceID, &cluster.SourceName, &cluster.Provider,
+		&cluster.ProviderResourceID, &cluster.Name, &cluster.Location,
+		&cluster.KubernetesVersion, &cluster.Status, &cluster.EndpointAccess,
+		&cluster.NodeCount, &metadata, &cluster.FirstSeenAt, &cluster.LastSeenAt,
+		&cluster.UpdatedAt, &cluster.RemovedAt,
+	)
+	if err != nil {
+		return model.Cluster{}, err
+	}
+	if err := json.Unmarshal(metadata, &cluster.Metadata); err != nil {
+		return model.Cluster{}, err
+	}
+	return cluster, nil
+}
+
 func (s *Store) ListSyncRuns(ctx context.Context, limit int) ([]model.SyncRun, error) {
 	if limit < 1 || limit > 200 {
 		limit = 50

@@ -56,8 +56,12 @@ func main() {
 	syncService.Start(ctx)
 
 	server := &http.Server{
-		Addr:              cfg.Address(),
-		Handler:           httpapi.NewHandler(cfg, repository),
+		Addr: cfg.Address(),
+		Handler: httpapi.NewHandler(cfg, repository, provider.ManagementRegistry{
+			model.ProviderAWS:   provider.AWS{},
+			model.ProviderGCP:   provider.GCP{},
+			model.ProviderAzure: provider.Azure{},
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,

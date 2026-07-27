@@ -11,32 +11,143 @@ import (
 
 	"github.com/GitOpsHub/kubeops/backend/internal/config"
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
+	"github.com/GitOpsHub/kubeops/backend/internal/provider"
 	"github.com/GitOpsHub/kubeops/backend/internal/store"
+	"github.com/jackc/pgx/v5"
 )
 
 type Repository interface {
 	Ready(context.Context) error
 	ListSources(context.Context) ([]model.SourceSummary, error)
 	ListClusters(context.Context, model.ClusterFilter) (model.ClusterPage, error)
+	GetCluster(context.Context, string) (model.Cluster, error)
 	ListSyncRuns(context.Context, int) ([]model.SyncRun, error)
 	QueueSync(context.Context, string, string) (model.SyncRun, error)
 }
 
-type API struct {
-	config config.Config
-	store  Repository
+type ClusterManager interface {
+	Details(context.Context, model.CloudSource, model.Cluster) (model.ClusterDetails, error)
+	ScaleNodePool(context.Context, model.CloudSource, model.Cluster, string, int32) (model.ScaleResult, error)
 }
 
-func NewHandler(cfg config.Config, repository Repository) http.Handler {
-	api := &API{config: cfg, store: repository}
+type API struct {
+	config  config.Config
+	store   Repository
+	manager ClusterManager
+}
+
+func NewHandler(cfg config.Config, repository Repository, managers ...ClusterManager) http.Handler {
+	var manager ClusterManager = provider.ManagementRegistry{}
+	if len(managers) > 0 && managers[0] != nil {
+		manager = managers[0]
+	}
+	api := &API{config: cfg, store: repository, manager: manager}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", api.health)
 	mux.HandleFunc("GET /api/ready", api.ready)
 	mux.HandleFunc("GET /api/clusters", api.clusters)
+	mux.HandleFunc("GET /api/clusters/{id}/details", api.clusterDetails)
+	mux.HandleFunc("POST /api/clusters/{id}/node-pools/{pool}/scale", api.scaleNodePool)
 	mux.HandleFunc("GET /api/cloud-sources", api.sources)
 	mux.HandleFunc("GET /api/sync-runs", api.syncRuns)
 	mux.HandleFunc("POST /api/cloud-sources/{id}/sync", api.queueSync)
 	return withCORS(withRequestLog(mux), cfg.CORSAllowedOrigin)
+}
+
+func (api *API) source(id string) (model.CloudSource, bool) {
+	for _, source := range api.config.CloudSources {
+		if source.ID == id {
+			return source, true
+		}
+	}
+	return model.CloudSource{}, false
+}
+
+func (api *API) operationalCluster(w http.ResponseWriter, r *http.Request) (model.CloudSource, model.Cluster, bool) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "cluster id is required")
+		return model.CloudSource{}, model.Cluster{}, false
+	}
+	cluster, err := api.store.GetCluster(r.Context(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "cluster not found")
+		return model.CloudSource{}, model.Cluster{}, false
+	}
+	if err != nil {
+		slog.Error("get cluster", "cluster", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "unable to load cluster")
+		return model.CloudSource{}, model.Cluster{}, false
+	}
+	source, ok := api.source(cluster.SourceID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "configured cloud source not found")
+		return model.CloudSource{}, model.Cluster{}, false
+	}
+	return source, cluster, true
+}
+
+func (api *API) clusterDetails(w http.ResponseWriter, r *http.Request) {
+	source, cluster, ok := api.operationalCluster(w, r)
+	if !ok {
+		return
+	}
+	details, err := api.manager.Details(r.Context(), source, cluster)
+	if err != nil {
+		slog.Error("load live cluster details", "cluster", cluster.ID, "provider", cluster.Provider, "error", err)
+		writeError(w, http.StatusBadGateway, "unable to load live cluster details")
+		return
+	}
+	writeJSON(w, http.StatusOK, details)
+}
+
+func (api *API) scaleNodePool(w http.ResponseWriter, r *http.Request) {
+	source, cluster, ok := api.operationalCluster(w, r)
+	if !ok {
+		return
+	}
+	if cluster.RemovedAt != nil {
+		writeError(w, http.StatusUnprocessableEntity, "removed clusters cannot be scaled")
+		return
+	}
+	poolID := strings.TrimSpace(r.PathValue("pool"))
+	if poolID == "" {
+		writeError(w, http.StatusBadRequest, "node pool id is required")
+		return
+	}
+	var request struct {
+		DesiredCount *int32 `json:"desiredCount"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || request.DesiredCount == nil || *request.DesiredCount < 0 {
+		writeError(w, http.StatusBadRequest, "desiredCount must be a nonnegative integer")
+		return
+	}
+	result, err := api.manager.ScaleNodePool(r.Context(), source, cluster, poolID, *request.DesiredCount)
+	switch {
+	case errors.Is(err, provider.ErrNodePoolNotFound):
+		writeError(w, http.StatusNotFound, "node pool not found")
+		return
+	case errors.Is(err, provider.ErrOperationInProgress):
+		writeError(w, http.StatusConflict, "a provider operation is already in progress for this node pool")
+		return
+	case errors.Is(err, provider.ErrOperationUnsupported):
+		writeError(w, http.StatusUnprocessableEntity, "this node pool does not support manual scaling")
+		return
+	case errors.Is(err, provider.ErrScaleOutOfBounds):
+		writeError(w, http.StatusUnprocessableEntity, "desiredCount is outside the node pool bounds")
+		return
+	case err != nil:
+		slog.Error("scale node pool", "cluster", cluster.ID, "pool", poolID, "error", err)
+		writeError(w, http.StatusBadGateway, "the cloud provider rejected the scaling request")
+		return
+	}
+	status := http.StatusAccepted
+	if result.Status == "unchanged" {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, result)
 }
 
 func (api *API) health(w http.ResponseWriter, _ *http.Request) {
