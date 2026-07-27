@@ -1,0 +1,14 @@
+# Docker Desktop must have Kubernetes enabled. A plain Docker Engine is not a
+# Kubernetes cluster and cannot install Helm charts.
+replicaCount: 1
+
+service:
+  type: NodePort
+
+resources:
+  limits:
+    cpu: 100m
+    memory: 64Mi
+  requests:
+    cpu: 25m
+    memory: 32Mi

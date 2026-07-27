@@ -1,0 +1,17 @@
+KubeOps global application chart {{ .Chart.Version }} is installed.
+
+Release:   {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+Image:     {{ .Values.image.repository }}:{{ .Values.image.tag }}
+
+{{- if .Values.ingress.enabled }}
+Application URL:
+{{- range .Values.ingress.hosts }}
+  {{- range .paths }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}{{ .path }}
+  {{- end }}
+{{- end }}
+{{- else }}
+To access the application locally:
+  kubectl --namespace {{ .Release.Namespace }} port-forward service/{{ include "kubeops.fullname" . }} 8080:{{ .Values.service.port }}
+{{- end }}

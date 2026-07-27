@@ -1,12 +1,19 @@
 apiVersion: v2
 name: kubeops
-description: Global application chart for KubeOps onboarding
+description: Reusable global application chart for KubeOps onboarding
 type: application
-version: 0.0.1
-appVersion: "1.25"
+version: 0.1.0
+appVersion: "1.0.0"
+kubeVersion: ">=1.23.0-0"
+home: https://github.com/GitOpsHub/kubeops
+sources:
+  - https://github.com/GitOpsHub/kubeops/tree/main/charts/kubeops
 keywords:
   - kubeops
   - application
   - kubernetes
+  - gitops
 maintainers:
   - name: Navaneeth
+annotations:
+  org.opencontainers.image.source: https://github.com/GitOpsHub/kubeops
