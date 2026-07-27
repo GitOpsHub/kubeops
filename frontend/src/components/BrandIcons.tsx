@@ -24,66 +24,26 @@ export function KubernetesLogo({ title, ...props }: IconProps) {
   )
 }
 
-function AwsLogo(props: IconProps) {
+function EksLogo(props: IconProps) {
   return (
-    <svg viewBox="0 0 48 48" {...props}>
-      <path
-        fill="#232F3E"
-        d="M11.2 25.5c0 2.9 1.8 4.3 4.1 4.3 1.6 0 2.9-.5 3.8-1.7.2.6.4 1 .8 1.5h3.4c-.6-1-.8-2.2-.8-3.5v-6c0-3.6-2.7-5-5.8-5-3.2 0-5.6 1.3-6 4.2l3.2.3c.2-1.3 1.1-1.9 2.6-1.9 1.7 0 2.5.7 2.5 2.2v.8c-4.9.1-7.8 1.5-7.8 4.8Zm7.8-2.4v1.2c0 1.9-1.2 3-2.8 3-1.1 0-1.8-.7-1.8-1.8 0-1.6 1.5-2.3 4.6-2.4Zm7.2 6.5h3.2l1.8-8.6 1.8 8.6h3.2l3.8-14.2h-3.3l-2.1 9.4-1.8-9.4h-2.9L28 24.8l-2.1-9.4h-3.4l3.7 14.2Z"
-      />
-      <path
-        fill="none"
-        stroke="#FF9900"
-        strokeLinecap="round"
-        strokeWidth="2.2"
-        d="M10 34c7.8 4.8 18.9 5.2 27.3.9"
-      />
-      <path fill="#FF9900" d="m35.2 32.5 5.2.1-2.2 4.7-.8-2.3-2.2-2.5Z" />
+    <svg viewBox="0 0 40 40" {...props}>
+      <image href="/icons/amazon-eks.svg" width="40" height="40" />
     </svg>
   )
 }
 
-function AzureLogo(props: IconProps) {
+function AksLogo(props: IconProps) {
   return (
-    <svg viewBox="0 0 48 48" {...props}>
-      <path fill="#0078D4" d="M18.4 7.5h11L18 41H7L18.4 7.5Z" />
-      <path fill="#1490DF" d="M30.8 7.5 41 35H23.2l5.5-8.1h7.2L26.4 7.5h4.4Z" />
-      <path fill="#0062AD" d="m18 41 10.7-14.1 5.2 14.1H18Z" />
+    <svg viewBox="0 0 18 18" {...props}>
+      <image href="/icons/azure-aks.svg" width="18" height="18" />
     </svg>
   )
 }
 
-function GoogleCloudLogo(props: IconProps) {
+function GkeLogo(props: IconProps) {
   return (
-    <svg viewBox="0 0 48 48" {...props}>
-      <path
-        fill="none"
-        stroke="#4285F4"
-        strokeLinecap="round"
-        strokeWidth="7"
-        d="M17 35.5h18a8 8 0 0 0 2.1-15.7"
-      />
-      <path
-        fill="none"
-        stroke="#34A853"
-        strokeLinecap="round"
-        strokeWidth="7"
-        d="M17 35.5a10 10 0 0 1-8-9.8"
-      />
-      <path
-        fill="none"
-        stroke="#FBBC04"
-        strokeLinecap="round"
-        strokeWidth="7"
-        d="M9 25.7a10 10 0 0 1 6-9.2"
-      />
-      <path
-        fill="none"
-        stroke="#EA4335"
-        strokeLinecap="round"
-        strokeWidth="7"
-        d="M15 16.5a12 12 0 0 1 20.8 3.3"
-      />
+    <svg viewBox="0 0 24 24" {...props}>
+      <image href="/icons/google-gke.svg" width="24" height="24" />
     </svg>
   )
 }
@@ -113,9 +73,9 @@ function MinikubeLogo(props: IconProps) {
 
 export function ProviderLogo({ provider, ...props }: IconProps & { provider: Provider }) {
   const Icon = {
-    aws: AwsLogo,
-    azure: AzureLogo,
-    gcp: GoogleCloudLogo,
+    aws: EksLogo,
+    azure: AksLogo,
+    gcp: GkeLogo,
     docker: DockerLogo,
     minikube: MinikubeLogo,
   }[provider]

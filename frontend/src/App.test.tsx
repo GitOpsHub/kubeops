@@ -119,10 +119,10 @@ describe('App', () => {
       'aria-pressed',
       'true',
     )
-    expect(screen.getByRole('button', { name: 'AWS, 1 cluster' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Azure, 3 clusters' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Google Cloud, 2 clusters' })).toBeInTheDocument()
-    expect(screen.getByText('6')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'EKS, 1 cluster' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'AKS, 3 clusters' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'GKE, 2 clusters' })).toBeInTheDocument()
+    expect(screen.getByLabelText('6 clusters across 3 sources')).toBeInTheDocument()
   })
 
   it('filters and searches within a selected cloud provider', async () => {
@@ -130,8 +130,8 @@ describe('App', () => {
     render(<App />)
     const user = userEvent.setup()
 
-    await user.click(await screen.findByRole('button', { name: 'Azure, 3 clusters' }))
-    const scopedSearch = screen.getByRole('searchbox', { name: 'Search within Azure' })
+    await user.click(await screen.findByRole('button', { name: 'AKS, 3 clusters' }))
+    const scopedSearch = screen.getByRole('searchbox', { name: 'Search within AKS' })
     await user.type(scopedSearch, 'payments')
 
     await waitFor(() => {
@@ -148,7 +148,7 @@ describe('App', () => {
     render(<App />)
     const user = userEvent.setup()
 
-    await user.click(await screen.findByRole('button', { name: 'AWS, 1 cluster' }))
+    await user.click(await screen.findByRole('button', { name: 'EKS, 1 cluster' }))
     await user.type(
       screen.getByRole('searchbox', { name: 'Search all clusters across providers' }),
       'production',

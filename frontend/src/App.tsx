@@ -12,9 +12,9 @@ import {
 import { KubernetesLogo, ProviderLogo } from './components/BrandIcons'
 
 const providerLabels: Record<Provider, string> = {
-  aws: 'AWS',
-  azure: 'Azure',
-  gcp: 'Google Cloud',
+  aws: 'EKS',
+  azure: 'AKS',
+  gcp: 'GKE',
   docker: 'Docker',
   minikube: 'Minikube',
 }
@@ -151,42 +151,12 @@ function App() {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <a className="brand" href="/" aria-label="KubeOps home">
-          <KubernetesLogo className="brand-mark" />
-          <span>
-            <strong>KubeOps</strong>
-            <small>Control plane</small>
-          </span>
-        </a>
-        <p className="nav-label">Workspace</p>
-        <nav aria-label="Primary navigation">
-          <a className="nav-item nav-item--active" href="#inventory">
-            <span aria-hidden="true">◫</span> Cluster inventory
-          </a>
-          <a className="nav-item" href="#sources">
-            <span aria-hidden="true">⌁</span> Cloud sources
-          </a>
-          <a className="nav-item" href="#activity">
-            <span aria-hidden="true">↻</span> Sync activity
-          </a>
-        </nav>
-        <div className="sidebar-foot">
-          <span className="pulse" aria-hidden="true" />
-          <span>
-            <strong>Discovery active</strong>
-            <small>Every 5 minutes</small>
-          </span>
-        </div>
-      </aside>
-
       <main className="dashboard" id="inventory">
         <header className="topbar">
-          <div className="breadcrumb">
-            <span>Platform operations</span>
-            <span aria-hidden="true">/</span>
-            <strong>Cluster inventory</strong>
-          </div>
+          <a className="header-brand" href="/" aria-label="KubeOps home">
+            <KubernetesLogo className="brand-mark" />
+            <strong>KubeOps</strong>
+          </a>
           <label className="global-search">
             <span className="search-icon" aria-hidden="true">⌕</span>
             <span className="sr-only">Search all clusters across providers</span>
@@ -235,13 +205,7 @@ function App() {
           )}
 
           <section className="provider-console" aria-labelledby="provider-filter-heading">
-            <div className="console-heading">
-              <div>
-                <p className="section-label">Provider scope</p>
-                <h2 id="provider-filter-heading">Choose the estate to inspect</h2>
-              </div>
-              <span>{provider ? `${providerLabels[provider]} only` : 'All providers'}</span>
-            </div>
+            <h2 id="provider-filter-heading" className="sr-only">Filter by provider</h2>
 
             <div className="provider-selector" role="group" aria-label="Filter by cloud provider">
               <button
@@ -258,7 +222,7 @@ function App() {
                 </span>
                 <span>
                   <strong>All clouds</strong>
-                  <small>{clusterCountLabel(fleetTotal)}</small>
+                  <small>{fleetTotal}</small>
                 </span>
               </button>
               {providers.map((item) => (
@@ -275,7 +239,7 @@ function App() {
                   <ProviderLogo provider={item} className="provider-logo" />
                   <span>
                     <strong>{providerLabels[item]}</strong>
-                    <small>{clusterCountLabel(counts[item])}</small>
+                    <small>{counts[item]}</small>
                   </span>
                   <span className="selection-check" aria-hidden="true">✓</span>
                 </button>
