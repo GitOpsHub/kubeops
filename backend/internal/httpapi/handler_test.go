@@ -79,6 +79,11 @@ func (f *fakeApplicationOnboarder) List(
 ) ([]model.ApplicationOnboarding, error) {
 	return []model.ApplicationOnboarding{f.record}, f.err
 }
+func (f *fakeApplicationOnboarder) Defaults() onboarding.Defaults {
+	return onboarding.Defaults{
+		ChartName: "kubeops", ChartRevision: "0.0.1", ValuesYAML: "replicaCount: 2\n",
+	}
+}
 
 func (f *fakeClusterManager) Details(
 	context.Context,

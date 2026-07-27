@@ -3,6 +3,7 @@ import { parse } from 'yaml'
 import {
   createApplicationOnboarding,
   getApplicationOnboardings,
+  getOnboardingDefaults,
   getOnboardingClusters,
   type ApplicationOnboarding as OnboardingRecord,
 } from '../api/onboarding'
@@ -21,6 +22,7 @@ export function ApplicationOnboarding({ onBack }: Props) {
   const [name, setName] = useState('')
   const [namespace, setNamespace] = useState('')
   const [valuesYaml, setValuesYaml] = useState('replicaCount: 1\n')
+  const [defaultValues, setDefaultValues] = useState('replicaCount: 1\n')
   const [selected, setSelected] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -48,6 +50,16 @@ export function ApplicationOnboarding({ onBack }: Props) {
   useEffect(() => {
     const controller = new AbortController()
     void load(controller.signal)
+    void getOnboardingDefaults(controller.signal)
+      .then((defaults) => {
+        setDefaultValues(defaults.valuesYaml)
+        setValuesYaml(defaults.valuesYaml)
+      })
+      .catch((defaultsError) => {
+        if (!(defaultsError instanceof DOMException && defaultsError.name === 'AbortError')) {
+          setError(defaultsError instanceof Error ? defaultsError.message : 'Helm defaults could not be loaded')
+        }
+      })
     const interval = window.setInterval(() => void load(undefined, true), 5_000)
     return () => {
       controller.abort()
@@ -102,7 +114,7 @@ export function ApplicationOnboarding({ onBack }: Props) {
       setName('')
       setNamespace('')
       setSelected([])
-      setValuesYaml('replicaCount: 1\n')
+      setValuesYaml(defaultValues)
       setError('')
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'Application could not be onboarded')
@@ -223,6 +235,16 @@ export function ApplicationOnboarding({ onBack }: Props) {
                   <div>
                     <strong>{record.name}</strong>
                     <span>{record.namespace} · {record.chartName}@{record.chartRevision}</span>
+                    {record.valuesRepositoryUrl && (
+                      <a
+                        href={record.valuesRepositoryUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="values-repository-link"
+                      >
+                        {record.valuesRepositoryName}/values.yaml ↗
+                      </a>
+                    )}
                   </div>
                   <span className={`deployment-pill deployment-pill--${record.status}`}>
                     {record.status}

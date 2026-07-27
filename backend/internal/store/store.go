@@ -523,11 +523,14 @@ func (s *Store) CreateApplicationOnboarding(
 
 	err = tx.QueryRow(ctx, `
 		INSERT INTO application_onboardings (
-			name, namespace, chart_repo_url, chart_name, chart_revision, values_digest
-		) VALUES ($1, $2, $3, $4, $5, $6)
+			name, namespace, chart_repo_url, chart_name, chart_revision, values_digest,
+			values_repository_url, values_repository_name, values_revision, values_commit_sha
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id::text, status, created_at, updated_at`,
 		onboarding.Name, onboarding.Namespace, onboarding.ChartRepoURL,
 		onboarding.ChartName, onboarding.ChartRevision, onboarding.ValuesDigest,
+		onboarding.ValuesRepositoryURL, onboarding.ValuesRepositoryName,
+		onboarding.ValuesRevision, onboarding.ValuesCommitSHA,
 	).Scan(&onboarding.ID, &onboarding.Status, &onboarding.CreatedAt, &onboarding.UpdatedAt)
 	if err != nil {
 		return model.ApplicationOnboarding{}, err
@@ -567,12 +570,15 @@ func (s *Store) GetApplicationOnboarding(ctx context.Context, id string) (model.
 	var onboarding model.ApplicationOnboarding
 	err := s.pool.QueryRow(ctx, `
 		SELECT id::text, name, namespace, chart_repo_url, chart_name, chart_revision,
-			values_digest, status, created_at, updated_at, completed_at
+			values_digest, values_repository_url, values_repository_name,
+			values_revision, values_commit_sha, status, created_at, updated_at, completed_at
 		FROM application_onboardings
 		WHERE id::text = $1`, id).Scan(
 		&onboarding.ID, &onboarding.Name, &onboarding.Namespace,
 		&onboarding.ChartRepoURL, &onboarding.ChartName, &onboarding.ChartRevision,
-		&onboarding.ValuesDigest, &onboarding.Status, &onboarding.CreatedAt,
+		&onboarding.ValuesDigest, &onboarding.ValuesRepositoryURL,
+		&onboarding.ValuesRepositoryName, &onboarding.ValuesRevision,
+		&onboarding.ValuesCommitSHA, &onboarding.Status, &onboarding.CreatedAt,
 		&onboarding.UpdatedAt, &onboarding.CompletedAt,
 	)
 	if err != nil {
@@ -595,7 +601,8 @@ func (s *Store) ListApplicationOnboardings(
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT id::text, name, namespace, chart_repo_url, chart_name, chart_revision,
-			values_digest, status, created_at, updated_at, completed_at
+			values_digest, values_repository_url, values_repository_name,
+			values_revision, values_commit_sha, status, created_at, updated_at, completed_at
 		FROM application_onboardings
 		ORDER BY created_at DESC
 		LIMIT $1`, limit)
@@ -610,7 +617,9 @@ func (s *Store) ListApplicationOnboardings(
 		if err := rows.Scan(
 			&onboarding.ID, &onboarding.Name, &onboarding.Namespace,
 			&onboarding.ChartRepoURL, &onboarding.ChartName, &onboarding.ChartRevision,
-			&onboarding.ValuesDigest, &onboarding.Status, &onboarding.CreatedAt,
+			&onboarding.ValuesDigest, &onboarding.ValuesRepositoryURL,
+			&onboarding.ValuesRepositoryName, &onboarding.ValuesRevision,
+			&onboarding.ValuesCommitSHA, &onboarding.Status, &onboarding.CreatedAt,
 			&onboarding.UpdatedAt, &onboarding.CompletedAt,
 		); err != nil {
 			return nil, err

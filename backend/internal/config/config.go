@@ -39,10 +39,18 @@ type OnboardingConfig struct {
 	HelmRepoURL       string
 	HelmChart         string
 	HelmRevision      string
+	HelmDefaultsFile  string
+	HelmDefaultsYAML  string
 	ArgoProject       string
 	ArgoNamespace     string
 	ArgoTargetsFile   string
 	ArgoTargets       []ArgoTarget
+	GitHubAPIURL      string
+	GitHubOrg         string
+	GitHubAppID       int64
+	GitHubInstallID   int64
+	GitHubKeyFile     string
+	GitHubVisibility  string
 	PollInterval      time.Duration
 	DeploymentTimeout time.Duration
 	RequestTimeout    time.Duration
@@ -106,19 +114,56 @@ func loadOnboardingConfig() (OnboardingConfig, error) {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return OnboardingConfig{}, err
 	}
+	appID, err := int64Value("GITHUB_APP_ID")
+	if err != nil {
+		return OnboardingConfig{}, err
+	}
+	installationID, err := int64Value("GITHUB_APP_INSTALLATION_ID")
+	if err != nil {
+		return OnboardingConfig{}, err
+	}
+	defaultsFile := valueOrDefault("GLOBAL_HELM_DEFAULT_VALUES_FILE", "../charts/kubeops/values.yaml")
+	defaultsYAML, err := os.ReadFile(defaultsFile)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return OnboardingConfig{}, fmt.Errorf("read global Helm defaults: %w", err)
+	}
+	visibility := valueOrDefault("GITHUB_REPO_VISIBILITY", "private")
+	if visibility != "private" && visibility != "public" {
+		return OnboardingConfig{}, fmt.Errorf("GITHUB_REPO_VISIBILITY must be private or public")
+	}
 
 	return OnboardingConfig{
 		HelmRepoURL:       strings.TrimSpace(os.Getenv("GLOBAL_HELM_REPO_URL")),
 		HelmChart:         strings.TrimSpace(os.Getenv("GLOBAL_HELM_CHART")),
 		HelmRevision:      strings.TrimSpace(os.Getenv("GLOBAL_HELM_REVISION")),
+		HelmDefaultsFile:  defaultsFile,
+		HelmDefaultsYAML:  string(defaultsYAML),
 		ArgoProject:       valueOrDefault("ARGO_PROJECT", "default"),
 		ArgoNamespace:     valueOrDefault("ARGO_NAMESPACE", "argo-cd"),
 		ArgoTargetsFile:   targetsFile,
 		ArgoTargets:       targets,
+		GitHubAPIURL:      valueOrDefault("GITHUB_API_URL", "https://api.github.com"),
+		GitHubOrg:         valueOrDefault("GITHUB_ORG", "GitOpsHub"),
+		GitHubAppID:       appID,
+		GitHubInstallID:   installationID,
+		GitHubKeyFile:     strings.TrimSpace(os.Getenv("GITHUB_APP_PRIVATE_KEY_FILE")),
+		GitHubVisibility:  visibility,
 		PollInterval:      pollInterval,
 		DeploymentTimeout: deploymentTimeout,
 		RequestTimeout:    requestTimeout,
 	}, nil
+}
+
+func int64Value(key string) (int64, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return 0, nil
+	}
+	number, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || number <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", key)
+	}
+	return number, nil
 }
 
 func loadArgoTargets(path string) ([]ArgoTarget, error) {

@@ -28,6 +28,10 @@ export type ApplicationOnboarding = {
   chartName: string
   chartRevision: string
   valuesDigest: string
+  valuesRepositoryUrl: string
+  valuesRepositoryName: string
+  valuesRevision: string
+  valuesCommitSha: string
   status: OnboardingStatus
   targets: ApplicationDeployment[]
   createdAt: string
@@ -39,6 +43,13 @@ export type CreateOnboardingInput = {
   name: string
   namespace: string
   clusterIds: string[]
+  valuesYaml: string
+}
+
+export type OnboardingDefaults = {
+  chartRepoUrl: string
+  chartName: string
+  chartRevision: string
   valuesYaml: string
 }
 
@@ -71,6 +82,10 @@ export async function getApplicationOnboardings(signal?: AbortSignal) {
     { signal },
   )
   return response.items
+}
+
+export function getOnboardingDefaults(signal?: AbortSignal) {
+  return request<OnboardingDefaults>('/application-onboardings/defaults', { signal })
 }
 
 export function getApplicationOnboarding(id: string, signal?: AbortSignal) {

@@ -23,6 +23,10 @@ function mockAPI() {
           chartName: 'global-app',
           chartRevision: '1.2.3',
           valuesDigest: 'sha256:test',
+          valuesRepositoryUrl: `https://github.com/GitOpsHub/${submitted.name}`,
+          valuesRepositoryName: submitted.name,
+          valuesRevision: 'main',
+          valuesCommitSha: 'commit-1',
           status: 'progressing',
           createdAt: timestamp,
           updatedAt: timestamp,
@@ -50,6 +54,14 @@ function mockAPI() {
     }
     if (url.includes('/application-onboardings?')) {
       return Response.json({ items: [] })
+    }
+    if (url.endsWith('/application-onboardings/defaults')) {
+      return Response.json({
+        chartRepoUrl: 'ghcr.io/gitopshub/charts',
+        chartName: 'kubeops',
+        chartRevision: '0.0.1',
+        valuesYaml: 'replicaCount: 2\nimage:\n  repository: nginx\n',
+      })
     }
     if (url.includes('/clusters/cluster-1/node-pools/workers/scale')) {
       return Response.json(
@@ -343,7 +355,7 @@ describe('App', () => {
             name: 'payments-api',
             namespace: 'payments',
             clusterIds: ['cluster-1'],
-            valuesYaml: 'replicaCount: 1\n',
+            valuesYaml: 'replicaCount: 2\nimage:\n  repository: nginx\n',
           }),
         }),
       )
@@ -351,6 +363,10 @@ describe('App', () => {
     expect(
       await screen.findByText((_, element) => element?.textContent === 'payments · global-app@1.2.3'),
     ).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /payments-api\/values.yaml/ })).toHaveAttribute(
+      'href',
+      'https://github.com/GitOpsHub/payments-api',
+    )
     expect(screen.getAllByText('progressing').length).toBeGreaterThan(0)
   })
 })

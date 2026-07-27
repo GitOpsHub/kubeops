@@ -112,6 +112,8 @@ func TestInventoryLifecycle(t *testing.T) {
 	onboarding, err := repository.CreateApplicationOnboarding(ctx, model.ApplicationOnboarding{
 		Name: "payments", Namespace: "payments", ChartRepoURL: "https://charts.example.test",
 		ChartName: "global-app", ChartRevision: "1.2.3", ValuesDigest: "sha256:test",
+		ValuesRepositoryURL:  "https://github.com/GitOpsHub/payments",
+		ValuesRepositoryName: "payments", ValuesRevision: "main", ValuesCommitSHA: "commit-1",
 	}, []model.Cluster{page.Items[0]})
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +128,8 @@ func TestInventoryLifecycle(t *testing.T) {
 	}
 	storedOnboarding, err := repository.GetApplicationOnboarding(ctx, onboarding.ID)
 	if err != nil || storedOnboarding.Status != "healthy" ||
-		storedOnboarding.Targets[0].HealthStatus != "Healthy" {
+		storedOnboarding.Targets[0].HealthStatus != "Healthy" ||
+		storedOnboarding.ValuesCommitSHA != "commit-1" {
 		t.Fatalf("unexpected stored onboarding: %#v, %v", storedOnboarding, err)
 	}
 

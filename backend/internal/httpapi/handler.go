@@ -35,6 +35,7 @@ type ApplicationOnboarder interface {
 	Create(context.Context, onboarding.CreateInput) (model.ApplicationOnboarding, error)
 	Get(context.Context, string) (model.ApplicationOnboarding, error)
 	List(context.Context, int) ([]model.ApplicationOnboarding, error)
+	Defaults() onboarding.Defaults
 }
 
 type API struct {
@@ -82,6 +83,7 @@ func newHandler(
 	mux.HandleFunc("POST /api/cloud-sources/{id}/sync", api.queueSync)
 	mux.HandleFunc("POST /api/application-onboardings", api.createApplicationOnboarding)
 	mux.HandleFunc("GET /api/application-onboardings", api.applicationOnboardings)
+	mux.HandleFunc("GET /api/application-onboardings/defaults", api.applicationOnboardingDefaults)
 	mux.HandleFunc("GET /api/application-onboardings/{id}", api.applicationOnboarding)
 	return withCORS(withRequestLog(mux), cfg.CORSAllowedOrigin)
 }
@@ -288,9 +290,18 @@ func (api *API) createApplicationOnboarding(w http.ResponseWriter, r *http.Reque
 	}
 	result, err := api.onboarder.Create(r.Context(), input)
 	var validationError onboarding.ValidationError
+	var conflictError onboarding.ConflictError
+	var externalError onboarding.ExternalError
 	switch {
 	case errors.As(err, &validationError):
 		writeError(w, http.StatusUnprocessableEntity, validationError.Message)
+		return
+	case errors.As(err, &conflictError):
+		writeError(w, http.StatusConflict, conflictError.Message)
+		return
+	case errors.As(err, &externalError):
+		slog.Error("GitHub application onboarding dependency failed", "error", externalError)
+		writeError(w, http.StatusBadGateway, "GitHub could not provision the application repository")
 		return
 	case err != nil:
 		slog.Error("create application onboarding", "error", err)
@@ -298,6 +309,19 @@ func (api *API) createApplicationOnboarding(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusCreated, result)
+}
+
+func (api *API) applicationOnboardingDefaults(w http.ResponseWriter, _ *http.Request) {
+	if api.onboarder == nil {
+		writeError(w, http.StatusServiceUnavailable, "application onboarding is not available")
+		return
+	}
+	defaults := api.onboarder.Defaults()
+	if defaults.ValuesYAML == "" {
+		writeError(w, http.StatusServiceUnavailable, "application onboarding defaults are not configured")
+		return
+	}
+	writeJSON(w, http.StatusOK, defaults)
 }
 
 func (api *API) applicationOnboardings(w http.ResponseWriter, r *http.Request) {

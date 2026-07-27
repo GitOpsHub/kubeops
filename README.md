@@ -55,18 +55,24 @@ never place secrets in them.
 
 ## Application onboarding
 
-The default global chart is published from `charts/kubeops` to the GitHub Pages
-Helm repository at `https://gitopshub.github.io/kubeops`. Configure its fixed
-chart name and revision in `.env`. Add one
+The default global chart is published from `charts/kubeops` to the public OCI
+repository `ghcr.io/gitopshub/charts/kubeops:0.0.1`. Configure its fixed chart
+name, revision, and matching local defaults file in `.env`. Configure a GitHub
+App with organization repository Administration and Contents write access so
+KubeOps can create a private `GitOpsHub/<application-name>` repository and commit
+its root `values.yaml`. Add one
 entry to `config/argo-targets.yaml` for each inventory cluster, keyed by its cloud
 source ID and provider resource ID. Store each Argo CD bearer token only in the
 environment variable named by that target. Optional private CA bundles are
 supported; TLS verification cannot be disabled.
 
 The onboarding view creates one Argo CD Application per selected cluster with
-automated sync, pruning, self-healing, and namespace creation enabled. Helm values
-are sent to Argo CD but KubeOps stores only their SHA-256 digest. Values must refer
-to existing Kubernetes or external secrets instead of containing secret material.
+automated sync, pruning, self-healing, and namespace creation enabled. Argo uses
+the public OCI chart plus `$values/values.yaml` from the private application
+repository. Configure a separate read-only GitHub App credential template in
+every Argo instance for `https://github.com/GitOpsHub`. KubeOps stores the initial
+commit SHA and values digest, but not the values contents. Values must refer to
+existing Kubernetes or external secrets instead of containing secret material.
 
 ## Inventory API
 

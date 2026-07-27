@@ -22,14 +22,15 @@ var (
 )
 
 type ApplicationSpec struct {
-	Name          string
-	Namespace     string
-	Project       string
-	RepoURL       string
-	Chart         string
-	Revision      string
-	ValuesYAML    string
-	ArgoNamespace string
+	Name           string
+	Namespace      string
+	Project        string
+	RepoURL        string
+	Chart          string
+	Revision       string
+	ValuesRepoURL  string
+	ValuesRevision string
+	ArgoNamespace  string
 }
 
 type ApplicationState struct {
@@ -89,12 +90,19 @@ func (c *HTTPArgoClient) CreateApplication(
 		},
 		"spec": map[string]any{
 			"project": spec.Project,
-			"source": map[string]any{
-				"repoURL":        spec.RepoURL,
-				"chart":          spec.Chart,
-				"targetRevision": spec.Revision,
-				"helm": map[string]any{
-					"values": spec.ValuesYAML,
+			"sources": []any{
+				map[string]any{
+					"repoURL":        spec.RepoURL,
+					"chart":          spec.Chart,
+					"targetRevision": spec.Revision,
+					"helm": map[string]any{
+						"valueFiles": []string{"$values/values.yaml"},
+					},
+				},
+				map[string]any{
+					"repoURL":        spec.ValuesRepoURL,
+					"targetRevision": spec.ValuesRevision,
+					"ref":            "values",
 				},
 			},
 			"destination": map[string]any{

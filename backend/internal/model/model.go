@@ -169,18 +169,22 @@ type SyncRun struct {
 }
 
 type ApplicationOnboarding struct {
-	ID            string                  `json:"id"`
-	Name          string                  `json:"name"`
-	Namespace     string                  `json:"namespace"`
-	ChartRepoURL  string                  `json:"chartRepoUrl"`
-	ChartName     string                  `json:"chartName"`
-	ChartRevision string                  `json:"chartRevision"`
-	ValuesDigest  string                  `json:"valuesDigest"`
-	Status        string                  `json:"status"`
-	Targets       []ApplicationDeployment `json:"targets"`
-	CreatedAt     time.Time               `json:"createdAt"`
-	UpdatedAt     time.Time               `json:"updatedAt"`
-	CompletedAt   *time.Time              `json:"completedAt"`
+	ID                   string                  `json:"id"`
+	Name                 string                  `json:"name"`
+	Namespace            string                  `json:"namespace"`
+	ChartRepoURL         string                  `json:"chartRepoUrl"`
+	ChartName            string                  `json:"chartName"`
+	ChartRevision        string                  `json:"chartRevision"`
+	ValuesDigest         string                  `json:"valuesDigest"`
+	ValuesRepositoryURL  string                  `json:"valuesRepositoryUrl"`
+	ValuesRepositoryName string                  `json:"valuesRepositoryName"`
+	ValuesRevision       string                  `json:"valuesRevision"`
+	ValuesCommitSHA      string                  `json:"valuesCommitSha"`
+	Status               string                  `json:"status"`
+	Targets              []ApplicationDeployment `json:"targets"`
+	CreatedAt            time.Time               `json:"createdAt"`
+	UpdatedAt            time.Time               `json:"updatedAt"`
+	CompletedAt          *time.Time              `json:"completedAt"`
 }
 
 type ApplicationDeployment struct {

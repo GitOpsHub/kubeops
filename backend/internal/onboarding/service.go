@@ -41,16 +41,37 @@ type CreateInput struct {
 	ValuesYAML string   `json:"valuesYaml"`
 }
 
+type Defaults struct {
+	ChartRepoURL  string `json:"chartRepoUrl"`
+	ChartName     string `json:"chartName"`
+	ChartRevision string `json:"chartRevision"`
+	ValuesYAML    string `json:"valuesYaml"`
+}
+
 type ValidationError struct {
 	Message string
 }
 
 func (e ValidationError) Error() string { return e.Message }
 
+type ConflictError struct {
+	Message string
+}
+
+func (e ConflictError) Error() string { return e.Message }
+
+type ExternalError struct {
+	Err error
+}
+
+func (e ExternalError) Error() string { return e.Err.Error() }
+func (e ExternalError) Unwrap() error { return e.Err }
+
 type Service struct {
 	store   Repository
 	config  config.OnboardingConfig
 	clients map[string]ArgoClient
+	github  ValuesRepositoryManager
 }
 
 func NewService(repository Repository, cfg config.OnboardingConfig) (*Service, error) {
@@ -62,7 +83,11 @@ func NewService(repository Repository, cfg config.OnboardingConfig) (*Service, e
 		}
 		clients[targetKey(target.SourceID, target.ProviderResourceID)] = client
 	}
-	return &Service{store: repository, config: cfg, clients: clients}, nil
+	github, err := NewGitHubClient(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &Service{store: repository, config: cfg, clients: clients, github: github}, nil
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (model.ApplicationOnboarding, error) {
@@ -91,16 +116,33 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 		}
 	}
 
+	valuesRepository, err := s.github.Provision(ctx, input.Name, input.ValuesYAML)
+	if errors.Is(err, ErrRepositoryExists) {
+		return model.ApplicationOnboarding{}, ConflictError{
+			Message: "a GitHub repository with this application name already exists",
+		}
+	}
+	if err != nil {
+		return model.ApplicationOnboarding{}, ExternalError{
+			Err: fmt.Errorf("provision GitHub values repository: %w", err),
+		}
+	}
+
 	digest := sha256.Sum256([]byte(input.ValuesYAML))
 	onboarding, err := s.store.CreateApplicationOnboarding(ctx, model.ApplicationOnboarding{
-		Name:          input.Name,
-		Namespace:     input.Namespace,
-		ChartRepoURL:  s.config.HelmRepoURL,
-		ChartName:     s.config.HelmChart,
-		ChartRevision: s.config.HelmRevision,
-		ValuesDigest:  "sha256:" + hex.EncodeToString(digest[:]),
+		Name:                 input.Name,
+		Namespace:            input.Namespace,
+		ChartRepoURL:         s.config.HelmRepoURL,
+		ChartName:            s.config.HelmChart,
+		ChartRevision:        s.config.HelmRevision,
+		ValuesDigest:         "sha256:" + hex.EncodeToString(digest[:]),
+		ValuesRepositoryURL:  valuesRepository.URL,
+		ValuesRepositoryName: valuesRepository.Name,
+		ValuesRevision:       valuesRepository.Revision,
+		ValuesCommitSHA:      valuesRepository.CommitSHA,
 	}, clusters)
 	if err != nil {
+		_ = s.github.Delete(context.WithoutCancel(ctx), valuesRepository.Name)
 		return model.ApplicationOnboarding{}, fmt.Errorf("store application onboarding: %w", err)
 	}
 
@@ -115,14 +157,15 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 			callCtx, cancel := context.WithTimeout(ctx, s.config.RequestTimeout)
 			defer cancel()
 			state, createErr := client.CreateApplication(callCtx, ApplicationSpec{
-				Name:          input.Name,
-				Namespace:     input.Namespace,
-				Project:       s.config.ArgoProject,
-				RepoURL:       s.config.HelmRepoURL,
-				Chart:         s.config.HelmChart,
-				Revision:      s.config.HelmRevision,
-				ValuesYAML:    input.ValuesYAML,
-				ArgoNamespace: s.config.ArgoNamespace,
+				Name:           input.Name,
+				Namespace:      input.Namespace,
+				Project:        s.config.ArgoProject,
+				RepoURL:        s.config.HelmRepoURL,
+				Chart:          s.config.HelmChart,
+				Revision:       s.config.HelmRevision,
+				ValuesRepoURL:  valuesRepository.CloneURL,
+				ValuesRevision: valuesRepository.Revision,
+				ArgoNamespace:  s.config.ArgoNamespace,
 			})
 			status, message := stateToDeployment(state)
 			if createErr != nil {
@@ -155,6 +198,15 @@ func (s *Service) Get(ctx context.Context, id string) (model.ApplicationOnboardi
 
 func (s *Service) List(ctx context.Context, limit int) ([]model.ApplicationOnboarding, error) {
 	return s.store.ListApplicationOnboardings(ctx, limit)
+}
+
+func (s *Service) Defaults() Defaults {
+	return Defaults{
+		ChartRepoURL:  s.config.HelmRepoURL,
+		ChartName:     s.config.HelmChart,
+		ChartRevision: s.config.HelmRevision,
+		ValuesYAML:    s.config.HelmDefaultsYAML,
+	}
 }
 
 func (s *Service) Start(ctx context.Context) {
@@ -219,7 +271,8 @@ func (s *Service) reconcile(ctx context.Context) {
 }
 
 func (s *Service) validateInput(input CreateInput) error {
-	if s.config.HelmRepoURL == "" || s.config.HelmChart == "" || s.config.HelmRevision == "" {
+	if s.config.HelmRepoURL == "" || s.config.HelmChart == "" ||
+		s.config.HelmRevision == "" || s.config.HelmDefaultsYAML == "" || s.github == nil {
 		return ValidationError{Message: "application onboarding is not configured"}
 	}
 	if !validDNSLabel(input.Name) {

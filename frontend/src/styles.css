@@ -1737,6 +1737,19 @@ pre {
   font-size: 0.64rem;
 }
 
+.values-repository-link {
+  display: inline-block;
+  margin-top: 6px;
+  color: var(--blue);
+  font-size: 0.64rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.values-repository-link:hover {
+  text-decoration: underline;
+}
+
 .deployment-targets {
   display: grid;
 }

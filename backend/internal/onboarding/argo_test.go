@@ -24,9 +24,20 @@ func TestHTTPArgoClientCreatesHelmApplication(t *testing.T) {
 			t.Fatal(err)
 		}
 		spec := body["spec"].(map[string]any)
-		source := spec["source"].(map[string]any)
+		sources := spec["sources"].([]any)
+		source := sources[0].(map[string]any)
 		if source["chart"] != "global-app" || source["targetRevision"] != "1.2.3" {
 			t.Fatalf("unexpected source: %#v", source)
+		}
+		helm := source["helm"].(map[string]any)
+		valueFiles := helm["valueFiles"].([]any)
+		if valueFiles[0] != "$values/values.yaml" {
+			t.Fatalf("unexpected value files: %#v", valueFiles)
+		}
+		valuesSource := sources[1].(map[string]any)
+		if valuesSource["ref"] != "values" ||
+			valuesSource["repoURL"] != "https://github.com/GitOpsHub/payments.git" {
+			t.Fatalf("unexpected values source: %#v", valuesSource)
 		}
 		destination := spec["destination"].(map[string]any)
 		if destination["server"] != "https://kubernetes.default.svc" {
@@ -46,7 +57,8 @@ func TestHTTPArgoClientCreatesHelmApplication(t *testing.T) {
 	state, err := client.CreateApplication(context.Background(), ApplicationSpec{
 		Name: "payments", Namespace: "payments", Project: "default",
 		RepoURL: "https://charts.example.test", Chart: "global-app",
-		Revision: "1.2.3", ValuesYAML: "replicaCount: 1", ArgoNamespace: "argo-cd",
+		Revision: "1.2.3", ValuesRepoURL: "https://github.com/GitOpsHub/payments.git",
+		ValuesRevision: "main", ArgoNamespace: "argo-cd",
 	})
 	if err != nil {
 		t.Fatal(err)

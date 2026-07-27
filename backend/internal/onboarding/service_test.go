@@ -84,6 +84,24 @@ type fakeArgoClient struct {
 	err     error
 }
 
+type fakeValuesRepositoryManager struct {
+	repository ValuesRepository
+	err        error
+	deleted    string
+}
+
+func (f *fakeValuesRepositoryManager) Provision(
+	context.Context,
+	string,
+	string,
+) (ValuesRepository, error) {
+	return f.repository, f.err
+}
+func (f *fakeValuesRepositoryManager) Delete(_ context.Context, name string) error {
+	f.deleted = name
+	return nil
+}
+
 func (f *fakeArgoClient) CreateApplication(
 	_ context.Context,
 	spec ApplicationSpec,
@@ -108,14 +126,20 @@ func TestCreateApplicationOnboarding(t *testing.T) {
 	client := &fakeArgoClient{state: ApplicationState{
 		SyncStatus: "OutOfSync", HealthStatus: "Progressing",
 	}}
+	valuesManager := &fakeValuesRepositoryManager{repository: ValuesRepository{
+		Name: "payments", URL: "https://github.com/GitOpsHub/payments",
+		CloneURL: "https://github.com/GitOpsHub/payments.git",
+		Revision: "main", CommitSHA: "commit-1",
+	}}
 	service := &Service{
 		store: repository,
 		config: config.OnboardingConfig{
 			HelmRepoURL: "https://charts.example.test", HelmChart: "global-app",
 			HelmRevision: "1.2.3", ArgoProject: "platform", ArgoNamespace: "argo-cd",
-			RequestTimeout: time.Second,
+			RequestTimeout: time.Second, HelmDefaultsYAML: "replicaCount: 2\n",
 		},
 		clients: map[string]ArgoClient{targetKey("aws", "arn:cluster/prod"): client},
+		github:  valuesManager,
 	}
 
 	record, err := service.Create(context.Background(), CreateInput{
@@ -131,12 +155,17 @@ func TestCreateApplicationOnboarding(t *testing.T) {
 	if record.ValuesDigest == "" || record.Targets[0].Status != "progressing" {
 		t.Fatalf("unexpected record: %#v", record)
 	}
+	if client.created.ValuesRepoURL != valuesManager.repository.CloneURL ||
+		record.ValuesRepositoryURL != valuesManager.repository.URL {
+		t.Fatalf("unexpected values repository: %#v, %#v", client.created, record)
+	}
 }
 
 func TestCreateApplicationOnboardingValidation(t *testing.T) {
 	service := &Service{config: config.OnboardingConfig{
 		HelmRepoURL: "repo", HelmChart: "chart", HelmRevision: "1",
-	}}
+		HelmDefaultsYAML: "{}\n",
+	}, github: &fakeValuesRepositoryManager{}}
 	tests := []CreateInput{
 		{Name: "Bad_Name", Namespace: "apps", ClusterIDs: []string{"one"}, ValuesYAML: "{}"},
 		{Name: "app", Namespace: "apps", ClusterIDs: nil, ValuesYAML: "{}"},
