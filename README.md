@@ -53,6 +53,8 @@ The root `.env` and `config/cloud-sources.yaml` are ignored. Only variables pref
 ## Inventory API
 
 - `GET /api/clusters` — filter and paginate cluster inventory
+- `GET /api/clusters/{id}/details` — load live node-pool and networking details
+- `POST /api/clusters/{id}/node-pools/{pool}/scale` — set a managed node pool's desired size
 - `GET /api/cloud-sources` — source counts and latest status
 - `GET /api/sync-runs` — recent reconciliation history
 - `POST /api/cloud-sources/{id}/sync` — queue a source refresh

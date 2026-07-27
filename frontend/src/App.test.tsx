@@ -8,6 +8,62 @@ const timestamp = new Date().toISOString()
 function mockAPI() {
   return vi.spyOn(globalThis, 'fetch').mockImplementation(async (request) => {
     const url = String(request)
+    if (url.includes('/clusters/cluster-1/node-pools/workers/scale')) {
+      return Response.json(
+        { nodePoolId: 'workers', desiredCount: 5, status: 'accepted', providerOperationId: 'update-1' },
+        { status: 202 },
+      )
+    }
+    if (url.endsWith('/clusters/cluster-1/details')) {
+      return Response.json({
+        cluster: {
+          id: 'cluster-1',
+          sourceId: 'aws-platform',
+          sourceName: 'AWS Platform',
+          provider: 'aws',
+          providerResourceId: 'arn:aws:eks:us-east-1:123:cluster/prod',
+          name: 'prod-us-east',
+          location: 'us-east-1',
+          kubernetesVersion: '1.34',
+          status: 'active',
+          endpointAccess: 'private',
+          nodeCount: 12,
+          metadata: {},
+          firstSeenAt: timestamp,
+          lastSeenAt: timestamp,
+          updatedAt: timestamp,
+          removedAt: null,
+        },
+        capability: { canScaleNodes: true },
+        nodePools: [
+          {
+            id: 'workers',
+            name: 'workers',
+            desiredCount: 3,
+            minCount: 1,
+            maxCount: 10,
+            autoscaling: 'unknown',
+            status: 'active',
+            machineType: 'm6i.large',
+            zones: [],
+            scalable: true,
+          },
+        ],
+        networking: {
+          provider: 'aws',
+          endpointAccess: 'private',
+          aws: {
+            vpcId: 'vpc-123',
+            subnetIds: ['subnet-a', 'subnet-b'],
+            clusterSecurityGroupId: 'sg-cluster',
+            additionalSecurityGroupIds: [],
+            publicAccessCidrs: [],
+            ipFamily: 'ipv4',
+            serviceIpv4Cidr: '10.100.0.0/16',
+          },
+        },
+      })
+    }
     if (url.includes('/clusters?')) {
       return Response.json({
         items: [
@@ -178,6 +234,38 @@ describe('App', () => {
       expect.stringContaining('/cloud-sources/aws-platform/sync'),
       { method: 'POST' },
     )
+  })
+
+  it('shows live networking and confirms node-pool scaling', async () => {
+    const fetchMock = mockAPI()
+    render(<App />)
+    const user = userEvent.setup()
+
+    await user.click(await screen.findByRole('button', { name: /prod-us-east/ }))
+
+    expect(await screen.findByRole('heading', { name: 'Node pools' })).toBeInTheDocument()
+    expect(await screen.findByText('vpc-123')).toBeInTheDocument()
+    expect(screen.getByText('subnet-a, subnet-b')).toBeInTheDocument()
+
+    const desiredInput = screen.getByRole('spinbutton', { name: 'Desired nodes' })
+    await user.clear(desiredInput)
+    await user.type(desiredInput, '5')
+    await user.click(screen.getByRole('button', { name: 'Review scale' }))
+
+    expect(screen.getByRole('heading', { name: 'Scale workers?' })).toBeInTheDocument()
+    expect(screen.getByText(/Autoscaling is unknown/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Confirm scale' }))
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/clusters/cluster-1/node-pools/workers/scale'),
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ desiredCount: 5 }),
+        }),
+      )
+    })
+    expect(await screen.findByText(/Scaling workers to 5 nodes/)).toBeInTheDocument()
   })
 
   it('shows an actionable API failure', async () => {

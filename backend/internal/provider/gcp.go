@@ -15,7 +15,7 @@ import (
 
 type GCP struct{}
 
-func (GCP) Discover(ctx context.Context, source model.CloudSource) ([]model.Cluster, error) {
+func newGCPClient(ctx context.Context, source model.CloudSource) (*container.ClusterManagerClient, error) {
 	options := make([]option.ClientOption, 0, 1)
 	if source.ImpersonateServiceAccount != "" {
 		credentials, err := google.FindDefaultCredentials(ctx, "https://www.googleapis.com/auth/cloud-platform")
@@ -37,6 +37,14 @@ func (GCP) Discover(ctx context.Context, source model.CloudSource) ([]model.Clus
 	client, err := container.NewClusterManagerClient(ctx, options...)
 	if err != nil {
 		return nil, fmt.Errorf("create GKE client: %w", err)
+	}
+	return client, nil
+}
+
+func (GCP) Discover(ctx context.Context, source model.CloudSource) ([]model.Cluster, error) {
+	client, err := newGCPClient(ctx, source)
+	if err != nil {
+		return nil, err
 	}
 	defer client.Close()
 

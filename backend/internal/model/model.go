@@ -68,6 +68,90 @@ type ClusterPage struct {
 	PageSize int       `json:"pageSize"`
 }
 
+type ClusterCapability struct {
+	CanScaleNodes bool   `json:"canScaleNodes"`
+	Reason        string `json:"reason,omitempty"`
+}
+
+type NodePool struct {
+	ID                string   `json:"id"`
+	Name              string   `json:"name"`
+	DesiredCount      int32    `json:"desiredCount"`
+	MinCount          *int32   `json:"minCount"`
+	MaxCount          *int32   `json:"maxCount"`
+	Autoscaling       string   `json:"autoscaling"`
+	Status            string   `json:"status"`
+	MachineType       string   `json:"machineType,omitempty"`
+	Zones             []string `json:"zones"`
+	Scalable          bool     `json:"scalable"`
+	UnavailableReason string   `json:"unavailableReason,omitempty"`
+}
+
+type AWSNetworking struct {
+	VPCID                      string   `json:"vpcId,omitempty"`
+	SubnetIDs                  []string `json:"subnetIds"`
+	ClusterSecurityGroupID     string   `json:"clusterSecurityGroupId,omitempty"`
+	AdditionalSecurityGroupIDs []string `json:"additionalSecurityGroupIds"`
+	PublicAccessCIDRs          []string `json:"publicAccessCidrs"`
+	IPFamily                   string   `json:"ipFamily,omitempty"`
+	ServiceIPv4CIDR            string   `json:"serviceIpv4Cidr,omitempty"`
+	ServiceIPv6CIDR            string   `json:"serviceIpv6Cidr,omitempty"`
+}
+
+type GCPNetworking struct {
+	Network              string   `json:"network,omitempty"`
+	Subnetwork           string   `json:"subnetwork,omitempty"`
+	PodCIDRs             []string `json:"podCidrs"`
+	ServiceCIDRs         []string `json:"serviceCidrs"`
+	ControlPlaneIPv4CIDR string   `json:"controlPlaneIpv4Cidr,omitempty"`
+	PrivateNodes         bool     `json:"privateNodes"`
+	PrivateEndpoint      bool     `json:"privateEndpoint"`
+	DatapathProvider     string   `json:"datapathProvider,omitempty"`
+	NetworkPolicyEnabled bool     `json:"networkPolicyEnabled"`
+}
+
+type AzureNetworking struct {
+	SubnetIDs        []string `json:"subnetIds"`
+	PodSubnetIDs     []string `json:"podSubnetIds"`
+	NetworkPlugin    string   `json:"networkPlugin,omitempty"`
+	NetworkMode      string   `json:"networkMode,omitempty"`
+	NetworkPolicy    string   `json:"networkPolicy,omitempty"`
+	NetworkDataplane string   `json:"networkDataplane,omitempty"`
+	PodCIDRs         []string `json:"podCidrs"`
+	ServiceCIDRs     []string `json:"serviceCidrs"`
+	DNSServiceIP     string   `json:"dnsServiceIp,omitempty"`
+	OutboundType     string   `json:"outboundType,omitempty"`
+	LoadBalancerSKU  string   `json:"loadBalancerSku,omitempty"`
+	PrivateDNSZone   string   `json:"privateDnsZone,omitempty"`
+}
+
+type LocalNetworking struct {
+	APIServer string `json:"apiServer,omitempty"`
+}
+
+type ClusterNetworking struct {
+	Provider       string           `json:"provider"`
+	EndpointAccess string           `json:"endpointAccess"`
+	AWS            *AWSNetworking   `json:"aws,omitempty"`
+	GCP            *GCPNetworking   `json:"gcp,omitempty"`
+	Azure          *AzureNetworking `json:"azure,omitempty"`
+	Local          *LocalNetworking `json:"local,omitempty"`
+}
+
+type ClusterDetails struct {
+	Cluster    Cluster           `json:"cluster"`
+	Capability ClusterCapability `json:"capability"`
+	NodePools  []NodePool        `json:"nodePools"`
+	Networking ClusterNetworking `json:"networking"`
+}
+
+type ScaleResult struct {
+	NodePoolID          string `json:"nodePoolId"`
+	DesiredCount        int32  `json:"desiredCount"`
+	Status              string `json:"status"`
+	ProviderOperationID string `json:"providerOperationId,omitempty"`
+}
+
 type SyncRun struct {
 	ID              string     `json:"id"`
 	SourceID        string     `json:"sourceId"`
