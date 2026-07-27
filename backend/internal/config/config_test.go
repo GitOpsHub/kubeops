@@ -46,3 +46,25 @@ func TestLoadUsesDefaultsWhenFileDoesNotExist(t *testing.T) {
 		t.Fatalf("unexpected address: %s", cfg.Address())
 	}
 }
+
+func TestLoadArgoTargetsResolvesTokenEnvironmentVariable(t *testing.T) {
+	t.Setenv("ARGO_PROD_TOKEN", "test-token")
+	path := filepath.Join(t.TempDir(), "argo-targets.yaml")
+	content := []byte(`targets:
+  - source_id: aws-platform
+    provider_resource_id: arn:aws:eks:us-east-1:123:cluster/prod
+    server_url: https://argo-cd.prod.example.test/
+    token_env: ARGO_PROD_TOKEN
+`)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	targets, err := loadArgoTargets(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 1 || targets[0].Token != "test-token" ||
+		targets[0].ServerURL != "https://argo-cd.prod.example.test" {
+		t.Fatalf("unexpected targets: %#v", targets)
+	}
+}

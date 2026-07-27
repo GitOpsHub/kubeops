@@ -167,3 +167,35 @@ type SyncRun struct {
 	StartedAt       *time.Time `json:"startedAt"`
 	CompletedAt     *time.Time `json:"completedAt"`
 }
+
+type ApplicationOnboarding struct {
+	ID            string                  `json:"id"`
+	Name          string                  `json:"name"`
+	Namespace     string                  `json:"namespace"`
+	ChartRepoURL  string                  `json:"chartRepoUrl"`
+	ChartName     string                  `json:"chartName"`
+	ChartRevision string                  `json:"chartRevision"`
+	ValuesDigest  string                  `json:"valuesDigest"`
+	Status        string                  `json:"status"`
+	Targets       []ApplicationDeployment `json:"targets"`
+	CreatedAt     time.Time               `json:"createdAt"`
+	UpdatedAt     time.Time               `json:"updatedAt"`
+	CompletedAt   *time.Time              `json:"completedAt"`
+}
+
+type ApplicationDeployment struct {
+	ID                 string     `json:"id"`
+	OnboardingID       string     `json:"onboardingId"`
+	ClusterID          string     `json:"clusterId"`
+	ClusterName        string     `json:"clusterName"`
+	SourceID           string     `json:"sourceId"`
+	ProviderResourceID string     `json:"providerResourceId"`
+	ArgoApplication    string     `json:"argoApplication"`
+	Status             string     `json:"status"`
+	SyncStatus         string     `json:"syncStatus"`
+	HealthStatus       string     `json:"healthStatus"`
+	Message            string     `json:"message,omitempty"`
+	CreatedAt          time.Time  `json:"createdAt"`
+	UpdatedAt          time.Time  `json:"updatedAt"`
+	CompletedAt        *time.Time `json:"completedAt"`
+}

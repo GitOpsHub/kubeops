@@ -1,0 +1,12 @@
+apiVersion: v2
+name: kubeops
+description: Global application chart for KubeOps onboarding
+type: application
+version: 0.0.1
+appVersion: "1.25"
+keywords:
+  - kubeops
+  - application
+  - kubernetes
+maintainers:
+  - name: Navaneeth

@@ -16,6 +16,7 @@ Prerequisites: Node.js 22.12+, npm, Go 1.26+, and Docker.
 ```sh
 cp .env.example .env
 cp config/cloud-sources.example.yaml config/cloud-sources.yaml
+cp config/argo-targets.example.yaml config/argo-targets.yaml
 cd frontend && npm install
 cd ..
 make db-up
@@ -48,7 +49,24 @@ make lint
 make build
 ```
 
-The root `.env` and `config/cloud-sources.yaml` are ignored. Only variables prefixed with `VITE_` are exposed to browser code; never place secrets in them.
+The root `.env`, `config/cloud-sources.yaml`, and `config/argo-targets.yaml`
+are ignored. Only variables prefixed with `VITE_` are exposed to browser code;
+never place secrets in them.
+
+## Application onboarding
+
+The default global chart is published from `charts/kubeops` to the GitHub Pages
+Helm repository at `https://gitopshub.github.io/kubeops`. Configure its fixed
+chart name and revision in `.env`. Add one
+entry to `config/argo-targets.yaml` for each inventory cluster, keyed by its cloud
+source ID and provider resource ID. Store each Argo CD bearer token only in the
+environment variable named by that target. Optional private CA bundles are
+supported; TLS verification cannot be disabled.
+
+The onboarding view creates one Argo CD Application per selected cluster with
+automated sync, pruning, self-healing, and namespace creation enabled. Helm values
+are sent to Argo CD but KubeOps stores only their SHA-256 digest. Values must refer
+to existing Kubernetes or external secrets instead of containing secret material.
 
 ## Inventory API
 
@@ -58,4 +76,7 @@ The root `.env` and `config/cloud-sources.yaml` are ignored. Only variables pref
 - `GET /api/cloud-sources` — source counts and latest status
 - `GET /api/sync-runs` — recent reconciliation history
 - `POST /api/cloud-sources/{id}/sync` — queue a source refresh
+- `POST /api/application-onboardings` — create Argo CD Applications for selected clusters
+- `GET /api/application-onboardings` — list recent onboarding status
+- `GET /api/application-onboardings/{id}` — load per-cluster sync and health status
 - `GET /api/health` and `GET /api/ready` — liveness and database readiness

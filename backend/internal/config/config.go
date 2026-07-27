@@ -23,6 +23,29 @@ type Config struct {
 	SyncWorkers       int
 	CloudSourcesFile  string
 	CloudSources      []model.CloudSource
+	Onboarding        OnboardingConfig
+}
+
+type ArgoTarget struct {
+	SourceID           string `yaml:"source_id"`
+	ProviderResourceID string `yaml:"provider_resource_id"`
+	ServerURL          string `yaml:"server_url"`
+	TokenEnv           string `yaml:"token_env"`
+	CAFile             string `yaml:"ca_file,omitempty"`
+	Token              string `yaml:"-"`
+}
+
+type OnboardingConfig struct {
+	HelmRepoURL       string
+	HelmChart         string
+	HelmRevision      string
+	ArgoProject       string
+	ArgoNamespace     string
+	ArgoTargetsFile   string
+	ArgoTargets       []ArgoTarget
+	PollInterval      time.Duration
+	DeploymentTimeout time.Duration
+	RequestTimeout    time.Duration
 }
 
 func Load(envFile string) (Config, error) {
@@ -45,6 +68,11 @@ func Load(envFile string) (Config, error) {
 		return Config{}, err
 	}
 
+	onboarding, err := loadOnboardingConfig()
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		Environment:       valueOrDefault("APP_ENV", "development"),
 		Host:              valueOrDefault("BACKEND_HOST", "127.0.0.1"),
@@ -55,7 +83,77 @@ func Load(envFile string) (Config, error) {
 		SyncWorkers:       workers,
 		CloudSourcesFile:  sourcesFile,
 		CloudSources:      sources,
+		Onboarding:        onboarding,
 	}, nil
+}
+
+func loadOnboardingConfig() (OnboardingConfig, error) {
+	pollInterval, err := time.ParseDuration(valueOrDefault("ARGO_POLL_INTERVAL", "15s"))
+	if err != nil || pollInterval <= 0 {
+		return OnboardingConfig{}, fmt.Errorf("ARGO_POLL_INTERVAL must be a positive duration")
+	}
+	deploymentTimeout, err := time.ParseDuration(valueOrDefault("ARGO_DEPLOYMENT_TIMEOUT", "15m"))
+	if err != nil || deploymentTimeout <= 0 {
+		return OnboardingConfig{}, fmt.Errorf("ARGO_DEPLOYMENT_TIMEOUT must be a positive duration")
+	}
+	requestTimeout, err := time.ParseDuration(valueOrDefault("ARGO_REQUEST_TIMEOUT", "10s"))
+	if err != nil || requestTimeout <= 0 {
+		return OnboardingConfig{}, fmt.Errorf("ARGO_REQUEST_TIMEOUT must be a positive duration")
+	}
+
+	targetsFile := valueOrDefault("ARGO_TARGETS_FILE", "../config/argo-targets.yaml")
+	targets, err := loadArgoTargets(targetsFile)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return OnboardingConfig{}, err
+	}
+
+	return OnboardingConfig{
+		HelmRepoURL:       strings.TrimSpace(os.Getenv("GLOBAL_HELM_REPO_URL")),
+		HelmChart:         strings.TrimSpace(os.Getenv("GLOBAL_HELM_CHART")),
+		HelmRevision:      strings.TrimSpace(os.Getenv("GLOBAL_HELM_REVISION")),
+		ArgoProject:       valueOrDefault("ARGO_PROJECT", "default"),
+		ArgoNamespace:     valueOrDefault("ARGO_NAMESPACE", "argo-cd"),
+		ArgoTargetsFile:   targetsFile,
+		ArgoTargets:       targets,
+		PollInterval:      pollInterval,
+		DeploymentTimeout: deploymentTimeout,
+		RequestTimeout:    requestTimeout,
+	}, nil
+}
+
+func loadArgoTargets(path string) ([]ArgoTarget, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var document struct {
+		Targets []ArgoTarget `yaml:"targets"`
+	}
+	if err := yaml.Unmarshal(content, &document); err != nil {
+		return nil, fmt.Errorf("parse Argo targets: %w", err)
+	}
+	seen := make(map[string]struct{}, len(document.Targets))
+	for i := range document.Targets {
+		target := &document.Targets[i]
+		target.SourceID = strings.TrimSpace(target.SourceID)
+		target.ProviderResourceID = strings.TrimSpace(target.ProviderResourceID)
+		target.ServerURL = strings.TrimRight(strings.TrimSpace(target.ServerURL), "/")
+		target.TokenEnv = strings.TrimSpace(target.TokenEnv)
+		if target.SourceID == "" || target.ProviderResourceID == "" ||
+			target.ServerURL == "" || target.TokenEnv == "" {
+			return nil, fmt.Errorf("Argo target %d requires source_id, provider_resource_id, server_url, and token_env", i+1)
+		}
+		key := target.SourceID + "\x00" + target.ProviderResourceID
+		if _, exists := seen[key]; exists {
+			return nil, fmt.Errorf("duplicate Argo target for source %q and resource %q", target.SourceID, target.ProviderResourceID)
+		}
+		seen[key] = struct{}{}
+		target.Token = os.Getenv(target.TokenEnv)
+		if target.Token == "" {
+			return nil, fmt.Errorf("Argo target token environment variable %s is empty", target.TokenEnv)
+		}
+	}
+	return document.Targets, nil
 }
 
 func (c Config) Address() string {

@@ -13,6 +13,7 @@ import (
 	"github.com/GitOpsHub/kubeops/backend/internal/config"
 	"github.com/GitOpsHub/kubeops/backend/internal/httpapi"
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
+	"github.com/GitOpsHub/kubeops/backend/internal/onboarding"
 	"github.com/GitOpsHub/kubeops/backend/internal/provider"
 	"github.com/GitOpsHub/kubeops/backend/internal/store"
 	"github.com/GitOpsHub/kubeops/backend/internal/syncer"
@@ -55,13 +56,24 @@ func main() {
 	)
 	syncService.Start(ctx)
 
+	onboardingService, err := onboarding.NewService(repository, cfg.Onboarding)
+	if err != nil {
+		slog.Error("initialize application onboarding", "error", err)
+		os.Exit(1)
+	}
+	onboardingService.Start(ctx)
+
+	clusterManagers := provider.ManagementRegistry{
+		model.ProviderAWS:   provider.AWS{},
+		model.ProviderGCP:   provider.GCP{},
+		model.ProviderAzure: provider.Azure{},
+	}
+
 	server := &http.Server{
 		Addr: cfg.Address(),
-		Handler: httpapi.NewHandler(cfg, repository, provider.ManagementRegistry{
-			model.ProviderAWS:   provider.AWS{},
-			model.ProviderGCP:   provider.GCP{},
-			model.ProviderAzure: provider.Azure{},
-		}),
+		Handler: httpapi.NewHandlerWithOnboarding(
+			cfg, repository, clusterManagers, onboardingService,
+		),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,

@@ -11,6 +11,7 @@ import (
 
 	"github.com/GitOpsHub/kubeops/backend/internal/config"
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
+	"github.com/GitOpsHub/kubeops/backend/internal/onboarding"
 	"github.com/GitOpsHub/kubeops/backend/internal/provider"
 	"github.com/GitOpsHub/kubeops/backend/internal/store"
 )
@@ -51,6 +52,32 @@ type fakeClusterManager struct {
 	scaleErr    error
 	poolID      string
 	desired     int32
+}
+
+type fakeApplicationOnboarder struct {
+	input  onboarding.CreateInput
+	record model.ApplicationOnboarding
+	err    error
+}
+
+func (f *fakeApplicationOnboarder) Create(
+	_ context.Context,
+	input onboarding.CreateInput,
+) (model.ApplicationOnboarding, error) {
+	f.input = input
+	return f.record, f.err
+}
+func (f *fakeApplicationOnboarder) Get(
+	context.Context,
+	string,
+) (model.ApplicationOnboarding, error) {
+	return f.record, f.err
+}
+func (f *fakeApplicationOnboarder) List(
+	context.Context,
+	int,
+) ([]model.ApplicationOnboarding, error) {
+	return []model.ApplicationOnboarding{f.record}, f.err
 }
 
 func (f *fakeClusterManager) Details(
@@ -233,5 +260,54 @@ func TestScaleNodePoolErrors(t *testing.T) {
 				t.Fatal("provider error was exposed")
 			}
 		})
+	}
+}
+
+func TestCreateApplicationOnboarding(t *testing.T) {
+	onboarder := &fakeApplicationOnboarder{record: model.ApplicationOnboarding{
+		ID: "onboarding-1", Name: "payments", Status: "progressing",
+	}}
+	handler := NewHandlerWithOnboarding(
+		config.Config{},
+		&fakeRepository{},
+		&fakeClusterManager{},
+		onboarder,
+	)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/application-onboardings",
+		strings.NewReader(`{
+			"name":"payments",
+			"namespace":"payments",
+			"clusterIds":["cluster-1"],
+			"valuesYaml":"replicaCount: 2\n"
+		}`),
+	)
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d: %s", response.Code, response.Body.String())
+	}
+	if onboarder.input.Name != "payments" || len(onboarder.input.ClusterIDs) != 1 {
+		t.Fatalf("unexpected input: %#v", onboarder.input)
+	}
+}
+
+func TestCreateApplicationOnboardingValidationError(t *testing.T) {
+	onboarder := &fakeApplicationOnboarder{
+		err: onboarding.ValidationError{Message: "valuesYaml must contain valid YAML"},
+	}
+	handler := NewHandlerWithOnboarding(
+		config.Config{}, &fakeRepository{}, &fakeClusterManager{}, onboarder,
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(
+		response,
+		httptest.NewRequest(http.MethodPost, "/api/application-onboardings", strings.NewReader(`{}`)),
+	)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected status 422, got %d", response.Code)
 	}
 }

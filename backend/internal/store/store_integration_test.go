@@ -109,6 +109,27 @@ func TestInventoryLifecycle(t *testing.T) {
 		t.Fatalf("expected six active clusters, got %#v, %v", page, err)
 	}
 
+	onboarding, err := repository.CreateApplicationOnboarding(ctx, model.ApplicationOnboarding{
+		Name: "payments", Namespace: "payments", ChartRepoURL: "https://charts.example.test",
+		ChartName: "global-app", ChartRevision: "1.2.3", ValuesDigest: "sha256:test",
+	}, []model.Cluster{page.Items[0]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(onboarding.Targets) != 1 || onboarding.Targets[0].Status != "creating" {
+		t.Fatalf("unexpected onboarding: %#v", onboarding)
+	}
+	if err := repository.UpdateApplicationDeployment(
+		ctx, onboarding.Targets[0].ID, "healthy", "Synced", "Healthy", "",
+	); err != nil {
+		t.Fatal(err)
+	}
+	storedOnboarding, err := repository.GetApplicationOnboarding(ctx, onboarding.ID)
+	if err != nil || storedOnboarding.Status != "healthy" ||
+		storedOnboarding.Targets[0].HealthStatus != "Healthy" {
+		t.Fatalf("unexpected stored onboarding: %#v, %v", storedOnboarding, err)
+	}
+
 	run, err = repository.QueueSync(ctx, sources[0].ID, "scheduled")
 	if err != nil {
 		t.Fatal(err)
