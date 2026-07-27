@@ -68,3 +68,25 @@ func TestLoadArgoTargetsResolvesTokenEnvironmentVariable(t *testing.T) {
 		t.Fatalf("unexpected targets: %#v", targets)
 	}
 }
+
+func TestLoadOnboardingConfigReadsGitHubToken(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "pat-secret")
+	t.Setenv("GITHUB_APP_ID", "")
+	t.Setenv("GITHUB_APP_INSTALLATION_ID", "")
+	t.Setenv("GITHUB_APP_PRIVATE_KEY_FILE", "")
+	t.Setenv("ARGO_TARGETS_FILE", filepath.Join(t.TempDir(), "missing-targets.yaml"))
+
+	defaultsPath := filepath.Join(t.TempDir(), "values.yaml")
+	if err := os.WriteFile(defaultsPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GLOBAL_HELM_DEFAULT_VALUES_FILE", defaultsPath)
+
+	cfg, err := loadOnboardingConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GitHubToken != "pat-secret" {
+		t.Fatal("expected GitHub token from environment")
+	}
+}

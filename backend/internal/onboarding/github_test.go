@@ -12,7 +12,32 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/GitOpsHub/kubeops/backend/internal/config"
 )
+
+func TestNewGitHubClientUsesPATWithoutGitHubApp(t *testing.T) {
+	client, err := NewGitHubClient(config.OnboardingConfig{
+		GitHubAPIURL:     "https://api.github.test",
+		GitHubOrg:        "GitOpsHub",
+		GitHubToken:      "pat-secret",
+		GitHubVisibility: "private",
+		RequestTimeout:   time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client == nil {
+		t.Fatal("expected PAT-authenticated GitHub client")
+	}
+	token, err := client.authenticationToken(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "pat-secret" {
+		t.Fatal("expected configured PAT")
+	}
+}
 
 func TestGitHubClientProvisionsValuesRepository(t *testing.T) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)

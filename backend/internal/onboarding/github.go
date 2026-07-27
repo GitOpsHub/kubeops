@@ -43,6 +43,7 @@ type GitHubClient struct {
 	apiURL         string
 	organization   string
 	visibility     string
+	staticToken    string
 	appID          int64
 	installationID int64
 	privateKey     *rsa.PrivateKey
@@ -53,6 +54,15 @@ type GitHubClient struct {
 }
 
 func NewGitHubClient(cfg config.OnboardingConfig) (*GitHubClient, error) {
+	if cfg.GitHubToken != "" {
+		return &GitHubClient{
+			apiURL:       strings.TrimRight(cfg.GitHubAPIURL, "/"),
+			organization: cfg.GitHubOrg,
+			visibility:   cfg.GitHubVisibility,
+			staticToken:  cfg.GitHubToken,
+			client:       &http.Client{Timeout: cfg.RequestTimeout},
+		}, nil
+	}
 	if cfg.GitHubAppID == 0 && cfg.GitHubInstallID == 0 && cfg.GitHubKeyFile == "" {
 		return nil, nil
 	}
@@ -101,7 +111,7 @@ func (c *GitHubClient) Provision(
 	ctx context.Context,
 	name, valuesYAML string,
 ) (ValuesRepository, error) {
-	token, err := c.installationToken(ctx)
+	token, err := c.authenticationToken(ctx)
 	if err != nil {
 		return ValuesRepository{}, err
 	}
@@ -160,7 +170,7 @@ func (c *GitHubClient) Provision(
 }
 
 func (c *GitHubClient) Delete(ctx context.Context, name string) error {
-	token, err := c.installationToken(ctx)
+	token, err := c.authenticationToken(ctx)
 	if err != nil {
 		return err
 	}
@@ -173,7 +183,10 @@ func (c *GitHubClient) deleteWithToken(ctx context.Context, token, name string) 
 	return err
 }
 
-func (c *GitHubClient) installationToken(ctx context.Context) (string, error) {
+func (c *GitHubClient) authenticationToken(ctx context.Context) (string, error) {
+	if c.staticToken != "" {
+		return c.staticToken, nil
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.token != "" && time.Until(c.tokenExpiresAt) > time.Minute {

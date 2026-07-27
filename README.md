@@ -57,10 +57,12 @@ never place secrets in them.
 
 The default global chart is published from `charts/kubeops` to the public OCI
 repository `ghcr.io/gitopshub/charts/kubeops:0.0.1`. Configure its fixed chart
-name, revision, and matching local defaults file in `.env`. Configure a GitHub
-App with organization repository Administration and Contents write access so
-KubeOps can create a private `GitOpsHub/<application-name>` repository and commit
-its root `values.yaml`. Add one
+name, revision, and matching local defaults file in `.env`. Set `GITHUB_TOKEN`
+to a PAT authorized for the `GitOpsHub` organization and private repository
+creation (`repo` for a classic PAT; `delete_repo` is recommended for compensation
+cleanup). A GitHub App ID, installation ID, and private-key file remain supported
+as an alternative. KubeOps uses the credential to create a private
+`GitOpsHub/<application-name>` repository and commit its root `values.yaml`. Add one
 entry to `config/argo-targets.yaml` for each inventory cluster, keyed by its cloud
 source ID and provider resource ID. Store each Argo CD bearer token only in the
 environment variable named by that target. Optional private CA bundles are
