@@ -43,6 +43,14 @@ func TestInventoryLifecycle(t *testing.T) {
 			ID: "azure-test", Provider: model.ProviderAzure, Name: "Azure Test",
 			ScopeID: "test-subscription", Regions: []string{"*"}, Enabled: true,
 		},
+		{
+			ID: "docker-test", Provider: model.ProviderDocker, Name: "Docker Test",
+			ScopeID: "local-docker", Regions: []string{"local"}, Enabled: true,
+		},
+		{
+			ID: "minikube-test", Provider: model.ProviderMinikube, Name: "Minikube Test",
+			ScopeID: "local-minikube", Regions: []string{"local"}, Enabled: true,
+		},
 	}
 	if err := repository.UpsertSources(ctx, sources); err != nil {
 		t.Fatal(err)
@@ -97,8 +105,8 @@ func TestInventoryLifecycle(t *testing.T) {
 	}
 
 	page, err := repository.ListClusters(ctx, model.ClusterFilter{Page: 1, PageSize: 25})
-	if err != nil || page.Total != 4 {
-		t.Fatalf("expected four active clusters, got %#v, %v", page, err)
+	if err != nil || page.Total != 6 {
+		t.Fatalf("expected six active clusters, got %#v, %v", page, err)
 	}
 
 	run, err = repository.QueueSync(ctx, sources[0].ID, "scheduled")
@@ -120,18 +128,18 @@ func TestInventoryLifecycle(t *testing.T) {
 	}
 
 	active, err := repository.ListClusters(ctx, model.ClusterFilter{Page: 1, PageSize: 25})
-	if err != nil || active.Total != 3 {
-		t.Fatalf("expected three active clusters, got %#v, %v", active, err)
+	if err != nil || active.Total != 5 {
+		t.Fatalf("expected five active clusters, got %#v, %v", active, err)
 	}
 	all, err := repository.ListClusters(ctx, model.ClusterFilter{
 		Page: 1, PageSize: 25, IncludeRemoved: true,
 	})
-	if err != nil || all.Total != 4 {
+	if err != nil || all.Total != 6 {
 		t.Fatalf("expected one removed cluster to be retained, got %#v, %v", all, err)
 	}
 
 	runs, err := repository.ListSyncRuns(ctx, 10)
-	if err != nil || len(runs) != 4 || runs[0].RemovedCount != 1 {
+	if err != nil || len(runs) != 6 || runs[0].RemovedCount != 1 {
 		t.Fatalf("unexpected sync history: %#v, %v", runs, err)
 	}
 }

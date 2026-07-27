@@ -43,9 +43,11 @@ func main() {
 	syncService := syncer.New(
 		repository,
 		provider.Registry{
-			model.ProviderAWS:   provider.AWS{},
-			model.ProviderGCP:   provider.GCP{},
-			model.ProviderAzure: provider.Azure{},
+			model.ProviderAWS:      provider.AWS{},
+			model.ProviderGCP:      provider.GCP{},
+			model.ProviderAzure:    provider.Azure{},
+			model.ProviderDocker:   provider.LocalKubernetes{Provider: model.ProviderDocker},
+			model.ProviderMinikube: provider.LocalKubernetes{Provider: model.ProviderMinikube},
 		},
 		cfg.CloudSources,
 		cfg.SyncInterval,

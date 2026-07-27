@@ -1,6 +1,6 @@
 # KubeOps
 
-KubeOps inventories managed Kubernetes clusters across AWS EKS, Google GKE, and Azure AKS. A Go service polls configured cloud sources every five minutes, stores normalized inventory and sync history in PostgreSQL, and serves a React dashboard.
+KubeOps inventories managed Kubernetes clusters across AWS EKS, Google GKE, Azure AKS, and local Docker or Minikube environments. A Go service polls configured sources every five minutes, stores normalized inventory and sync history in PostgreSQL, and serves a React dashboard.
 
 ## Repository layout
 
@@ -26,6 +26,9 @@ Set the desired sources to `enabled: true`. Authentication uses each provider’
 - AWS default credentials, optionally assuming `role_arn`
 - Google Application Default Credentials, optionally impersonating a service account
 - Azure `DefaultAzureCredential`, optionally scoped with `tenant_id`
+- Docker Desktop, kind, k3d, and Minikube through the configured kubeconfig
+
+Local providers default to `~/.kube/config`. Docker discovery recognizes `docker-desktop`, `docker-for-desktop`, `kind-*`, and `k3d-*` contexts; Minikube recognizes `minikube`, `minikube-*`, and Minikube certificate paths. Set `contexts` explicitly when profiles use custom names.
 
 Run the API and UI in separate terminals:
 

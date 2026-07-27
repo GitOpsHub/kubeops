@@ -22,3 +22,23 @@ sources:
     regions: ["*"]
     enabled: false
     tenant_id: 00000000-0000-0000-0000-000000000000
+
+  - id: docker-local
+    provider: docker
+    name: Docker Kubernetes
+    scope_id: local-docker
+    regions: [local]
+    enabled: false
+    kubeconfig_path: ~/.kube/config
+    # Optional. If omitted, docker-desktop, kind-*, and k3d-* contexts are detected.
+    contexts: [docker-desktop]
+
+  - id: minikube-local
+    provider: minikube
+    name: Minikube
+    scope_id: local-minikube
+    regions: [local]
+    enabled: false
+    kubeconfig_path: ~/.kube/config
+    # Optional. If omitted, minikube and minikube-* contexts are detected.
+    contexts: [minikube]

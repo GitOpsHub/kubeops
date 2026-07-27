@@ -12,6 +12,8 @@
   --aws: #ff9900;
   --gcp: #4285f4;
   --azure: #00a4ef;
+  --docker: #2496ed;
+  --minikube: #6967d8;
   --success: #16856c;
   --danger: #c64c62;
 }
@@ -331,9 +333,17 @@ h2 {
   background: var(--azure);
 }
 
+.track-bar--docker {
+  background: var(--docker);
+}
+
+.track-bar--minikube {
+  background: var(--minikube);
+}
+
 .provider-stats {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(5, 1fr);
 }
 
 .provider-stat {
@@ -379,6 +389,14 @@ h2 {
 
 .provider-stat--azure strong {
   color: #68cdfb;
+}
+
+.provider-stat--docker strong {
+  color: #61bdff;
+}
+
+.provider-stat--minikube strong {
+  color: #aaa8ff;
 }
 
 .section-heading {
@@ -579,6 +597,18 @@ tbody tr:hover {
   border-color: #74c7eb;
   color: #0078ad;
   background: #ebf8fe;
+}
+
+.provider-glyph--docker {
+  border-color: #78bee9;
+  color: #1472a8;
+  background: #edf8fe;
+}
+
+.provider-glyph--minikube {
+  border-color: #9f9dec;
+  color: #4c49b4;
+  background: #f1f0ff;
 }
 
 .mono,

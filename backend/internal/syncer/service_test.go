@@ -47,7 +47,13 @@ func (f fakeDiscoverer) Discover(_ context.Context, source model.CloudSource) ([
 }
 
 func TestRunNextNormalizesAllProviderResults(t *testing.T) {
-	for _, providerName := range []string{model.ProviderAWS, model.ProviderGCP, model.ProviderAzure} {
+	for _, providerName := range []string{
+		model.ProviderAWS,
+		model.ProviderGCP,
+		model.ProviderAzure,
+		model.ProviderDocker,
+		model.ProviderMinikube,
+	} {
 		t.Run(providerName, func(t *testing.T) {
 			repository := &fakeStore{run: &model.SyncRun{ID: "run", SourceID: providerName}}
 			source := model.CloudSource{

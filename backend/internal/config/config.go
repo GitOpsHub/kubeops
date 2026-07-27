@@ -123,7 +123,11 @@ func loadCloudSources(path string) ([]model.CloudSource, error) {
 		if source.ID == "" || source.Name == "" || source.ScopeID == "" {
 			return nil, fmt.Errorf("cloud source %d requires id, name, and scope_id", i+1)
 		}
-		if source.Provider != model.ProviderAWS && source.Provider != model.ProviderGCP && source.Provider != model.ProviderAzure {
+		if source.Provider != model.ProviderAWS &&
+			source.Provider != model.ProviderGCP &&
+			source.Provider != model.ProviderAzure &&
+			source.Provider != model.ProviderDocker &&
+			source.Provider != model.ProviderMinikube {
 			return nil, fmt.Errorf("cloud source %q has unsupported provider %q", source.ID, source.Provider)
 		}
 		if _, exists := seen[source.ID]; exists {

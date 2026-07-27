@@ -67,8 +67,10 @@ func (api *API) clusters(w http.ResponseWriter, r *http.Request) {
 	if filter.Provider != "" &&
 		filter.Provider != model.ProviderAWS &&
 		filter.Provider != model.ProviderGCP &&
-		filter.Provider != model.ProviderAzure {
-		writeError(w, http.StatusBadRequest, "provider must be aws, gcp, or azure")
+		filter.Provider != model.ProviderAzure &&
+		filter.Provider != model.ProviderDocker &&
+		filter.Provider != model.ProviderMinikube {
+		writeError(w, http.StatusBadRequest, "provider must be aws, gcp, azure, docker, or minikube")
 		return
 	}
 	if filter.Page < 1 || filter.PageSize < 1 || filter.PageSize > 200 {

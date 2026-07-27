@@ -3,9 +3,11 @@ package model
 import "time"
 
 const (
-	ProviderAWS   = "aws"
-	ProviderGCP   = "gcp"
-	ProviderAzure = "azure"
+	ProviderAWS      = "aws"
+	ProviderGCP      = "gcp"
+	ProviderAzure    = "azure"
+	ProviderDocker   = "docker"
+	ProviderMinikube = "minikube"
 )
 
 type CloudSource struct {
@@ -18,6 +20,8 @@ type CloudSource struct {
 	RoleARN                   string   `json:"-" yaml:"role_arn,omitempty"`
 	ImpersonateServiceAccount string   `json:"-" yaml:"impersonate_service_account,omitempty"`
 	TenantID                  string   `json:"-" yaml:"tenant_id,omitempty"`
+	KubeconfigPath            string   `json:"-" yaml:"kubeconfig_path,omitempty"`
+	Contexts                  []string `json:"-" yaml:"contexts,omitempty"`
 }
 
 type SourceSummary struct {

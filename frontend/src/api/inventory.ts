@@ -1,4 +1,4 @@
-export type Provider = 'aws' | 'gcp' | 'azure'
+export type Provider = 'aws' | 'gcp' | 'azure' | 'docker' | 'minikube'
 
 export type Cluster = {
   id: string

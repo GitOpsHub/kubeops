@@ -14,9 +14,11 @@ const providerLabels: Record<Provider, string> = {
   aws: 'AWS',
   gcp: 'Google Cloud',
   azure: 'Azure',
+  docker: 'Docker',
+  minikube: 'Minikube',
 }
 
-const providers: Provider[] = ['aws', 'gcp', 'azure']
+const providers: Provider[] = ['aws', 'gcp', 'azure', 'docker', 'minikube']
 
 function relativeTime(value: string | null) {
   if (!value) return 'Never'
@@ -94,7 +96,7 @@ function App() {
             .reduce((sum, entry) => sum + entry.clusterCount, 0)
           return result
         },
-        { aws: 0, gcp: 0, azure: 0 },
+        { aws: 0, gcp: 0, azure: 0, docker: 0, minikube: 0 },
       ),
     [sources],
   )
@@ -242,6 +244,8 @@ function App() {
                 <option value="aws">AWS</option>
                 <option value="gcp">Google Cloud</option>
                 <option value="azure">Azure</option>
+                <option value="docker">Docker</option>
+                <option value="minikube">Minikube</option>
               </select>
             </label>
             <label>
