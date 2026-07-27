@@ -1,0 +1,20 @@
+configs:
+  cm:
+    admin.enabled: false
+    accounts.kubeops: apiKey
+    accounts.kubeops.enabled: "true"
+  rbac:
+    policy.default: ""
+    policy.csv: |
+      p, role:kubeops, applications, create, */*, allow
+      p, role:kubeops, applications, get, */*, allow
+      g, kubeops, role:kubeops
+
+dex:
+  enabled: false
+
+notifications:
+  enabled: false
+
+applicationSet:
+  replicas: 0
