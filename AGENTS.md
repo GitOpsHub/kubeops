@@ -16,7 +16,9 @@ Run these commands from the repository root:
 
 - `make dev-frontend` — start the React development server.
 - `make dev-backend` — start the Go API.
+- `make db-up` — start the local PostgreSQL 18 container.
 - `make test` — run frontend and backend tests.
+- `make test-integration` — verify migrations and inventory lifecycle against PostgreSQL.
 - `make lint` — run ESLint and `go vet`.
 - `make build` — build the UI and API.
 
