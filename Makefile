@@ -1,10 +1,18 @@
-.PHONY: db-up db-down dev-frontend dev-backend test test-integration lint build
+.PHONY: db-up db-down dev dev-setup dev-argocd dev-frontend dev-backend test test-integration lint build
 
 db-up:
 	docker compose up -d postgres
 
 db-down:
 	docker compose down
+
+dev: dev-setup
+	./scripts/dev-local.sh
+
+dev-setup: db-up dev-argocd
+
+dev-argocd:
+	./scripts/setup-local-argocd.sh
 
 dev-frontend:
 	cd frontend && npm run dev

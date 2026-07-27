@@ -11,16 +11,27 @@ KubeOps inventories managed Kubernetes clusters across AWS EKS, Google GKE, Azur
 
 ## Local development
 
-Prerequisites: Node.js 22.12+, npm, Go 1.26+, and Docker.
+Prerequisites: Node.js 22.12+, npm, Go 1.26+, Docker, `kubectl`, Helm,
+the Argo CD CLI, and OpenSSL. Local application onboarding expects the
+`docker-desktop` and `minikube` kubeconfig contexts by default.
 
 ```sh
 cp .env.example .env
-cp config/cloud-sources.example.yaml config/cloud-sources.yaml
-cp config/argo-targets.example.yaml config/argo-targets.yaml
 cd frontend && npm install
 cd ..
-make db-up
+make dev
 ```
+
+`make dev` starts PostgreSQL, installs or upgrades Argo CD in both local
+clusters, creates scoped KubeOps API tokens and verified local TLS endpoints,
+generates the ignored `config/argo-targets.yaml`, and runs the API, UI, and
+Argo port-forwards together. Press Ctrl-C to stop the local processes. Override
+the defaults with `KUBEOPS_DOCKER_CONTEXT`, `KUBEOPS_MINIKUBE_CONTEXT`,
+`KUBEOPS_DOCKER_ARGO_PORT`, or `KUBEOPS_MINIKUBE_ARGO_PORT`.
+
+Set `ARGO_GITHUB_READ_TOKEN` to a dedicated read-only GitHub token when Argo CD
+must clone private `GitOpsHub` values repositories. The setup intentionally does
+not copy a broad GitHub CLI credential into either cluster.
 
 Set the desired sources to `enabled: true`. Authentication uses each provider’s standard credential chain:
 
@@ -31,7 +42,7 @@ Set the desired sources to `enabled: true`. Authentication uses each provider’
 
 Local providers default to `~/.kube/config`. Docker discovery recognizes `docker-desktop`, `docker-for-desktop`, `kind-*`, and `k3d-*` contexts; Minikube recognizes `minikube`, `minikube-*`, and Minikube certificate paths. Set `contexts` explicitly when profiles use custom names.
 
-Run the API and UI in separate terminals:
+To run only one application process:
 
 ```sh
 make dev-backend

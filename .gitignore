@@ -152,3 +152,4 @@ backend/bin/
 config/cloud-sources.yaml
 config/argo-targets.yaml
 config/argocd-local-ca.crt
+config/.argocd-local-tls/
