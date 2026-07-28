@@ -86,19 +86,31 @@ never place secrets in them.
 The reusable global chart lives in [`charts/kubeops`](charts/kubeops) and is
 published by [`.github/workflows/helm-chart.yml`](.github/workflows/helm-chart.yml)
 to the OCI repository `ghcr.io/gitopshub/charts/kubeops`. To publish version
-`0.1.0`, create and push the matching `helm-v0.1.0` Git tag. The workflow rejects
+`1.0.0`, create and push the matching `helm-v1.0.0` Git tag. The workflow rejects
 a tag that does not match `version` in `Chart.yaml`.
 
 ```sh
-git tag helm-v0.1.0
-git push origin helm-v0.1.0
-helm pull oci://ghcr.io/gitopshub/charts/kubeops --version 0.1.0
+git tag helm-v1.0.0
+git push origin helm-v1.0.0
+helm pull oci://ghcr.io/gitopshub/charts/kubeops --version 1.0.0
 ```
+
+The workflow authenticates with the job's `GITHUB_TOKEN`, which only carries a
+write role on packages that are linked to this repository. A package that was
+first pushed from a workstation (or from another repository) has no such link,
+so `helm push` fails with a bare `403 Forbidden` on a blob `HEAD` request. Fix
+it once, as an organization package administrator, at
+[the package's settings page](https://github.com/orgs/GitOpsHub/packages/container/charts%2Fkubeops/settings):
+under **Manage Actions access**, add `GitOpsHub/kubeops` with the **Write**
+role. Packages that CI creates itself are linked automatically and never need
+this.
 
 GitHub Container Registry creates new packages as private by default. An
 organization package administrator must change the package visibility to
 **Public** once after its first publication if anonymous Argo CD access is
-required. Configure the fixed chart name, revision, and matching local defaults
+required. Keeping it private is also supported — `scripts/setup-local-argocd.sh`
+provisions the `kubeops-ghcr-helm-creds` repository secret so Argo CD can pull
+with credentials. Configure the fixed chart name, revision, and matching local defaults
 file in `.env`. Set `GITHUB_TOKEN`
 to a PAT authorized for the `GitOpsHub` organization and private repository
 creation (`repo` for a classic PAT; `delete_repo` is recommended for compensation
