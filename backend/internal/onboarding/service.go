@@ -235,6 +235,12 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 			})
 			status, message := stateToDeployment(state)
 			if createErr != nil {
+				// The client only ever sees the sanitised message, so the real
+				// cause has to be logged or it is lost entirely.
+				slog.Error("create Argo CD application",
+					"onboarding", onboarding.ID, "target", target.ID,
+					"cluster", target.ClusterName, "application", input.Name,
+					"error", createErr)
 				status = "failed"
 				message = safeCreateError(createErr)
 			}
@@ -354,6 +360,9 @@ func (s *Service) reconcile(ctx context.Context) {
 		case errors.Is(getErr, ErrApplicationNotFound):
 			status, message = "failed", "Argo CD application no longer exists"
 		case getErr != nil:
+			slog.Error("read Argo CD application status",
+				"target", target.ID, "cluster", target.ClusterName,
+				"application", target.ArgoApplication, "error", getErr)
 			status, message = "progressing", "unable to read application status from Argo CD"
 		}
 		if err := s.store.UpdateApplicationDeployment(

@@ -784,17 +784,31 @@ func (s *Store) UpdateApplicationDeployment(
 	}
 	defer tx.Rollback(ctx)
 
+	// Targets are created in parallel and therefore finish together. Lock the
+	// parent before touching this deployment so concurrent updates serialise here:
+	// each transaction then recomputes the totals below from a snapshot that
+	// already contains every sibling update that committed before it. Without this
+	// the last writer can persist a total it computed before its sibling committed,
+	// leaving the onboarding stuck on 'progressing' after every target is terminal.
 	var onboardingID string
 	err = tx.QueryRow(ctx, `
+		SELECT o.id::text
+		FROM application_onboardings o
+		JOIN application_deployments d ON d.onboarding_id = o.id
+		WHERE d.id::text = $1
+		FOR UPDATE OF o`, id).Scan(&onboardingID)
+	if err != nil {
+		return err
+	}
+
+	if _, err = tx.Exec(ctx, `
 		UPDATE application_deployments
 		SET status = $2, sync_status = $3, health_status = $4, message = $5,
 			updated_at = NOW(),
 			completed_at = CASE WHEN $2 IN ('healthy', 'failed') THEN NOW() ELSE NULL END
-		WHERE id::text = $1
-		RETURNING onboarding_id::text`,
+		WHERE id::text = $1`,
 		id, status, syncStatus, healthStatus, message,
-	).Scan(&onboardingID)
-	if err != nil {
+	); err != nil {
 		return err
 	}
 

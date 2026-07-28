@@ -1,9 +1,11 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -21,6 +23,7 @@ import (
 type fakeRepository struct {
 	readyErr   error
 	queueErr   error
+	listErr    error
 	filter     model.ClusterFilter
 	cluster    model.Cluster
 	clusterErr error
@@ -30,10 +33,13 @@ type fakeRepository struct {
 
 func (f *fakeRepository) Ready(context.Context) error { return f.readyErr }
 func (f *fakeRepository) ListSources(context.Context) ([]model.SourceSummary, error) {
-	return []model.SourceSummary{}, nil
+	return []model.SourceSummary{}, f.listErr
 }
 func (f *fakeRepository) ListClusters(_ context.Context, filter model.ClusterFilter) (model.ClusterPage, error) {
 	f.filter = filter
+	if f.listErr != nil {
+		return model.ClusterPage{}, f.listErr
+	}
 	return model.ClusterPage{Items: []model.Cluster{}, Page: filter.Page, PageSize: filter.PageSize}, nil
 }
 func (f *fakeRepository) GetCluster(context.Context, string) (model.Cluster, error) {
@@ -46,7 +52,7 @@ func (f *fakeRepository) GetArgoAccessByClusterID(
 	return f.argoAccess, f.argoErr
 }
 func (f *fakeRepository) ListSyncRuns(context.Context, int) ([]model.SyncRun, error) {
-	return []model.SyncRun{}, nil
+	return []model.SyncRun{}, f.listErr
 }
 func (f *fakeRepository) QueueSync(_ context.Context, sourceID, trigger string) (model.SyncRun, error) {
 	if f.queueErr != nil {
@@ -458,5 +464,37 @@ func TestGetApplicationOnboardingNotFound(t *testing.T) {
 	))
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("expected status 404, got %d", response.Code)
+	}
+}
+
+func TestAbortedRequestsAreNotServerErrors(t *testing.T) {
+	var logged bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelError})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	handler := NewHandlerWithOnboarding(
+		config.Config{},
+		&fakeRepository{listErr: context.Canceled},
+		&fakeClusterManager{},
+		&fakeApplicationOnboarder{err: context.Canceled},
+	)
+	for _, path := range []string{
+		"/api/clusters", "/api/cloud-sources", "/api/sync-runs",
+		"/api/application-onboardings", "/api/application-onboardings/onboarding-1",
+	} {
+		t.Run(path, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil).WithContext(ctx))
+			// The client is gone, so the handler writes nothing rather than a 500.
+			if response.Code != http.StatusOK || response.Body.Len() != 0 {
+				t.Fatalf("expected an empty response, got %d: %s", response.Code, response.Body.String())
+			}
+		})
+	}
+	if logged.Len() != 0 {
+		t.Fatalf("client cancellation was logged as an error: %s", logged.String())
 	}
 }

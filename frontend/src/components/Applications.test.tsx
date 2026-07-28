@@ -321,6 +321,48 @@ describe('application onboarding form', () => {
     expect(screen.getAllByText('progressing').length).toBeGreaterThan(0)
   })
 
+  it('submits the chart defaults without rendering a base values editor', async () => {
+    const { fetchMock } = mockAPI()
+    renderApp('/applications/new')
+    const user = userEvent.setup()
+
+    await screen.findByRole('heading', { name: 'Onboard an application' })
+    expect(screen.queryByLabelText('Base Helm values YAML')).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: /Base Helm values/ })).not.toBeInTheDocument()
+
+    await user.type(screen.getByLabelText('Application name'), 'payments-api')
+    await user.type(screen.getByLabelText('Namespace'), 'payments')
+    await user.click(await screen.findByRole('checkbox'))
+    await user.click(screen.getByRole('button', { name: 'Onboard application' }))
+
+    await waitFor(() => {
+      const posted = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')
+      expect(posted).toBeDefined()
+      expect(JSON.parse(String(posted?.[1]?.body)).valuesYaml).toBe(
+        'replicaCount: 2\nimage:\n  repository: nginx\n',
+      )
+    })
+  })
+
+  it('blocks submission when the chart defaults are unavailable', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (request) => {
+      const url = String(request)
+      if (url.includes('/application-onboardings/defaults')) {
+        return Response.json({ error: 'defaults are not configured' }, { status: 503 })
+      }
+      if (url.includes('/clusters?')) {
+        return Response.json({ items: [], total: 0, page: 1, pageSize: 200 })
+      }
+      return Response.json({ error: 'not found' }, { status: 404 })
+    })
+    renderApp('/applications/new')
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('defaults are not configured')
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Onboard application' })).toBeDisabled()
+    })
+  })
+
   it('keeps the operator on the form when submission fails', async () => {
     mockAPI()
     renderApp('/applications/new')

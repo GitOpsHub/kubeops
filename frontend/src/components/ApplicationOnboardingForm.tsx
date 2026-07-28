@@ -27,7 +27,9 @@ export function ApplicationOnboardingForm() {
   const [clusters, setClusters] = useState<Cluster[]>([])
   const [name, setName] = useState('')
   const [namespace, setNamespace] = useState('')
-  const [valuesYaml, setValuesYaml] = useState('replicaCount: 1\n')
+  // The base values are not editable during onboarding; the chart defaults are
+  // submitted as-is, so an empty string means they have not loaded yet.
+  const [valuesYaml, setValuesYaml] = useState('')
   const [selectedRegions, setSelectedRegions] = useState<string[]>([])
   const [regionValues, setRegionValues] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -138,8 +140,9 @@ export function ApplicationOnboardingForm() {
     if (!dnsLabel.test(name) || name.length > 63) return 'Application name must be a lowercase DNS label.'
     if (!dnsLabel.test(namespace) || namespace.length > 63) return 'Namespace must be a lowercase DNS label.'
     if (selectedClusterIds.length === 0) return 'Select at least one target region.'
-    const baseError = validateMapping(valuesYaml, 'Base Helm values')
-    if (baseError) return baseError
+    if (!valuesYaml.trim()) {
+      return 'Helm chart defaults could not be loaded. Reload the page and try again.'
+    }
     for (const region of activeRegions) {
       const override = regionValues[region]
       if (!override || !override.trim()) continue
@@ -275,19 +278,13 @@ export function ApplicationOnboardingForm() {
             )}
           </fieldset>
 
-          <label className="values-field">
-            <span>Base Helm values YAML</span>
-            <textarea
-              value={valuesYaml}
-              spellCheck={false}
-              onChange={(event) => setValuesYaml(event.target.value)}
-              aria-describedby="values-guidance"
-            />
-          </label>
-
           {activeRegions.length > 0 && (
             <div className="region-values">
               <p className="section-label">Region overrides</p>
+              <p className="values-guidance" id="values-guidance">
+                Do not include passwords, tokens, certificates, or other secret material.
+                Reference existing Kubernetes or external secrets from the chart values.
+              </p>
               {activeRegions.map((region) => (
                 <details className="region-values-item" key={region}>
                   <summary>
@@ -297,7 +294,8 @@ export function ApplicationOnboardingForm() {
                   <textarea
                     value={regionValues[region] ?? ''}
                     spellCheck={false}
-                    placeholder={`# Keys here override the base values in ${region}\nreplicaCount: 3\n`}
+                    aria-describedby="values-guidance"
+                    placeholder={`# Keys here override the chart defaults in ${region}\nreplicaCount: 3\n`}
                     onChange={(event) =>
                       setRegionValues((current) => ({ ...current, [region]: event.target.value }))
                     }
@@ -307,12 +305,11 @@ export function ApplicationOnboardingForm() {
             </div>
           )}
 
-          <p className="values-guidance" id="values-guidance">
-            Do not include passwords, tokens, certificates, or other secret material. Reference
-            existing Kubernetes or external secrets from the chart values.
-          </p>
-
-          <button className="primary-button" type="submit" disabled={submitting || loading}>
+          <button
+            className="primary-button"
+            type="submit"
+            disabled={submitting || loading || !valuesYaml}
+          >
             {submitting ? 'Creating Argo applications…' : 'Onboard application'}
           </button>
         </form>

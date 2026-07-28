@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
@@ -216,5 +218,110 @@ func TestInventoryLifecycle(t *testing.T) {
 	runs, err := repository.ListSyncRuns(ctx, 10)
 	if err != nil || len(runs) != 6 || runs[0].RemovedCount != 1 {
 		t.Fatalf("unexpected sync history: %#v, %v", runs, err)
+	}
+}
+
+// TestConcurrentDeploymentUpdatesSettleParentStatus covers targets that finish at
+// the same moment, which is what Create does when it fans out to every cluster.
+// Before the parent row was locked first, the last writer could persist a total it
+// computed before its sibling committed, stranding the onboarding on 'progressing'.
+func TestConcurrentDeploymentUpdatesSettleParentStatus(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not configured")
+	}
+
+	ctx := context.Background()
+	repository, err := Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	truncate := "TRUNCATE sync_runs, application_onboardings, clusters, cloud_sources CASCADE"
+	t.Cleanup(func() {
+		if _, err := repository.pool.Exec(context.Background(), truncate); err != nil {
+			t.Errorf("clean integration data: %v", err)
+		}
+		repository.Close()
+	})
+	if _, err := repository.pool.Exec(ctx, truncate); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repository.UpsertSources(ctx, []model.CloudSource{{
+		ID: "aws-test", Provider: model.ProviderAWS, Name: "AWS Test",
+		ScopeID: "123456789012", Regions: []string{"us-east-1"}, Enabled: true,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.QueueSync(ctx, "aws-test", "manual"); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := repository.ClaimNextSync(ctx)
+	if err != nil || claimed == nil {
+		t.Fatalf("claim sync: %#v, %v", claimed, err)
+	}
+	if err := repository.CompleteSync(ctx, *claimed, []model.Cluster{
+		{
+			Provider: model.ProviderAWS, ProviderResourceID: "cluster-east", Name: "east",
+			Location: "us-east-1", Status: "active", EndpointAccess: "public",
+			Metadata: map[string]any{},
+		},
+		{
+			Provider: model.ProviderAWS, ProviderResourceID: "cluster-west", Name: "west",
+			Location: "us-west-2", Status: "active", EndpointAccess: "public",
+			Metadata: map[string]any{},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	clusterPage, err := repository.ListClusters(ctx, model.ClusterFilter{Page: 1, PageSize: 25})
+	if err != nil || len(clusterPage.Items) != 2 {
+		t.Fatalf("expected two clusters: %#v, %v", clusterPage, err)
+	}
+
+	// Repeat so an unlucky interleaving is caught rather than passing by chance.
+	for attempt := 0; attempt < 15; attempt++ {
+		onboarding, err := repository.CreateApplicationOnboarding(ctx, model.ApplicationOnboarding{
+			Name:      fmt.Sprintf("race-%d", attempt),
+			Namespace: "race", ChartRepoURL: "repo", ChartName: "chart",
+			ChartRevision: "1", ValuesDigest: "digest", ValuesRepositoryURL: "url",
+			ValuesRepositoryName: "name", ValuesRevision: "main", ValuesCommitSHA: "sha",
+		}, clusterPage.Items)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var wait sync.WaitGroup
+		errs := make(chan error, len(onboarding.Targets))
+		for _, target := range onboarding.Targets {
+			wait.Add(1)
+			go func() {
+				defer wait.Done()
+				if err := repository.UpdateApplicationDeployment(
+					ctx, target.ID, "failed", "Unknown", "Unknown", "rejected",
+				); err != nil {
+					errs <- err
+				}
+			}()
+		}
+		wait.Wait()
+		close(errs)
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+
+		settled, err := repository.GetApplicationOnboarding(ctx, onboarding.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if settled.Status != model.OnboardingFailed {
+			t.Fatalf(
+				"attempt %d: every target failed but the onboarding is %q",
+				attempt, settled.Status,
+			)
+		}
+		if settled.CompletedAt == nil {
+			t.Fatalf("attempt %d: terminal onboarding has no completed_at", attempt)
+		}
 	}
 }

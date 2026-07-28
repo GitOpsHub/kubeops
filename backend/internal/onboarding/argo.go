@@ -171,6 +171,8 @@ func (c *HTTPArgoClient) do(request *http.Request) (ApplicationState, error) {
 		return ApplicationState{}, ErrApplicationNotFound
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		// The body is discarded deliberately: it can echo credentials back. See
+		// TestHTTPArgoClientDoesNotExposeResponseBody.
 		io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
 		return ApplicationState{}, fmt.Errorf("Argo CD API returned status %d", response.StatusCode)
 	}

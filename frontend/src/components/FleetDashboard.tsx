@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
 import {
   type CloudSource,
   type Cluster,
@@ -182,9 +181,6 @@ export function FleetDashboard() {
           <p>Search, filter, and reconcile every managed and local cluster from one view.</p>
         </div>
         <div className="heading-actions">
-          <Link className="primary-button" to="/applications/new">
-            Onboard application
-          </Link>
           <div className="fleet-metric" aria-label={`${fleetTotal} clusters across ${activeSources} sources`}>
             <span>Fleet size</span>
             <strong>{fleetTotal}</strong>
