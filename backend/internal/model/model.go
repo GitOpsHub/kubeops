@@ -232,6 +232,10 @@ type ApplicationDeployment struct {
 	CreatedAt          time.Time  `json:"createdAt"`
 	UpdatedAt          time.Time  `json:"updatedAt"`
 	CompletedAt        *time.Time `json:"completedAt"`
+	// AttemptStartedAt marks when the current deployment attempt began. It is set
+	// at creation and reset by every sync, so the deployment timeout measures the
+	// attempt in flight rather than the age of the target.
+	AttemptStartedAt time.Time `json:"attemptStartedAt"`
 }
 
 type ApplicationOnboardingFilter struct {

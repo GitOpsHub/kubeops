@@ -38,6 +38,7 @@ type Repository interface {
 	) (model.ApplicationOnboardingPage, error)
 	ListActiveApplicationDeployments(context.Context) ([]model.ApplicationDeployment, error)
 	UpdateApplicationDeployment(context.Context, string, string, string, string, string) error
+	RestartApplicationDeploymentAttempts(context.Context, string) error
 	UpsertArgoAccess(context.Context, model.EncryptedArgoAccess) error
 }
 
@@ -261,6 +262,12 @@ func (s *Service) Sync(ctx context.Context, id string) (model.ApplicationOnboard
 	if err != nil {
 		return model.ApplicationOnboarding{}, err
 	}
+	// A sync is a new deployment attempt, so the timeout window restarts here.
+	// Without this the reconciler fails every target of an onboarding older than
+	// the timeout before it ever reads the state back from Argo CD.
+	if err := s.store.RestartApplicationDeploymentAttempts(ctx, record.ID); err != nil {
+		return model.ApplicationOnboarding{}, fmt.Errorf("restart deployment attempts: %w", err)
+	}
 	if err := s.forEachTarget(ctx, record, "sync", func(
 		callCtx context.Context,
 		client ArgoClient,
@@ -284,7 +291,11 @@ func (s *Service) Sync(ctx context.Context, id string) (model.ApplicationOnboard
 				"onboarding", record.ID, "target", target.ID,
 				"cluster", target.ClusterName, "application", target.ArgoApplication,
 				"error", syncErr)
-			return "failed", "Unknown", "Unknown", "Argo CD could not start synchronization"
+			message := "Argo CD could not start synchronization"
+			if reach := unreachableError(syncErr); reach != "" {
+				message = reach
+			}
+			return "failed", "Unknown", "Unknown", message
 		}
 		status, message := stateToDeployment(state)
 		return status, valueOrUnknown(state.SyncStatus), valueOrUnknown(state.HealthStatus), message
@@ -469,7 +480,9 @@ func (s *Service) reconcile(ctx context.Context) {
 			time.Since(target.UpdatedAt) < s.config.RequestTimeout {
 			continue
 		}
-		if time.Since(target.CreatedAt) >= s.config.DeploymentTimeout {
+		// Measured from the current attempt, not from CreatedAt: the target may have
+		// been onboarded long ago and re-synced seconds ago.
+		if time.Since(target.AttemptStartedAt) >= s.config.DeploymentTimeout {
 			if err := s.store.UpdateApplicationDeployment(
 				ctx, target.ID, "failed", target.SyncStatus, target.HealthStatus,
 				"deployment did not become healthy before the configured timeout",
@@ -622,5 +635,25 @@ func safeCreateError(err error) string {
 	if errors.Is(err, ErrApplicationConflict) {
 		return "an Argo CD application with this name already exists"
 	}
+	if reach := unreachableError(err); reach != "" {
+		return reach
+	}
 	return "Argo CD did not accept the application"
+}
+
+// unreachableError distinguishes "the server was never reached" from "the server
+// refused the request", and returns "" when the request did reach Argo CD. The
+// two demand opposite investigations, and reporting a dead port-forward as a
+// rejected application sends operators to the manifest instead of the network.
+// Only the classification is returned: the underlying text is logged instead
+// because transport errors can echo request details back to the client.
+func unreachableError(err error) string {
+	var urlErr *url.Error
+	if !errors.As(err, &urlErr) {
+		return ""
+	}
+	if urlErr.Timeout() {
+		return "Argo CD did not respond before the request timeout"
+	}
+	return "Argo CD could not be reached"
 }
