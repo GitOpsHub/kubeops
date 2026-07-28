@@ -17,6 +17,7 @@ type fakeRepository struct {
 	active   []model.ApplicationDeployment
 	updates  map[string]model.ApplicationDeployment
 	access   model.EncryptedArgoAccess
+	filter   model.ApplicationOnboardingFilter
 }
 
 func (f *fakeRepository) GetClustersByIDs(context.Context, []string) ([]model.Cluster, error) {
@@ -55,10 +56,14 @@ func (f *fakeRepository) GetApplicationOnboarding(
 	return f.record, nil
 }
 func (f *fakeRepository) ListApplicationOnboardings(
-	context.Context,
-	int,
-) ([]model.ApplicationOnboarding, error) {
-	return []model.ApplicationOnboarding{f.record}, nil
+	_ context.Context,
+	filter model.ApplicationOnboardingFilter,
+) (model.ApplicationOnboardingPage, error) {
+	f.filter = filter
+	return model.ApplicationOnboardingPage{
+		Items: []model.ApplicationOnboarding{f.record},
+		Total: 1, Page: filter.Page, PageSize: filter.PageSize,
+	}, nil
 }
 func (f *fakeRepository) ListActiveApplicationDeployments(
 	context.Context,
@@ -301,5 +306,71 @@ func TestReconcileMarksSyncedHealthyApplicationHealthy(t *testing.T) {
 
 	if repository.updates[target.ID].Status != "healthy" {
 		t.Fatalf("unexpected update: %#v", repository.updates[target.ID])
+	}
+}
+
+func TestGetAndListEnrichArgoApplicationLinks(t *testing.T) {
+	repository := &fakeRepository{record: model.ApplicationOnboarding{
+		ID: "onboarding-1", Name: "payments", Targets: []model.ApplicationDeployment{
+			{
+				ID: "target-1", SourceID: "aws", ProviderResourceID: "arn:cluster/prod",
+				ArgoApplication: "payments api",
+			},
+			{
+				ID: "target-2", SourceID: "gcp", ProviderResourceID: "projects/x/clusters/prod",
+				ArgoApplication: "payments",
+			},
+		},
+	}}
+	service := &Service{store: repository, uiTargets: map[string]config.ArgoTarget{
+		targetKey("aws", "arn:cluster/prod"): {
+			UIURL: "https://argo.example.test", Username: "kubeops",
+		},
+	}}
+
+	record, err := service.Get(context.Background(), "onboarding-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Targets[0].ArgoApplicationURL != "https://argo.example.test/applications/payments%20api" {
+		t.Fatalf("unexpected Argo URL: %q", record.Targets[0].ArgoApplicationURL)
+	}
+	if record.Targets[0].ArgoUsername != "kubeops" {
+		t.Fatalf("unexpected Argo username: %q", record.Targets[0].ArgoUsername)
+	}
+	// A target without configured UI access must not advertise Argo CD links.
+	if record.Targets[1].ArgoApplicationURL != "" || record.Targets[1].ArgoUsername != "" {
+		t.Fatalf("unexpected Argo access on unconfigured target: %#v", record.Targets[1])
+	}
+
+	page, err := service.List(context.Background(), model.ApplicationOnboardingFilter{
+		Page: 2, PageSize: 5, Search: "pay", Status: "healthy",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repository.filter.Page != 2 || repository.filter.PageSize != 5 ||
+		repository.filter.Search != "pay" || repository.filter.Status != "healthy" {
+		t.Fatalf("filter was not forwarded: %#v", repository.filter)
+	}
+	if page.Items[0].Targets[0].ArgoApplicationURL == "" {
+		t.Fatalf("listed targets were not enriched: %#v", page.Items[0].Targets[0])
+	}
+}
+
+func TestNewServiceSkipsArgoUIAccessWithoutUIURL(t *testing.T) {
+	t.Setenv("ARGO_TOKEN", "token")
+	service, err := NewService(&fakeRepository{}, config.OnboardingConfig{
+		RequestTimeout: time.Second,
+		ArgoTargets: []config.ArgoTarget{{
+			SourceID: "aws", ProviderResourceID: "arn:cluster/prod",
+			ServerURL: "https://argo.example.test", Token: "token",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(service.uiTargets) != 0 {
+		t.Fatalf("expected no UI targets, got %#v", service.uiTargets)
 	}
 }

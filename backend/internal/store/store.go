@@ -636,24 +636,56 @@ func (s *Store) GetApplicationOnboarding(ctx context.Context, id string) (model.
 
 func (s *Store) ListApplicationOnboardings(
 	ctx context.Context,
-	limit int,
-) ([]model.ApplicationOnboarding, error) {
-	if limit < 1 || limit > 200 {
-		limit = 50
+	filter model.ApplicationOnboardingFilter,
+) (model.ApplicationOnboardingPage, error) {
+	if filter.Page < 1 {
+		filter.Page = 1
 	}
-	rows, err := s.pool.Query(ctx, `
+	if filter.PageSize < 1 {
+		filter.PageSize = 20
+	}
+	if filter.PageSize > 200 {
+		filter.PageSize = 200
+	}
+
+	clauses := []string{"1=1"}
+	args := make([]any, 0, 3)
+	if filter.Search != "" {
+		args = append(args, "%"+strings.ToLower(filter.Search)+"%")
+		clauses = append(clauses, fmt.Sprintf(
+			"(LOWER(name) LIKE $%d OR LOWER(namespace) LIKE $%d)", len(args), len(args),
+		))
+	}
+	if filter.Status != "" {
+		args = append(args, filter.Status)
+		clauses = append(clauses, fmt.Sprintf("status = $%d", len(args)))
+	}
+	where := strings.Join(clauses, " AND ")
+
+	page := model.ApplicationOnboardingPage{
+		Items: make([]model.ApplicationOnboarding, 0),
+		Page:  filter.Page, PageSize: filter.PageSize,
+	}
+	if err := s.pool.QueryRow(
+		ctx, "SELECT COUNT(*) FROM application_onboardings WHERE "+where, args...,
+	).Scan(&page.Total); err != nil {
+		return model.ApplicationOnboardingPage{}, err
+	}
+
+	args = append(args, filter.PageSize, (filter.Page-1)*filter.PageSize)
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 		SELECT id::text, name, namespace, chart_repo_url, chart_name, chart_revision,
 			values_digest, values_repository_url, values_repository_name,
 			values_revision, values_commit_sha, status, created_at, updated_at, completed_at
 		FROM application_onboardings
+		WHERE %s
 		ORDER BY created_at DESC
-		LIMIT $1`, limit)
+		LIMIT $%d OFFSET $%d`, where, len(args)-1, len(args)), args...)
 	if err != nil {
-		return nil, err
+		return model.ApplicationOnboardingPage{}, err
 	}
 	defer rows.Close()
 
-	items := make([]model.ApplicationOnboarding, 0)
 	for rows.Next() {
 		var onboarding model.ApplicationOnboarding
 		if err := rows.Scan(
@@ -664,21 +696,21 @@ func (s *Store) ListApplicationOnboardings(
 			&onboarding.ValuesCommitSHA, &onboarding.Status, &onboarding.CreatedAt,
 			&onboarding.UpdatedAt, &onboarding.CompletedAt,
 		); err != nil {
-			return nil, err
+			return model.ApplicationOnboardingPage{}, err
 		}
-		items = append(items, onboarding)
+		page.Items = append(page.Items, onboarding)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return model.ApplicationOnboardingPage{}, err
 	}
-	for i := range items {
-		targets, err := s.listApplicationDeployments(ctx, items[i].ID)
+	for i := range page.Items {
+		targets, err := s.listApplicationDeployments(ctx, page.Items[i].ID)
 		if err != nil {
-			return nil, err
+			return model.ApplicationOnboardingPage{}, err
 		}
-		items[i].Targets = targets
+		page.Items[i].Targets = targets
 	}
-	return items, nil
+	return page, nil
 }
 
 func (s *Store) listApplicationDeployments(
@@ -752,17 +784,31 @@ func (s *Store) UpdateApplicationDeployment(
 	}
 	defer tx.Rollback(ctx)
 
+	// Targets are created in parallel and therefore finish together. Lock the
+	// parent before touching this deployment so concurrent updates serialise here:
+	// each transaction then recomputes the totals below from a snapshot that
+	// already contains every sibling update that committed before it. Without this
+	// the last writer can persist a total it computed before its sibling committed,
+	// leaving the onboarding stuck on 'progressing' after every target is terminal.
 	var onboardingID string
 	err = tx.QueryRow(ctx, `
+		SELECT o.id::text
+		FROM application_onboardings o
+		JOIN application_deployments d ON d.onboarding_id = o.id
+		WHERE d.id::text = $1
+		FOR UPDATE OF o`, id).Scan(&onboardingID)
+	if err != nil {
+		return err
+	}
+
+	if _, err = tx.Exec(ctx, `
 		UPDATE application_deployments
 		SET status = $2, sync_status = $3, health_status = $4, message = $5,
 			updated_at = NOW(),
 			completed_at = CASE WHEN $2 IN ('healthy', 'failed') THEN NOW() ELSE NULL END
-		WHERE id::text = $1
-		RETURNING onboarding_id::text`,
+		WHERE id::text = $1`,
 		id, status, syncStatus, healthStatus, message,
-	).Scan(&onboardingID)
-	if err != nil {
+	); err != nil {
 		return err
 	}
 

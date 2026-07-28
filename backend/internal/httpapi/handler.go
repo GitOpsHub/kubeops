@@ -36,7 +36,10 @@ type ClusterManager interface {
 type ApplicationOnboarder interface {
 	Create(context.Context, onboarding.CreateInput) (model.ApplicationOnboarding, error)
 	Get(context.Context, string) (model.ApplicationOnboarding, error)
-	List(context.Context, int) ([]model.ApplicationOnboarding, error)
+	List(
+		context.Context,
+		model.ApplicationOnboardingFilter,
+	) (model.ApplicationOnboardingPage, error)
 	Defaults() onboarding.Defaults
 }
 
@@ -91,6 +94,13 @@ func newHandler(
 	return withCORS(withRequestLog(mux), cfg.CORSAllowedOrigin)
 }
 
+// aborted reports whether the client gave up on the request. The UI cancels
+// in-flight reads whenever a route unmounts or a filter changes, so the resulting
+// failures are routine rather than server faults and must not be logged as errors.
+func aborted(r *http.Request) bool {
+	return r.Context().Err() != nil
+}
+
 func (api *API) source(id string) (model.CloudSource, bool) {
 	for _, source := range api.config.CloudSources {
 		if source.ID == id {
@@ -112,6 +122,9 @@ func (api *API) operationalCluster(w http.ResponseWriter, r *http.Request) (mode
 		return model.CloudSource{}, model.Cluster{}, false
 	}
 	if err != nil {
+		if aborted(r) {
+			return model.CloudSource{}, model.Cluster{}, false
+		}
 		slog.Error("get cluster", "cluster", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "unable to load cluster")
 		return model.CloudSource{}, model.Cluster{}, false
@@ -131,6 +144,9 @@ func (api *API) clusterDetails(w http.ResponseWriter, r *http.Request) {
 	}
 	details, err := api.manager.Details(r.Context(), source, cluster)
 	if err != nil {
+		if aborted(r) {
+			return
+		}
 		slog.Error("load live cluster details", "cluster", cluster.ID, "provider", cluster.Provider, "error", err)
 		writeError(w, http.StatusBadGateway, "unable to load live cluster details")
 		return
@@ -150,6 +166,9 @@ func (api *API) clusterArgoAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		if aborted(r) {
+			return
+		}
 		slog.Error("get Argo CD access", "cluster", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "unable to load Argo CD access")
 		return
@@ -259,6 +278,9 @@ func (api *API) clusters(w http.ResponseWriter, r *http.Request) {
 
 	page, err := api.store.ListClusters(r.Context(), filter)
 	if err != nil {
+		if aborted(r) {
+			return
+		}
 		slog.Error("list clusters", "error", err)
 		writeError(w, http.StatusInternalServerError, "unable to list clusters")
 		return
@@ -269,6 +291,9 @@ func (api *API) clusters(w http.ResponseWriter, r *http.Request) {
 func (api *API) sources(w http.ResponseWriter, r *http.Request) {
 	sources, err := api.store.ListSources(r.Context())
 	if err != nil {
+		if aborted(r) {
+			return
+		}
 		slog.Error("list cloud sources", "error", err)
 		writeError(w, http.StatusInternalServerError, "unable to list cloud sources")
 		return
@@ -284,6 +309,9 @@ func (api *API) syncRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	runs, err := api.store.ListSyncRuns(r.Context(), limit)
 	if err != nil {
+		if aborted(r) {
+			return
+		}
 		slog.Error("list sync runs", "error", err)
 		writeError(w, http.StatusInternalServerError, "unable to list sync runs")
 		return
@@ -363,18 +391,40 @@ func (api *API) applicationOnboardings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "application onboarding is not available")
 		return
 	}
-	limit := intQuery(r.URL.Query().Get("limit"), 20)
-	if limit < 1 || limit > 200 {
-		writeError(w, http.StatusBadRequest, "limit must be between 1 and 200")
+	query := r.URL.Query()
+	// `limit` predates paging and stays supported as a page-size alias.
+	pageSize := query.Get("pageSize")
+	if pageSize == "" {
+		pageSize = query.Get("limit")
+	}
+	filter := model.ApplicationOnboardingFilter{
+		Search:   strings.TrimSpace(query.Get("search")),
+		Status:   strings.ToLower(strings.TrimSpace(query.Get("status"))),
+		Page:     intQuery(query.Get("page"), 1),
+		PageSize: intQuery(pageSize, 20),
+	}
+	if filter.Page < 1 || filter.PageSize < 1 || filter.PageSize > 200 {
+		writeError(w, http.StatusBadRequest, "page must be positive and pageSize must be between 1 and 200")
 		return
 	}
-	items, err := api.onboarder.List(r.Context(), limit)
+	if filter.Status != "" &&
+		filter.Status != model.OnboardingProgressing &&
+		filter.Status != model.OnboardingHealthy &&
+		filter.Status != model.OnboardingPartial &&
+		filter.Status != model.OnboardingFailed {
+		writeError(w, http.StatusBadRequest, "status must be progressing, healthy, partial, or failed")
+		return
+	}
+	page, err := api.onboarder.List(r.Context(), filter)
 	if err != nil {
+		if aborted(r) {
+			return
+		}
 		slog.Error("list application onboardings", "error", err)
 		writeError(w, http.StatusInternalServerError, "unable to list application onboardings")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, page)
 }
 
 func (api *API) applicationOnboarding(w http.ResponseWriter, r *http.Request) {
@@ -393,6 +443,9 @@ func (api *API) applicationOnboarding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		if aborted(r) {
+			return
+		}
 		slog.Error("get application onboarding", "onboarding", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "unable to load application onboarding")
 		return

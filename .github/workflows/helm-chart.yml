@@ -69,6 +69,12 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      # Interpolated once here rather than inside each run block, so no workflow
+      # expression is ever expanded straight into a shell command.
+      REGISTRY_OWNER: ${{ github.repository_owner }}
+      REGISTRY_USER: ${{ github.actor }}
+      REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -78,7 +84,7 @@ jobs:
         with:
           version: ${{ env.HELM_VERSION }}
 
-      - name: Verify release tag
+      - name: Resolve chart coordinates
         shell: bash
         run: |
           chart_version="$(helm show chart "$CHART_PATH" | awk '$1 == "version:" { print $2 }')"
@@ -87,6 +93,12 @@ jobs:
             echo "Tag version $tag_version does not match Chart.yaml version $chart_version" >&2
             exit 1
           fi
+          owner="$(echo "$REGISTRY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          {
+            echo "CHART_OWNER=$owner"
+            echo "CHART_VERSION=$tag_version"
+            echo "CHART_REPO=oci://ghcr.io/$owner/charts"
+          } >> "$GITHUB_ENV"
 
       - name: Package chart
         run: helm package "$CHART_PATH" --destination dist
@@ -94,13 +106,50 @@ jobs:
       - name: Log in to GitHub Container Registry
         shell: bash
         run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" |
+          printf '%s' "$REGISTRY_TOKEN" |
             helm registry login ghcr.io \
-              --username "${{ github.actor }}" \
+              --username "$REGISTRY_USER" \
               --password-stdin
 
       - name: Publish chart
         shell: bash
         run: |
-          owner="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
-          helm push "dist/kubeops-${GITHUB_REF_NAME#helm-v}.tgz" "oci://ghcr.io/${owner}/charts"
+          if helm push "dist/kubeops-${CHART_VERSION}.tgz" "$CHART_REPO"; then
+            exit 0
+          fi
+          # A bare 403 from the registry gives no hint about the cause, which is
+          # almost always that the package predates this workflow and is not linked
+          # to the repository, so GITHUB_TOKEN has no write access to it.
+          {
+            echo
+            echo "helm push failed. If the error above is 403 Forbidden, the package"
+            echo "already exists on ghcr.io but is not linked to this repository, so"
+            echo "GITHUB_TOKEN cannot write to it. A package administrator must grant"
+            echo "this repository the Write role under 'Manage Actions access' at:"
+            echo "  https://github.com/orgs/${CHART_OWNER}/packages/container/charts%2Fkubeops/settings"
+          } >&2
+          exit 1
+
+      - name: Verify published chart
+        shell: bash
+        run: |
+          helm show chart "${CHART_REPO}/kubeops" --version "$CHART_VERSION" >/dev/null
+          echo "Published ${CHART_REPO}/kubeops:${CHART_VERSION}"
+
+      - name: Check anonymous pull
+        shell: bash
+        env:
+          # An empty registry config guarantees the probe is unauthenticated. Logging
+          # out would leave Helm free to fall back to any other credential store.
+          HELM_REGISTRY_CONFIG: ${{ runner.temp }}/anonymous-registry.json
+        run: |
+          # Argo CD pulls this chart without credentials, so a private package fails
+          # at deploy time with an opaque 401 long after a green publish. Report it
+          # here instead of failing: a private package plus registry credentials in
+          # Argo CD is a valid setup.
+          echo '{}' > "$HELM_REGISTRY_CONFIG"
+          if helm show chart "${CHART_REPO}/kubeops" --version "$CHART_VERSION" >/dev/null 2>&1; then
+            echo "Chart is anonymously pullable."
+            exit 0
+          fi
+          echo "::warning title=Chart is not anonymously pullable::${CHART_REPO}/kubeops:${CHART_VERSION} published, but an unauthenticated pull was refused. Argo CD will fail with a 401 unless the package is made public or the Argo CD instances are given registry credentials."
