@@ -10,7 +10,7 @@ only its environment-specific `values.yaml` in a private repository.
 
 ```sh
 helm install my-app oci://ghcr.io/gitopshub/charts/kubeops \
-  --version 0.1.0 \
+  --version 1.0.0 \
   --namespace my-app \
   --create-namespace \
   --set image.repository=ghcr.io/example/my-app \

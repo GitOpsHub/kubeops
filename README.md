@@ -86,13 +86,13 @@ never place secrets in them.
 The reusable global chart lives in [`charts/kubeops`](charts/kubeops) and is
 published by [`.github/workflows/helm-chart.yml`](.github/workflows/helm-chart.yml)
 to the OCI repository `ghcr.io/gitopshub/charts/kubeops`. To publish version
-`0.1.0`, create and push the matching `helm-v0.1.0` Git tag. The workflow rejects
+`1.0.0`, create and push the matching `helm-v1.0.0` Git tag. The workflow rejects
 a tag that does not match `version` in `Chart.yaml`.
 
 ```sh
-git tag helm-v0.1.0
-git push origin helm-v0.1.0
-helm pull oci://ghcr.io/gitopshub/charts/kubeops --version 0.1.0
+git tag helm-v1.0.0
+git push origin helm-v1.0.0
+helm pull oci://ghcr.io/gitopshub/charts/kubeops --version 1.0.0
 ```
 
 The workflow authenticates with the job's `GITHUB_TOKEN`, which only carries a
