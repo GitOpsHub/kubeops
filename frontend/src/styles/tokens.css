@@ -1,0 +1,265 @@
+/*
+ * Design tokens.
+ *
+ * Two tiers: primitives name raw values once, semantics name the job a value
+ * does. Components only ever reference semantics, so retheming means editing
+ * this file alone.
+ *
+ * Themes resolve in three steps, and the order matters: light defaults, then
+ * the system preference, then an explicit `data-theme` attribute. The
+ * attribute rules come last so a manual toggle overrides the system in both
+ * directions.
+ */
+
+:root {
+  /* Neutrals keep a slight blue cast so they sit with the accent rather than
+     fighting it, but only slightly — a heavier cast reads cold and clinical.
+     The light steps are close together on purpose, so borders separate without
+     drawing hard lines everywhere. */
+  --n-00: #ffffff;
+  --n-05: #f6f7f9;
+  --n-10: #eef0f4;
+  --n-20: #e3e6ec;
+  --n-30: #cfd4dd;
+  --n-40: #a8b1bf;
+  --n-50: #8b93a2;
+  --n-60: #5d6675;
+  --n-70: #414a59;
+  --n-80: #262e3c;
+  --n-90: #1b2230;
+  --n-95: #141b27;
+  --n-99: #0d1219;
+
+  --blue-40: #5b8def;
+  --blue-50: #2d6be4;
+  --blue-60: #1f52b8;
+  --green-40: #2fbf9b;
+  --green-50: #12866b;
+  --amber-40: #e0a33e;
+  --amber-50: #a8620f;
+  --red-40: #f2637e;
+  --red-50: #c0344e;
+
+  /* Cloud provider marks. Identity, not decoration, so they stay literal. */
+  --aws: #ff9900;
+  --gcp: #4285f4;
+  --azure: #0078d4;
+  --docker: #2496ed;
+  --minikube: #ffc61c;
+
+  /* Type. Families are named first with system fallbacks behind them, so the
+     stack degrades to something deliberate rather than to Times. */
+  --font-display: "Space Grotesk", "Avenir Next", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Sized for comfortable reading rather than maximum density: an operations
+     console is read for long stretches, and 11px labels make it a squint. */
+  --text-2xs: 0.75rem;
+  --text-xs: 0.8125rem;
+  --text-sm: 0.875rem;
+  --text-md: 0.9375rem;
+  --text-lg: 1.0625rem;
+  --text-xl: 1.3125rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: 2.125rem;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  /* Rounder than a typical admin console. Sharp corners read as severe, and
+     nothing here is trying to look like a terminal. */
+  --radius-sm: 7px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  --rail-width: 2px;
+  --duration-fast: 120ms;
+  --duration-med: 220ms;
+
+  color-scheme: light;
+
+  /* Semantics — light. */
+  --canvas: var(--n-05);
+  --surface: var(--n-00);
+  --surface-raised: var(--n-00);
+  --surface-sunken: var(--n-10);
+  --surface-hover: var(--n-05);
+
+  --border: var(--n-20);
+  --border-strong: var(--n-30);
+
+  --text: var(--n-90);
+  --text-muted: var(--n-60);
+  --text-subtle: var(--n-50);
+  --text-inverse: var(--n-00);
+
+  --accent: var(--blue-50);
+  --accent-hover: var(--blue-60);
+  --accent-soft: rgb(45 107 228 / 10%);
+  --accent-fg: var(--n-00);
+
+  --ok: var(--green-50);
+  --ok-soft: rgb(18 134 107 / 12%);
+  --warn: var(--amber-50);
+  --warn-soft: rgb(168 98 15 / 12%);
+  --err: var(--red-50);
+  --err-soft: rgb(192 52 78 / 10%);
+  --idle: var(--n-50);
+  --idle-soft: rgb(138 148 166 / 14%);
+
+  --shadow-sm: 0 1px 2px rgb(14 20 32 / 6%);
+  --shadow-md: 0 4px 12px rgb(14 20 32 / 8%);
+  --shadow-lg: 0 18px 48px rgb(14 20 32 / 18%);
+  --focus-ring: 0 0 0 3px rgb(45 107 228 / 32%);
+
+  --scrim: rgb(14 20 32 / 42%);
+}
+
+/* Dark values live in one reusable block. Both the system-preference query and
+   the explicit attribute apply the same declarations. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --canvas: var(--n-99);
+    --surface: var(--n-95);
+    --surface-raised: var(--n-90);
+    --surface-sunken: #070a10;
+    --surface-hover: var(--n-90);
+
+    --border: #263042;
+    --border-strong: #36435a;
+
+    --text: #e6ebf2;
+    --text-muted: #9aa5b6;
+    --text-subtle: #6e7a8d;
+    --text-inverse: var(--n-99);
+
+    --accent: var(--blue-40);
+    --accent-hover: #7ba4f4;
+    --accent-soft: rgb(91 141 239 / 16%);
+    --accent-fg: var(--n-99);
+
+    --ok: var(--green-40);
+    --ok-soft: rgb(47 191 155 / 15%);
+    --warn: var(--amber-40);
+    --warn-soft: rgb(224 163 62 / 15%);
+    --err: var(--red-40);
+    --err-soft: rgb(242 99 126 / 15%);
+    --idle: #7a8598;
+    --idle-soft: rgb(122 133 152 / 18%);
+
+    /* Provider marks brighten so they stay legible on dark surfaces. */
+    --aws: #ffb340;
+    --gcp: #7aa7f8;
+    --azure: #4aa3e8;
+    --docker: #5cb4f2;
+    --minikube: #ffd75e;
+
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+    --shadow-md: 0 4px 12px rgb(0 0 0 / 45%);
+    --shadow-lg: 0 18px 48px rgb(0 0 0 / 60%);
+    --focus-ring: 0 0 0 3px rgb(91 141 239 / 40%);
+
+    --scrim: rgb(0 0 0 / 60%);
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --canvas: var(--n-99);
+  --surface: var(--n-95);
+  --surface-raised: var(--n-90);
+  --surface-sunken: #070a10;
+  --surface-hover: var(--n-90);
+
+  --border: #263042;
+  --border-strong: #36435a;
+
+  --text: #e6ebf2;
+  --text-muted: #9aa5b6;
+  --text-subtle: #6e7a8d;
+  --text-inverse: var(--n-99);
+
+  --accent: var(--blue-40);
+  --accent-hover: #7ba4f4;
+  --accent-soft: rgb(91 141 239 / 16%);
+  --accent-fg: var(--n-99);
+
+  --ok: var(--green-40);
+  --ok-soft: rgb(47 191 155 / 15%);
+  --warn: var(--amber-40);
+  --warn-soft: rgb(224 163 62 / 15%);
+  --err: var(--red-40);
+  --err-soft: rgb(242 99 126 / 15%);
+  --idle: #7a8598;
+  --idle-soft: rgb(122 133 152 / 18%);
+
+  --aws: #ffb340;
+  --gcp: #7aa7f8;
+  --azure: #4aa3e8;
+  --docker: #5cb4f2;
+  --minikube: #ffd75e;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+  --shadow-md: 0 4px 12px rgb(0 0 0 / 45%);
+  --shadow-lg: 0 18px 48px rgb(0 0 0 / 60%);
+  --focus-ring: 0 0 0 3px rgb(91 141 239 / 40%);
+
+  --scrim: rgb(0 0 0 / 60%);
+}
+
+/* Restores every light default, so choosing light beats a dark system. */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --canvas: var(--n-05);
+  --surface: var(--n-00);
+  --surface-raised: var(--n-00);
+  --surface-sunken: var(--n-10);
+  --surface-hover: var(--n-05);
+
+  --border: var(--n-20);
+  --border-strong: var(--n-30);
+
+  --text: var(--n-90);
+  --text-muted: var(--n-60);
+  --text-subtle: var(--n-50);
+  --text-inverse: var(--n-00);
+
+  --accent: var(--blue-50);
+  --accent-hover: var(--blue-60);
+  --accent-soft: rgb(45 107 228 / 10%);
+  --accent-fg: var(--n-00);
+
+  --ok: var(--green-50);
+  --ok-soft: rgb(18 134 107 / 12%);
+  --warn: var(--amber-50);
+  --warn-soft: rgb(168 98 15 / 12%);
+  --err: var(--red-50);
+  --err-soft: rgb(192 52 78 / 10%);
+  --idle: var(--n-50);
+  --idle-soft: rgb(138 148 166 / 14%);
+
+  --aws: #ff9900;
+  --gcp: #4285f4;
+  --azure: #0078d4;
+  --docker: #2496ed;
+  --minikube: #ffc61c;
+
+  --shadow-sm: 0 1px 2px rgb(14 20 32 / 6%);
+  --shadow-md: 0 4px 12px rgb(14 20 32 / 8%);
+  --shadow-lg: 0 18px 48px rgb(14 20 32 / 18%);
+  --focus-ring: 0 0 0 3px rgb(45 107 228 / 32%);
+
+  --scrim: rgb(14 20 32 / 42%);
+}

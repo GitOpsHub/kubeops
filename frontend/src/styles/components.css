@@ -1,0 +1,300 @@
+/* Shared widgets: the state delta, status badges, tabs, chips, and logos. */
+
+/* State delta ---------------------------------------------------------
+ *
+ * The signature element. Kubernetes reconciles a declared state toward a live
+ * state, and Argo CD reports exactly those two axes. Rendering them as two
+ * nodes on one rail says "these are the ends of a loop" in a way two separate
+ * words never could: the track between them carries the verdict.
+ */
+
+.state-delta {
+  --tone: var(--idle);
+
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  min-width: 0;
+  font-size: var(--text-xs);
+  line-height: 1;
+}
+
+.state-delta--converged {
+  --tone: var(--ok);
+}
+
+.state-delta--reconciling {
+  --tone: var(--warn);
+}
+
+.state-delta--diverged {
+  --tone: var(--err);
+}
+
+.state-delta-label {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.state-delta-rail {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.state-delta-node {
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid var(--tone);
+  border-radius: 50%;
+  background: var(--tone);
+}
+
+/* A hollow node reads as "not there yet" — the loop has not closed on this
+   end. Settled ends stay filled. */
+.state-delta-node--pending {
+  background: transparent;
+}
+
+.state-delta-track {
+  width: 22px;
+  height: 2px;
+  background: var(--tone);
+}
+
+.state-delta--reconciling .state-delta-track {
+  background: repeating-linear-gradient(
+    90deg,
+    var(--tone) 0 3px,
+    transparent 3px 6px
+  );
+  background-size: 6px 2px;
+  animation: delta-march 700ms linear infinite;
+}
+
+/* A gap in the middle: the two ends have come apart. */
+.state-delta--diverged .state-delta-track {
+  background: linear-gradient(
+    90deg,
+    var(--tone) 0 7px,
+    transparent 7px 15px,
+    var(--tone) 15px 22px
+  );
+}
+
+@keyframes delta-march {
+  to {
+    background-position: 6px 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .state-delta--reconciling .state-delta-track {
+    animation: none;
+  }
+}
+
+/* The legend explains the three states once, above the table. */
+.delta-legend {
+  display: flex;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+  align-items: center;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.delta-legend > span {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+}
+
+/* Status badge -------------------------------------------------------- */
+
+.status-badge {
+  --tone: var(--idle);
+  --tone-soft: var(--idle-soft);
+
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  padding: 3px var(--space-2);
+  color: var(--tone);
+  background: var(--tone-soft);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  white-space: nowrap;
+}
+
+.status-badge--ok {
+  --tone: var(--ok);
+  --tone-soft: var(--ok-soft);
+}
+
+.status-badge--warn {
+  --tone: var(--warn);
+  --tone-soft: var(--warn-soft);
+}
+
+.status-badge--err {
+  --tone: var(--err);
+  --tone-soft: var(--err-soft);
+}
+
+.status-badge--accent {
+  --tone: var(--accent);
+  --tone-soft: var(--accent-soft);
+}
+
+.status-badge::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentcolor;
+}
+
+.status-badge--pulse::before {
+  animation: badge-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes badge-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* Tabs ---------------------------------------------------------------- */
+
+.tablist {
+  display: flex;
+  gap: var(--space-5);
+  border-bottom: 1px solid var(--border);
+}
+
+.tab {
+  position: relative;
+  padding: var(--space-3) 0;
+  color: var(--text-muted);
+  background: none;
+  border: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab[aria-selected='true'] {
+  color: var(--text);
+}
+
+/* The same 2px rail marks every "you are here" in the app. */
+.tab[aria-selected='true']::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 -1px;
+  height: var(--rail-width);
+  background: var(--accent);
+}
+
+.tabpanel:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+
+/* Chips --------------------------------------------------------------- */
+
+.chip {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  padding: 3px var(--space-2) 3px var(--space-3);
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+}
+
+.chip strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  color: var(--text-subtle);
+  background: none;
+  border: 0;
+  border-radius: 50%;
+  font-size: var(--text-sm);
+  line-height: 1;
+}
+
+.chip-remove:hover {
+  color: var(--err);
+  background: var(--err-soft);
+}
+
+/* Logos --------------------------------------------------------------- */
+
+.provider-logo {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.kubernetes-logo {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+}
+
+.cluster-logo-stack {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.provider-logo--badge {
+  position: absolute;
+  right: -4px;
+  bottom: -3px;
+  width: 12px;
+  height: 12px;
+  padding: 1px;
+  background: var(--surface);
+  border-radius: 50%;
+}
+
+.provider-cell {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  white-space: nowrap;
+}
+
+.empty-kubernetes-logo {
+  width: 40px;
+  height: 40px;
+  opacity: 0.35;
+}

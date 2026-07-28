@@ -14,6 +14,7 @@ import (
 	"github.com/GitOpsHub/kubeops/backend/internal/config"
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
 	"github.com/GitOpsHub/kubeops/backend/internal/secure"
+	"github.com/GitOpsHub/kubeops/backend/internal/store"
 )
 
 type fakeRepository struct {
@@ -25,10 +26,21 @@ type fakeRepository struct {
 	filter   model.ApplicationOnboardingFilter
 	// restarted records the onboardings whose deployment-timeout window was reopened.
 	restarted []string
+	// existingID is the onboarding already holding the requested name, if any.
+	existingID string
+	// createErr overrides the result of CreateApplicationOnboarding.
+	createErr error
 }
 
 func (f *fakeRepository) GetClustersByIDs(context.Context, []string) ([]model.Cluster, error) {
 	return f.clusters, nil
+}
+func (f *fakeRepository) ActiveApplicationOnboardingID(
+	context.Context,
+	string,
+	string,
+) (string, error) {
+	return f.existingID, nil
 }
 func (f *fakeRepository) CreateApplicationOnboarding(
 	_ context.Context,
@@ -36,6 +48,9 @@ func (f *fakeRepository) CreateApplicationOnboarding(
 	clusters []model.Cluster,
 	regionValues map[string]bool,
 ) (model.ApplicationOnboarding, error) {
+	if f.createErr != nil {
+		return model.ApplicationOnboarding{}, f.createErr
+	}
 	record.ID = "onboarding-1"
 	record.Status = "progressing"
 	record.CreatedAt = time.Now()
@@ -123,6 +138,11 @@ type fakeArgoClient struct {
 	getErr    error
 	syncErr   error
 	deleteErr error
+	// Resource-tree responses and the ref the last delete was asked for.
+	resources       []ResourceNode
+	manifest        string
+	resourceErr     error
+	deletedResource ResourceRef
 }
 
 type fakeValuesRepositoryManager struct {
@@ -130,6 +150,9 @@ type fakeValuesRepositoryManager struct {
 	err        error
 	deleted    string
 	regions    map[string]string
+	// calls counts Ensure invocations, so a refused onboarding can be shown to
+	// have left no repository behind.
+	calls int
 }
 
 func (f *fakeValuesRepositoryManager) Ensure(
@@ -139,6 +162,7 @@ func (f *fakeValuesRepositoryManager) Ensure(
 	regionValues map[string]string,
 	_ []string,
 ) (ValuesRepository, error) {
+	f.calls++
 	f.regions = regionValues
 	if f.repository.ValuesYAML == "" {
 		f.repository.ValuesYAML = baseValues
@@ -189,6 +213,27 @@ func (f *fakeArgoClient) DeleteApplication(
 	}
 	return f.err
 }
+func (f *fakeArgoClient) ApplicationResources(
+	_ context.Context,
+	_, _ string,
+) ([]ResourceNode, error) {
+	return f.resources, f.resourceErr
+}
+func (f *fakeArgoClient) ResourceManifest(
+	_ context.Context,
+	_, _ string,
+	_ ResourceRef,
+) (string, error) {
+	return f.manifest, f.resourceErr
+}
+func (f *fakeArgoClient) DeleteResource(
+	_ context.Context,
+	_, _ string,
+	ref ResourceRef,
+) error {
+	f.deletedResource = ref
+	return f.resourceErr
+}
 
 func TestCreateApplicationOnboarding(t *testing.T) {
 	cluster := model.Cluster{
@@ -231,6 +276,81 @@ func TestCreateApplicationOnboarding(t *testing.T) {
 	if client.created.ValuesRepoURL != valuesManager.repository.CloneURL ||
 		record.ValuesRepositoryURL != valuesManager.repository.URL {
 		t.Fatalf("unexpected values repository: %#v, %#v", client.created, record)
+	}
+}
+
+// A second onboarding of the same name would claim the Argo CD application the
+// first one already owns, so it is refused before any GitHub or Argo CD work.
+func TestCreateApplicationOnboardingRejectsDuplicateName(t *testing.T) {
+	cluster := model.Cluster{
+		ID: "cluster-1", Name: "prod", SourceID: "aws",
+		ProviderResourceID: "arn:cluster/prod",
+	}
+	repository := &fakeRepository{
+		clusters:   []model.Cluster{cluster},
+		existingID: "onboarding-1",
+	}
+	client := &fakeArgoClient{}
+	valuesManager := &fakeValuesRepositoryManager{}
+	service := &Service{
+		store: repository,
+		config: config.OnboardingConfig{
+			HelmRepoURL: "https://charts.example.test", HelmChart: "global-app",
+			HelmRevision: "1.2.3", ArgoProject: "platform", ArgoNamespace: "argo-cd",
+			RequestTimeout: time.Second, HelmDefaultsYAML: "replicaCount: 2\n",
+		},
+		clients: map[string]ArgoClient{targetKey("aws", "arn:cluster/prod"): client},
+		github:  valuesManager,
+	}
+
+	_, err := service.Create(context.Background(), CreateInput{
+		Name: "payments", Namespace: "payments", ClusterIDs: []string{"cluster-1"},
+		ValuesYAML: "replicaCount: 2\n",
+	})
+
+	var conflict ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("expected a conflict, got %v", err)
+	}
+	if valuesManager.calls != 0 {
+		t.Fatalf("GitHub was touched %d times for a refused onboarding", valuesManager.calls)
+	}
+	if client.created.Name != "" {
+		t.Fatalf("Argo CD was asked to create %q for a refused onboarding", client.created.Name)
+	}
+}
+
+// The unique index is the real guard: two requests can pass the lookup at once.
+func TestCreateApplicationOnboardingReportsRacedDuplicate(t *testing.T) {
+	cluster := model.Cluster{
+		ID: "cluster-1", Name: "prod", SourceID: "aws",
+		ProviderResourceID: "arn:cluster/prod",
+	}
+	repository := &fakeRepository{
+		clusters:  []model.Cluster{cluster},
+		createErr: store.ErrOnboardingExists,
+	}
+	service := &Service{
+		store: repository,
+		config: config.OnboardingConfig{
+			HelmRepoURL: "https://charts.example.test", HelmChart: "global-app",
+			HelmRevision: "1.2.3", ArgoProject: "platform", ArgoNamespace: "argo-cd",
+			RequestTimeout: time.Second, HelmDefaultsYAML: "replicaCount: 2\n",
+		},
+		clients: map[string]ArgoClient{
+			targetKey("aws", "arn:cluster/prod"): &fakeArgoClient{},
+		},
+		github: &fakeValuesRepositoryManager{},
+	}
+
+	_, err := service.Create(context.Background(), CreateInput{
+		Name: "payments", Namespace: "payments", ClusterIDs: []string{"cluster-1"},
+		ValuesYAML: "replicaCount: 2\n",
+	})
+
+	var conflict ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("expected a conflict, got %v", err)
 	}
 }
 

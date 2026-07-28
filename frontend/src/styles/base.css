@@ -1,0 +1,327 @@
+/* Element defaults, typography, and the controls used on every page. */
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  color: var(--text);
+  background: var(--canvas);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  font-synthesis: none;
+  line-height: 1.6;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+h1 {
+  font-size: var(--text-3xl);
+}
+
+h2 {
+  font-size: var(--text-xl);
+}
+
+h3 {
+  font-size: var(--text-lg);
+}
+
+p {
+  margin: 0;
+}
+
+/* The eyebrow above every page and section title. Display face, tracked out,
+   so it reads as a label rather than as small body copy. This is the only
+   place that shouts — field labels and column headers stay sentence case. */
+.kicker,
+.section-label {
+  margin: 0;
+  color: var(--text-subtle);
+  font-family: var(--font-display);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* Identifiers — cluster names, regions, SHAs, image refs. */
+.mono,
+code,
+kbd,
+pre {
+  font-family: var(--font-mono);
+  font-variant-ligatures: none;
+}
+
+.mono {
+  font-size: var(--text-sm);
+}
+
+.capitalize {
+  text-transform: capitalize;
+}
+
+a {
+  color: var(--accent);
+  text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  text-underline-offset: 2px;
+}
+
+a:hover {
+  color: var(--accent-hover);
+  text-decoration-color: currentcolor;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+/* Buttons ------------------------------------------------------------- */
+
+.primary-button,
+.ghost-button,
+.danger-button {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 var(--space-5);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background var(--duration-fast), border-color var(--duration-fast);
+}
+
+.primary-button {
+  color: var(--accent-fg);
+  background: var(--accent);
+}
+
+.primary-button:hover:not(:disabled) {
+  color: var(--accent-fg);
+  background: var(--accent-hover);
+}
+
+.ghost-button {
+  color: var(--text);
+  background: var(--surface);
+  border-color: var(--border-strong);
+}
+
+.ghost-button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-hover);
+  border-color: var(--text-subtle);
+}
+
+.danger-button {
+  color: var(--err);
+  background: var(--err-soft);
+  border-color: color-mix(in srgb, var(--err) 35%, transparent);
+}
+
+.danger-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--err) 18%, transparent);
+  border-color: var(--err);
+}
+
+.text-button {
+  padding: 0;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.text-button:hover:not(:disabled) {
+  color: var(--accent-hover);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* Inputs -------------------------------------------------------------- */
+
+input[type='text'],
+input[type='search'],
+input[type='number'],
+select,
+textarea {
+  min-height: 40px;
+  padding: 0 var(--space-3);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+}
+
+textarea {
+  padding: var(--space-3);
+  font-family: var(--font-mono);
+  line-height: 1.6;
+  resize: vertical;
+}
+
+select {
+  padding-right: var(--space-2);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-subtle);
+}
+
+/* Feedback ------------------------------------------------------------ */
+
+.error-banner,
+.success-banner {
+  display: flex;
+  gap: var(--space-4);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid;
+  border-radius: var(--radius-md);
+}
+
+.error-banner {
+  color: var(--err);
+  background: var(--err-soft);
+  border-color: color-mix(in srgb, var(--err) 30%, transparent);
+}
+
+.success-banner {
+  color: var(--ok);
+  background: var(--ok-soft);
+  border-color: color-mix(in srgb, var(--ok) 30%, transparent);
+}
+
+.error-banner > div,
+.success-banner > div {
+  display: grid;
+  gap: 2px;
+}
+
+.error-banner strong,
+.success-banner strong {
+  font-size: var(--text-sm);
+}
+
+.error-banner span,
+.success-banner span {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.empty-panel {
+  display: grid;
+  gap: var(--space-1);
+  justify-items: start;
+  padding: var(--space-5);
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+}
+
+.empty-panel strong {
+  color: var(--text);
+}
+
+.quiet-note {
+  color: var(--text-subtle);
+  font-size: var(--text-xs);
+}
+
+.loader {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

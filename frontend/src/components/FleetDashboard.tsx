@@ -11,6 +11,9 @@ import {
 } from '../api/inventory'
 import { KubernetesLogo, ProviderLogo } from './BrandIcons'
 import { ClusterDetailDrawer } from './ClusterDetailDrawer'
+import { StatusBadge } from './StatusBadge'
+
+const pageSizes = [25, 50, 100]
 
 const providerLabels: Record<Provider, string> = {
   aws: 'EKS',
@@ -51,6 +54,7 @@ export function FleetDashboard() {
   const [providerSearch, setProviderSearch] = useState('')
   const [includeRemoved, setIncludeRemoved] = useState(false)
   const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(25)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [refreshing, setRefreshing] = useState('')
@@ -63,10 +67,7 @@ export function FleetDashboard() {
       if (!quiet) setLoading(true)
       try {
         const [clusterPage, nextSources, nextRuns] = await Promise.all([
-          getClusters(
-            { provider, source, search, includeRemoved, page, pageSize: 25 },
-            signal,
-          ),
+          getClusters({ provider, source, search, includeRemoved, page, pageSize }, signal),
           getSources(signal),
           getSyncRuns(signal),
         ])
@@ -83,7 +84,7 @@ export function FleetDashboard() {
         if (!quiet) setLoading(false)
       }
     },
-    [includeRemoved, page, provider, search, source],
+    [includeRemoved, page, pageSize, provider, search, source],
   )
 
   useEffect(() => {
@@ -115,8 +116,14 @@ export function FleetDashboard() {
   const availableSources = provider
     ? sources.filter((item) => item.provider === provider)
     : sources
-  const totalPages = Math.max(1, Math.ceil(total / 25))
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const latestRun = runs[0]
+  // Sources that failed outright, or whose last success is old enough that the
+  // inventory can no longer be trusted.
+  const staleSources = sources.filter(
+    (item) => item.enabled && (item.lastSyncStatus === 'failed' || isStale(item.lastSyncAt)),
+  ).length
+  const selectedSourceName = sources.find((item) => item.id === source)?.name
 
   async function refreshSource(item: CloudSource) {
     setRefreshing(item.id)
@@ -180,11 +187,24 @@ export function FleetDashboard() {
           <h1>Fleet control center</h1>
           <p>Search, filter, and reconcile every managed and local cluster from one view.</p>
         </div>
-        <div className="heading-actions">
-          <div className="fleet-metric" aria-label={`${fleetTotal} clusters across ${activeSources} sources`}>
+        <div className="fleet-stats">
+          <div
+            className="fleet-metric"
+            aria-label={`${fleetTotal} clusters across ${activeSources} sources`}
+          >
             <span>Fleet size</span>
             <strong>{fleetTotal}</strong>
             <small>{activeSources} active sources</small>
+          </div>
+          <div className="fleet-metric">
+            <span>In this view</span>
+            <strong>{total}</strong>
+            <small>{provider ? providerLabels[provider] : 'all providers'}</small>
+          </div>
+          <div className="fleet-metric">
+            <span>Needs a look</span>
+            <strong>{staleSources}</strong>
+            <small>{staleSources === 1 ? 'source behind' : 'sources behind'}</small>
           </div>
         </div>
       </header>
@@ -217,10 +237,8 @@ export function FleetDashboard() {
               <i />
               <i />
             </span>
-            <span>
-              <strong>All clouds</strong>
-              <small>{fleetTotal}</small>
-            </span>
+            <strong>All clouds</strong>
+            <small>{fleetTotal}</small>
           </button>
           {providers.map((item) => (
             <button
@@ -234,11 +252,8 @@ export function FleetDashboard() {
               aria-label={`${providerLabels[item]}, ${clusterCountLabel(counts[item])}`}
             >
               <ProviderLogo provider={item} className="provider-logo" />
-              <span>
-                <strong>{providerLabels[item]}</strong>
-                <small>{counts[item]}</small>
-              </span>
-              <span className="selection-check" aria-hidden="true">✓</span>
+              <strong>{providerLabels[item]}</strong>
+              <small>{counts[item]}</small>
             </button>
           ))}
         </div>
@@ -278,7 +293,7 @@ export function FleetDashboard() {
           <span className="quiet-note">Refreshes every 30 seconds</span>
         </div>
 
-        <div className="filter-toolbar">
+        <div className="filter-bar">
           <label>
             <span>Source</span>
             <select
@@ -304,6 +319,56 @@ export function FleetDashboard() {
             <span aria-hidden="true" />
             Include removed clusters
           </label>
+
+          {/* Active filters are restated as chips so each one can be dropped
+              on its own, rather than only all at once. */}
+          <div className="filter-chips">
+            {search && (
+              <span className="chip">
+                Name <strong>{search}</strong>
+                <button
+                  type="button"
+                  className="chip-remove"
+                  aria-label={`Remove name filter ${search}`}
+                  onClick={() =>
+                    updateFilter(() => {
+                      setGlobalSearch('')
+                      setProviderSearch('')
+                    })
+                  }
+                >
+                  ×
+                </button>
+              </span>
+            )}
+            {selectedSourceName && (
+              <span className="chip">
+                Source <strong>{selectedSourceName}</strong>
+                <button
+                  type="button"
+                  className="chip-remove"
+                  aria-label={`Remove source filter ${selectedSourceName}`}
+                  onClick={() => updateFilter(() => setSource(''))}
+                >
+                  ×
+                </button>
+              </span>
+            )}
+            {includeRemoved && (
+              <span className="chip">
+                <strong>Removed included</strong>
+                <button
+                  type="button"
+                  className="chip-remove"
+                  aria-label="Stop including removed clusters"
+                  onClick={() => updateFilter(() => setIncludeRemoved(false))}
+                >
+                  ×
+                </button>
+              </span>
+            )}
+          </div>
+
           {(search || source || includeRemoved) && (
             <button
               type="button"
@@ -331,8 +396,17 @@ export function FleetDashboard() {
           ) : clusters.length === 0 ? (
             <div className="table-state">
               <KubernetesLogo className="empty-kubernetes-logo" />
-              <strong>No clusters match this view</strong>
-              <span>Clear the search or sync an enabled provider source.</span>
+              {search || source || provider ? (
+                <>
+                  <strong>Nothing matches those filters</strong>
+                  <span>Try a different search, or clear the filters to see every cluster.</span>
+                </>
+              ) : (
+                <>
+                  <strong>No clusters discovered yet</strong>
+                  <span>Sync an enabled provider source to pull your clusters in.</span>
+                </>
+              )}
             </div>
           ) : (
             <div className="table-scroll">
@@ -347,13 +421,14 @@ export function FleetDashboard() {
                     <th>Endpoint</th>
                     <th>Nodes</th>
                     <th>Last seen</th>
+                    <th aria-label="Row actions" />
                   </tr>
                 </thead>
                 <tbody>
                   {clusters.map((cluster) => (
                     <tr
                       key={cluster.id}
-                      className={cluster.removedAt ? 'removed-row' : ''}
+                      className={`row-clickable ${cluster.removedAt ? 'removed-row' : ''}`}
                       onClick={() => setSelectedCluster(cluster)}
                     >
                       <td>
@@ -384,14 +459,25 @@ export function FleetDashboard() {
                       <td className="mono">{cluster.location}</td>
                       <td className="mono">{cluster.kubernetesVersion || '—'}</td>
                       <td>
-                        <span className={`status-pill status-pill--${cluster.status}`}>
-                          {cluster.removedAt ? 'removed' : cluster.status}
-                        </span>
+                        <StatusBadge
+                          status={cluster.removedAt ? 'removed' : cluster.status}
+                          tone={cluster.removedAt ? 'idle' : undefined}
+                        />
                       </td>
                       <td className="capitalize">{cluster.endpointAccess}</td>
-                      <td>{cluster.nodeCount ?? '—'}</td>
+                      <td className="numeric">{cluster.nodeCount ?? '—'}</td>
                       <td className={isStale(cluster.lastSeenAt) ? 'stale' : ''}>
                         {relativeTime(cluster.lastSeenAt)}
+                      </td>
+                      <td className="actions-cell">
+                        <button
+                          type="button"
+                          className="refresh-button"
+                          aria-label={`Open details for ${cluster.name}`}
+                          onClick={() => setSelectedCluster(cluster)}
+                        >
+                          Details
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -403,7 +489,23 @@ export function FleetDashboard() {
             <span>
               Page {page} of {totalPages} · {total} clusters
             </span>
-            <div>
+            <div className="pagination-controls">
+              <label>
+                <span>Rows</span>
+                <select
+                  aria-label="Clusters per page"
+                  value={pageSize}
+                  onChange={(event) =>
+                    updateFilter(() => setPageSize(Number(event.target.value)))
+                  }
+                >
+                  {pageSizes.map((size) => (
+                    <option key={size} value={size}>
+                      {size}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <button
                 type="button"
                 disabled={page === 1}
@@ -447,11 +549,13 @@ export function FleetDashboard() {
                     <span>{item.scopeId} · {item.clusterCount} clusters</span>
                   </div>
                   <div className="source-state">
-                    <span className={`source-status source-status--${item.lastSyncStatus}`}>
-                      {isStale(item.lastSyncAt) && item.lastSyncStatus === 'succeeded'
-                        ? 'stale'
-                        : item.lastSyncStatus}
-                    </span>
+                    <StatusBadge
+                      status={
+                        isStale(item.lastSyncAt) && item.lastSyncStatus === 'succeeded'
+                          ? 'stale'
+                          : item.lastSyncStatus
+                      }
+                    />
                     <small>{relativeTime(item.lastSyncAt)}</small>
                   </div>
                   <button

@@ -7,7 +7,7 @@ import {
   getOnboardingClusters,
 } from '../api/onboarding'
 import type { Cluster, Provider } from '../api/inventory'
-import { KubernetesLogo, ProviderLogo } from './BrandIcons'
+import { ProviderLogo } from './BrandIcons'
 
 const dnsLabel = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
 
@@ -187,133 +187,130 @@ export function ApplicationOnboardingForm() {
     <section className="onboarding-workspace" aria-labelledby="onboarding-heading">
       <div className="onboarding-heading">
         <div>
-          <Link className="text-button onboarding-back" to="/applications">
+          <Link className="text-button detail-back" to="/applications">
             ← Applications
           </Link>
           <p className="kicker">GitOps delivery</p>
           <h1 id="onboarding-heading">Onboard an application</h1>
           <p>Create the same Argo CD-managed Helm release across one or more clusters.</p>
         </div>
-        <KubernetesLogo className="onboarding-mark" />
       </div>
 
       {error && <div className="error-banner" role="alert"><span>{error}</span></div>}
 
-      <div className="onboarding-single">
-        <form className="onboarding-form" onSubmit={(event) => void submit(event)}>
-          <div className="section-heading section-heading--compact">
-            <div>
-              <p className="section-label">Application definition</p>
-              <h2>Minimal deployment details</h2>
-            </div>
+      <form className="onboarding-form" onSubmit={(event) => void submit(event)}>
+        <div className="section-heading section-heading--compact">
+          <div>
+            <p className="section-label">Application definition</p>
+            <h2>Minimal deployment details</h2>
           </div>
+        </div>
 
-          <div className="onboarding-fields">
-            <label>
-              <span>Application name</span>
-              <input
-                required
-                value={name}
-                pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?"
-                maxLength={63}
-                placeholder="payments-api"
-                onChange={(event) => setName(event.target.value)}
-              />
-            </label>
-            <label>
-              <span>Namespace</span>
-              <input
-                required
-                value={namespace}
-                pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?"
-                maxLength={63}
-                placeholder="payments"
-                onChange={(event) => setNamespace(event.target.value)}
-              />
-            </label>
-          </div>
+        <div className="onboarding-fields">
+          <label>
+            <span>Application name</span>
+            <input
+              required
+              value={name}
+              pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?"
+              maxLength={63}
+              placeholder="payments-api"
+              onChange={(event) => setName(event.target.value)}
+            />
+          </label>
+          <label>
+            <span>Namespace</span>
+            <input
+              required
+              value={namespace}
+              pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?"
+              maxLength={63}
+              placeholder="payments"
+              onChange={(event) => setNamespace(event.target.value)}
+            />
+          </label>
+        </div>
 
-          <fieldset className="cluster-picker">
-            <legend>
-              Target regions{' '}
-              <span>
-                {selectedRegions.length} selected · {selectedClusterIds.length} clusters
-              </span>
-            </legend>
-            {loading ? (
-              <div className="compact-state">Loading regions…</div>
-            ) : sourceRegions.length === 0 ? (
-              <div className="compact-state">No active clusters are available.</div>
-            ) : (
-              sourceRegions.map((source) => (
-                <div className="region-source" key={source.sourceId}>
-                  <p className="region-source-name">
-                    <span className="source-logo">
-                      <ProviderLogo provider={source.provider} className="provider-logo" />
-                    </span>
-                    {source.sourceName}
-                  </p>
-                  {source.regions.map((region) => {
-                    const key = regionKey(source.sourceId, region.region)
-                    return (
-                      <label className="cluster-option" key={key}>
-                        <input
-                          type="checkbox"
-                          checked={selectedSet.has(key)}
-                          onChange={() => toggleRegion(key)}
-                        />
-                        <span>
-                          <strong>{region.region}</strong>
-                          <small>
-                            {region.clusters.length}{' '}
-                            {region.clusters.length === 1 ? 'cluster' : 'clusters'} ·{' '}
-                            {region.clusters.map((cluster) => cluster.name).join(', ')}
-                          </small>
-                        </span>
-                      </label>
-                    )
-                  })}
-                </div>
-              ))
-            )}
-          </fieldset>
-
-          {activeRegions.length > 0 && (
-            <div className="region-values">
-              <p className="section-label">Region overrides</p>
-              <p className="values-guidance" id="values-guidance">
-                Do not include passwords, tokens, certificates, or other secret material.
-                Reference existing Kubernetes or external secrets from the chart values.
-              </p>
-              {activeRegions.map((region) => (
-                <details className="region-values-item" key={region}>
-                  <summary>
-                    {region}/values.yaml
-                    <span>{regionValues[region]?.trim() ? 'customised' : 'base only'}</span>
-                  </summary>
-                  <textarea
-                    value={regionValues[region] ?? ''}
-                    spellCheck={false}
-                    aria-describedby="values-guidance"
-                    placeholder={`# Keys here override the chart defaults in ${region}\nreplicaCount: 3\n`}
-                    onChange={(event) =>
-                      setRegionValues((current) => ({ ...current, [region]: event.target.value }))
-                    }
-                  />
-                </details>
-              ))}
-            </div>
+        <fieldset className="cluster-picker">
+          <legend>
+            Target regions{' '}
+            <span>
+              {selectedRegions.length} selected · {selectedClusterIds.length} clusters
+            </span>
+          </legend>
+          {loading ? (
+            <div className="compact-state">Loading regions…</div>
+          ) : sourceRegions.length === 0 ? (
+            <div className="compact-state">No active clusters are available.</div>
+          ) : (
+            sourceRegions.map((source) => (
+              <div className="region-source" key={source.sourceId}>
+                <p className="region-source-name">
+                  <span className="source-logo">
+                    <ProviderLogo provider={source.provider} className="provider-logo" />
+                  </span>
+                  {source.sourceName}
+                </p>
+                {source.regions.map((region) => {
+                  const key = regionKey(source.sourceId, region.region)
+                  return (
+                    <label className="cluster-option" key={key}>
+                      <input
+                        type="checkbox"
+                        checked={selectedSet.has(key)}
+                        onChange={() => toggleRegion(key)}
+                      />
+                      <span>
+                        <strong>{region.region}</strong>
+                        <small>
+                          {region.clusters.length}{' '}
+                          {region.clusters.length === 1 ? 'cluster' : 'clusters'} ·{' '}
+                          {region.clusters.map((cluster) => cluster.name).join(', ')}
+                        </small>
+                      </span>
+                    </label>
+                  )
+                })}
+              </div>
+            ))
           )}
+        </fieldset>
 
-          <button
-            className="primary-button"
-            type="submit"
-            disabled={submitting || loading || !valuesYaml}
-          >
-            {submitting ? 'Creating Argo applications…' : 'Onboard application'}
-          </button>
-        </form>
-      </div>
+        {activeRegions.length > 0 && (
+          <div className="region-values">
+            <p className="section-label">Region overrides</p>
+            <p className="values-guidance" id="values-guidance">
+              Do not include passwords, tokens, certificates, or other secret material.
+              Reference existing Kubernetes or external secrets from the chart values.
+            </p>
+            {activeRegions.map((region) => (
+              <details className="region-values-item" key={region}>
+                <summary>
+                  {region}/values.yaml
+                  <span>{regionValues[region]?.trim() ? 'customised' : 'base only'}</span>
+                </summary>
+                <textarea
+                  value={regionValues[region] ?? ''}
+                  spellCheck={false}
+                  aria-describedby="values-guidance"
+                  placeholder={`# Keys here override the chart defaults in ${region}\nreplicaCount: 3\n`}
+                  onChange={(event) =>
+                    setRegionValues((current) => ({ ...current, [region]: event.target.value }))
+                  }
+                />
+              </details>
+            ))}
+          </div>
+        )}
+
+        <button
+          className="primary-button"
+          type="submit"
+          disabled={submitting || loading || !valuesYaml}
+        >
+          {submitting ? 'Creating Argo applications…' : 'Onboard application'}
+        </button>
+      </form>
     </section>
   )
 }

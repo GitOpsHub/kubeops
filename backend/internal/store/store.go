@@ -18,6 +18,14 @@ import (
 
 var ErrSyncAlreadyActive = errors.New("sync already active")
 
+// ErrOnboardingExists reports that an application with the same name and
+// namespace is already onboarded. The unique index enforces it, so a request
+// that passes the service's own check can still land here under a race.
+var ErrOnboardingExists = errors.New("application is already onboarded")
+
+// PostgreSQL's unique_violation SQLSTATE.
+const uniqueViolation = "23505"
+
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
@@ -356,7 +364,7 @@ func (s *Store) QueueSync(ctx context.Context, sourceID, trigger string) (model.
 	).Scan(&run.ID, &run.SourceID, &run.Trigger, &run.Status, &run.QueuedAt)
 	if err != nil {
 		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
 			return model.SyncRun{}, ErrSyncAlreadyActive
 		}
 		return model.SyncRun{}, err
@@ -593,6 +601,11 @@ func (s *Store) CreateApplicationOnboarding(
 		onboarding.ValuesRepositoryName, onboarding.ValuesRevision, onboarding.ValuesCommitSHA,
 	).Scan(&onboarding.ID, &onboarding.Status, &onboarding.CreatedAt, &onboarding.UpdatedAt)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation &&
+			pgErr.ConstraintName == "application_onboardings_active_name_idx" {
+			return model.ApplicationOnboarding{}, ErrOnboardingExists
+		}
 		return model.ApplicationOnboarding{}, err
 	}
 
@@ -628,6 +641,30 @@ func (s *Store) CreateApplicationOnboarding(
 		return model.ApplicationOnboarding{}, err
 	}
 	return onboarding, nil
+}
+
+// ActiveApplicationOnboardingID returns the id of the onboarding that currently
+// owns this name and namespace, or an empty string when the name is free.
+// Offboarded records do not own their name, so a removed application can be
+// onboarded again.
+func (s *Store) ActiveApplicationOnboardingID(
+	ctx context.Context,
+	name string,
+	namespace string,
+) (string, error) {
+	var id string
+	err := s.pool.QueryRow(ctx, `
+		SELECT id::text FROM application_onboardings
+		WHERE name = $1 AND namespace = $2 AND status <> 'offboarded'`,
+		name, namespace,
+	).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
 func (s *Store) GetApplicationOnboarding(ctx context.Context, id string) (model.ApplicationOnboarding, error) {

@@ -43,6 +43,9 @@ type ApplicationOnboarder interface {
 		model.ApplicationOnboardingFilter,
 	) (model.ApplicationOnboardingPage, error)
 	Defaults() onboarding.Defaults
+	Resources(context.Context, string, string) ([]onboarding.ResourceNode, error)
+	ResourceManifest(context.Context, string, string, onboarding.ResourceRef) (string, error)
+	DeleteResource(context.Context, string, string, onboarding.ResourceRef) error
 }
 
 type API struct {
@@ -95,6 +98,18 @@ func newHandler(
 	mux.HandleFunc("GET /api/application-onboardings/{id}", api.applicationOnboarding)
 	mux.HandleFunc("POST /api/application-onboardings/{id}/sync", api.syncApplicationOnboarding)
 	mux.HandleFunc("POST /api/application-onboardings/{id}/offboard", api.offboardApplicationOnboarding)
+	mux.HandleFunc(
+		"GET /api/application-onboardings/{id}/targets/{targetId}/resources",
+		api.applicationResources,
+	)
+	mux.HandleFunc(
+		"GET /api/application-onboardings/{id}/targets/{targetId}/resources/manifest",
+		api.applicationResourceManifest,
+	)
+	mux.HandleFunc(
+		"DELETE /api/application-onboardings/{id}/targets/{targetId}/resources",
+		api.deleteApplicationResource,
+	)
 	// Serves the Argo CD UI on this origin so the browser needs neither Argo CD
 	// credentials nor trust in the Argo CD server's certificate.
 	if proxy, err := newArgoProxy(cfg.Onboarding.ArgoTargets); err != nil {
@@ -384,6 +399,93 @@ func (api *API) createApplicationOnboarding(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusCreated, result)
+}
+
+// resourceRef reads the resource tuple from the query string. Kind, name, and
+// version identify the object; group is empty for core resources and namespace
+// is empty for cluster-scoped ones, so only the first three are required.
+func resourceRef(r *http.Request) (onboarding.ResourceRef, bool) {
+	query := r.URL.Query()
+	ref := onboarding.ResourceRef{
+		Group:     query.Get("group"),
+		Version:   query.Get("version"),
+		Kind:      query.Get("kind"),
+		Namespace: query.Get("namespace"),
+		Name:      query.Get("name"),
+	}
+	if ref.Kind == "" || ref.Name == "" || ref.Version == "" {
+		return onboarding.ResourceRef{}, false
+	}
+	return ref, true
+}
+
+// writeResourceError maps the shared failure modes of the resource endpoints.
+func (api *API) writeResourceError(w http.ResponseWriter, err error, action string) {
+	var validationError onboarding.ValidationError
+	switch {
+	case errors.Is(err, onboarding.ErrTargetNotFound):
+		writeError(w, http.StatusNotFound, "deployment target not found")
+	case errors.Is(err, onboarding.ErrResourceNotFound),
+		errors.Is(err, onboarding.ErrApplicationNotFound):
+		writeError(w, http.StatusNotFound, "resource not found in Argo CD")
+	case errors.As(err, &validationError):
+		writeError(w, http.StatusUnprocessableEntity, validationError.Message)
+	default:
+		slog.Error(action, "error", err)
+		writeError(w, http.StatusBadGateway, "Argo CD could not be reached")
+	}
+}
+
+func (api *API) applicationResources(w http.ResponseWriter, r *http.Request) {
+	if api.onboarder == nil {
+		writeError(w, http.StatusServiceUnavailable, "application onboarding is not available")
+		return
+	}
+	nodes, err := api.onboarder.Resources(r.Context(), r.PathValue("id"), r.PathValue("targetId"))
+	if err != nil {
+		api.writeResourceError(w, err, "list application resources")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": nodes})
+}
+
+func (api *API) applicationResourceManifest(w http.ResponseWriter, r *http.Request) {
+	if api.onboarder == nil {
+		writeError(w, http.StatusServiceUnavailable, "application onboarding is not available")
+		return
+	}
+	ref, ok := resourceRef(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "kind, name, and version are required")
+		return
+	}
+	manifest, err := api.onboarder.ResourceManifest(
+		r.Context(), r.PathValue("id"), r.PathValue("targetId"), ref,
+	)
+	if err != nil {
+		api.writeResourceError(w, err, "read application resource manifest")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"manifest": manifest})
+}
+
+func (api *API) deleteApplicationResource(w http.ResponseWriter, r *http.Request) {
+	if api.onboarder == nil {
+		writeError(w, http.StatusServiceUnavailable, "application onboarding is not available")
+		return
+	}
+	ref, ok := resourceRef(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "kind, name, and version are required")
+		return
+	}
+	if err := api.onboarder.DeleteResource(
+		r.Context(), r.PathValue("id"), r.PathValue("targetId"), ref,
+	); err != nil {
+		api.writeResourceError(w, err, "delete application resource")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (api *API) applicationOnboardingDefaults(w http.ResponseWriter, _ *http.Request) {

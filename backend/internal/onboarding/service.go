@@ -16,6 +16,7 @@ import (
 	"github.com/GitOpsHub/kubeops/backend/internal/config"
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
 	"github.com/GitOpsHub/kubeops/backend/internal/secure"
+	"github.com/GitOpsHub/kubeops/backend/internal/store"
 	"gopkg.in/yaml.v3"
 )
 
@@ -31,6 +32,7 @@ type Repository interface {
 		[]model.Cluster,
 		map[string]bool,
 	) (model.ApplicationOnboarding, error)
+	ActiveApplicationOnboardingID(context.Context, string, string) (string, error)
 	GetApplicationOnboarding(context.Context, string) (model.ApplicationOnboarding, error)
 	ListApplicationOnboardings(
 		context.Context,
@@ -59,6 +61,10 @@ type Defaults struct {
 	ValuesYAML    string `json:"valuesYaml"`
 }
 
+// ErrTargetNotFound reports that an onboarding has no deployment with the
+// requested id.
+var ErrTargetNotFound = errors.New("deployment target not found")
+
 type ValidationError struct {
 	Message string
 }
@@ -86,7 +92,7 @@ type Service struct {
 	// backend's proxy, which authenticates with the API token, so a target needs no
 	// UI credentials to be linkable.
 	linkTargets map[string]config.ArgoTarget
-	github    ValuesRepositoryManager
+	github      ValuesRepositoryManager
 }
 
 func NewService(repository Repository, cfg config.OnboardingConfig) (*Service, error) {
@@ -142,6 +148,25 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 	input.Namespace = strings.TrimSpace(input.Namespace)
 	if err := s.validateInput(input); err != nil {
 		return model.ApplicationOnboarding{}, err
+	}
+
+	// The Argo CD application is named after the onboarding, so a second record
+	// for the same name and namespace would claim the very same application on
+	// every shared cluster: both would report one application's status, and
+	// offboarding either would delete what the other still claims. The check
+	// runs before any GitHub or Argo CD work so a rejected request leaves
+	// nothing behind.
+	existing, err := s.store.ActiveApplicationOnboardingID(ctx, input.Name, input.Namespace)
+	if err != nil {
+		return model.ApplicationOnboarding{}, fmt.Errorf("look up existing onboarding: %w", err)
+	}
+	if existing != "" {
+		return model.ApplicationOnboarding{}, ConflictError{
+			Message: fmt.Sprintf(
+				"%s is already onboarded in namespace %s; sync it instead, or offboard it first",
+				input.Name, input.Namespace,
+			),
+		}
 	}
 
 	clusterIDs := uniqueStrings(input.ClusterIDs)
@@ -209,6 +234,16 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 		ValuesRevision:           valuesRepository.Revision,
 		ValuesCommitSHA:          valuesRepository.CommitSHA,
 	}, clusters, valuesRepository.RegionValues)
+	if errors.Is(err, store.ErrOnboardingExists) {
+		// Two requests for the same name raced past the check above; the index
+		// caught the loser.
+		return model.ApplicationOnboarding{}, ConflictError{
+			Message: fmt.Sprintf(
+				"%s is already onboarded in namespace %s; sync it instead, or offboard it first",
+				input.Name, input.Namespace,
+			),
+		}
+	}
 	if err != nil {
 		return model.ApplicationOnboarding{}, fmt.Errorf("store application onboarding: %w", err)
 	}
@@ -254,6 +289,94 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 		return model.ApplicationOnboarding{}, fmt.Errorf("store Argo CD creation result: %w", updateErr)
 	}
 	return s.Get(ctx, onboarding.ID)
+}
+
+// target resolves one deployment of an onboarding to the Argo CD client that
+// owns it, so resource calls cannot be pointed at another application's cluster
+// by editing the URL.
+func (s *Service) target(
+	ctx context.Context,
+	onboardingID string,
+	targetID string,
+) (model.ApplicationDeployment, ArgoClient, error) {
+	record, err := s.store.GetApplicationOnboarding(ctx, onboardingID)
+	if err != nil {
+		return model.ApplicationDeployment{}, nil, err
+	}
+	for _, target := range record.Targets {
+		if target.ID != targetID {
+			continue
+		}
+		client, ok := s.clients[targetKey(target.SourceID, target.ProviderResourceID)]
+		if !ok {
+			return model.ApplicationDeployment{}, nil, ValidationError{
+				Message: fmt.Sprintf(
+					"cluster %q does not have an Argo CD target configured", target.ClusterName,
+				),
+			}
+		}
+		return target, client, nil
+	}
+	return model.ApplicationDeployment{}, nil, ErrTargetNotFound
+}
+
+// Resources lists the Kubernetes objects Argo CD manages for one deployment.
+func (s *Service) Resources(
+	ctx context.Context,
+	onboardingID string,
+	targetID string,
+) ([]ResourceNode, error) {
+	target, client, err := s.target(ctx, onboardingID, targetID)
+	if err != nil {
+		return nil, err
+	}
+	callCtx, cancel := context.WithTimeout(ctx, s.config.RequestTimeout)
+	defer cancel()
+	return client.ApplicationResources(callCtx, target.ArgoApplication, s.config.ArgoNamespace)
+}
+
+// ResourceManifest returns the live manifest of a single resource.
+func (s *Service) ResourceManifest(
+	ctx context.Context,
+	onboardingID string,
+	targetID string,
+	ref ResourceRef,
+) (string, error) {
+	target, client, err := s.target(ctx, onboardingID, targetID)
+	if err != nil {
+		return "", err
+	}
+	callCtx, cancel := context.WithTimeout(ctx, s.config.RequestTimeout)
+	defer cancel()
+	return client.ResourceManifest(callCtx, target.ArgoApplication, s.config.ArgoNamespace, ref)
+}
+
+// DeleteResource removes one live resource from its cluster. Anything still
+// declared in Git comes back on the next sync, which the caller is told.
+func (s *Service) DeleteResource(
+	ctx context.Context,
+	onboardingID string,
+	targetID string,
+	ref ResourceRef,
+) error {
+	target, client, err := s.target(ctx, onboardingID, targetID)
+	if err != nil {
+		return err
+	}
+	callCtx, cancel := context.WithTimeout(ctx, s.config.RequestTimeout)
+	defer cancel()
+	if err := client.DeleteResource(
+		callCtx, target.ArgoApplication, s.config.ArgoNamespace, ref,
+	); err != nil {
+		slog.Error("delete Argo CD managed resource",
+			"onboarding", onboardingID, "target", targetID,
+			"kind", ref.Kind, "name", ref.Name, "error", err)
+		return err
+	}
+	slog.Info("deleted Argo CD managed resource",
+		"onboarding", onboardingID, "target", targetID,
+		"cluster", target.ClusterName, "kind", ref.Kind, "name", ref.Name)
+	return nil
 }
 
 func (s *Service) Sync(ctx context.Context, id string) (model.ApplicationOnboarding, error) {

@@ -77,6 +77,38 @@ type fakeApplicationOnboarder struct {
 	err        error
 	syncID     string
 	offboardID string
+	// Resource endpoints: what to return, and what the handler passed through.
+	resources       []onboarding.ResourceNode
+	manifest        string
+	resourceErr     error
+	deletedRef      onboarding.ResourceRef
+	resourceTargets []string
+}
+
+func (f *fakeApplicationOnboarder) Resources(
+	_ context.Context,
+	_ string,
+	targetID string,
+) ([]onboarding.ResourceNode, error) {
+	f.resourceTargets = append(f.resourceTargets, targetID)
+	return f.resources, f.resourceErr
+}
+func (f *fakeApplicationOnboarder) ResourceManifest(
+	_ context.Context,
+	_ string,
+	_ string,
+	_ onboarding.ResourceRef,
+) (string, error) {
+	return f.manifest, f.resourceErr
+}
+func (f *fakeApplicationOnboarder) DeleteResource(
+	_ context.Context,
+	_ string,
+	_ string,
+	ref onboarding.ResourceRef,
+) error {
+	f.deletedRef = ref
+	return f.resourceErr
 }
 
 func (f *fakeApplicationOnboarder) Create(
@@ -416,6 +448,119 @@ func TestApplicationLifecycleActions(t *testing.T) {
 
 			if response.Code != http.StatusOK || test.called(onboarder) != "onboarding-1" {
 				t.Fatalf("unexpected lifecycle response: %d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestListApplicationResources(t *testing.T) {
+	onboarder := &fakeApplicationOnboarder{resources: []onboarding.ResourceNode{{
+		ResourceRef: onboarding.ResourceRef{
+			Group: "apps", Version: "v1", Kind: "Deployment",
+			Namespace: "payments", Name: "payments-api",
+		},
+		UID: "uid-1", HealthStatus: "Healthy", SyncStatus: "Synced",
+	}}}
+	handler := NewHandlerWithOnboarding(
+		config.Config{}, &fakeRepository{}, &fakeClusterManager{}, onboarder,
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(
+		http.MethodGet,
+		"/api/application-onboardings/onboarding-1/targets/target-9/resources",
+		nil,
+	))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Items []onboarding.ResourceNode `json:"items"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Items) != 1 || body.Items[0].Kind != "Deployment" {
+		t.Fatalf("unexpected resources: %#v", body.Items)
+	}
+	// The target must come from the path, or one deployment's resources could be
+	// read through another's URL.
+	if len(onboarder.resourceTargets) != 1 || onboarder.resourceTargets[0] != "target-9" {
+		t.Fatalf("unexpected target routing: %#v", onboarder.resourceTargets)
+	}
+}
+
+func TestDeleteApplicationResource(t *testing.T) {
+	onboarder := &fakeApplicationOnboarder{}
+	handler := NewHandlerWithOnboarding(
+		config.Config{}, &fakeRepository{}, &fakeClusterManager{}, onboarder,
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(
+		http.MethodDelete,
+		"/api/application-onboardings/onboarding-1/targets/target-1/resources"+
+			"?group=apps&version=v1&kind=Deployment&namespace=payments&name=payments-api",
+		nil,
+	))
+
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("unexpected status: %d %s", response.Code, response.Body.String())
+	}
+	want := onboarding.ResourceRef{
+		Group: "apps", Version: "v1", Kind: "Deployment",
+		Namespace: "payments", Name: "payments-api",
+	}
+	if onboarder.deletedRef != want {
+		t.Fatalf("unexpected resource ref: %#v", onboarder.deletedRef)
+	}
+}
+
+// An incomplete reference must not reach Argo CD, where a missing kind or name
+// could match something other than what the caller meant.
+func TestDeleteApplicationResourceRequiresFullReference(t *testing.T) {
+	onboarder := &fakeApplicationOnboarder{}
+	handler := NewHandlerWithOnboarding(
+		config.Config{}, &fakeRepository{}, &fakeClusterManager{}, onboarder,
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(
+		http.MethodDelete,
+		"/api/application-onboardings/onboarding-1/targets/target-1/resources?kind=Deployment",
+		nil,
+	))
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("unexpected status: %d %s", response.Code, response.Body.String())
+	}
+	if onboarder.deletedRef != (onboarding.ResourceRef{}) {
+		t.Fatalf("a delete was attempted for %#v", onboarder.deletedRef)
+	}
+}
+
+func TestApplicationResourceErrorsMapToStatus(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		want int
+	}{
+		{name: "missing target", err: onboarding.ErrTargetNotFound, want: http.StatusNotFound},
+		{name: "missing resource", err: onboarding.ErrResourceNotFound, want: http.StatusNotFound},
+		{name: "argo unreachable", err: errors.New("dial tcp: refused"), want: http.StatusBadGateway},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			onboarder := &fakeApplicationOnboarder{resourceErr: test.err}
+			handler := NewHandlerWithOnboarding(
+				config.Config{}, &fakeRepository{}, &fakeClusterManager{}, onboarder,
+			)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(
+				http.MethodGet,
+				"/api/application-onboardings/onboarding-1/targets/target-1/resources",
+				nil,
+			))
+
+			if response.Code != test.want {
+				t.Fatalf("unexpected status: %d %s", response.Code, response.Body.String())
 			}
 		})
 	}

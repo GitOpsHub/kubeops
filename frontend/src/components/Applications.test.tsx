@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
-import { buildApplication, buildTarget, mockAPI } from '../test/mock-api'
+import { buildApplication, buildResource, buildTarget, mockAPI } from '../test/mock-api'
 
 function renderApp(route: string) {
   return render(
@@ -44,6 +44,37 @@ describe('applications list', () => {
     expect(within(row).getByText('eu-west-1, us-east-1')).toBeInTheDocument()
     expect(within(row).getByText('2 targets')).toBeInTheDocument()
     expect(within(row).getByText('partial')).toBeInTheDocument()
+  })
+
+  it('expands a row into its deployment targets grouped by region', async () => {
+    mockAPI({
+      applications: [
+        buildApplication({
+          targets: [
+            buildTarget({ id: 'target-1', region: 'us-east-1' }),
+            buildTarget({ id: 'target-2', region: 'eu-west-1', clusterName: 'prod-eu' }),
+          ],
+        }),
+      ],
+    })
+    renderApp('/applications')
+    const user = userEvent.setup()
+
+    expect(screen.queryByRole('region', { name: 'Region eu-west-1' })).not.toBeInTheDocument()
+
+    const expander = await screen.findByRole('button', {
+      name: 'Show deployment targets for payments-api',
+    })
+    await user.click(expander)
+
+    const group = await screen.findByRole('region', { name: 'Region eu-west-1' })
+    expect(within(group).getByRole('article', { name: 'Target prod-eu' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Region us-east-1' })).toBeInTheDocument()
+
+    await user.click(
+      screen.getByRole('button', { name: 'Hide deployment targets for payments-api' }),
+    )
+    expect(screen.queryByRole('region', { name: 'Region eu-west-1' })).not.toBeInTheDocument()
   })
 
   it('applies bookmarked filters from the URL', async () => {
@@ -165,6 +196,234 @@ describe('application detail', () => {
 
     // Credentials must stay untouched until the operator asks for them.
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('argo-access'))).toBe(false)
+  })
+
+  it('lists Kubernetes resources in ownership order and shows their detail', async () => {
+    mockAPI({
+      applications: [
+        buildApplication({ targets: [buildTarget({ id: 'target-1', region: 'us-east-1' })] }),
+      ],
+      resources: [
+        buildResource({ uid: 'uid-pod', kind: 'Pod', name: 'payments-api-abc', parentUid: 'uid-rs' }),
+        buildResource({ uid: 'uid-rs', kind: 'ReplicaSet', name: 'payments-api-1', parentUid: 'uid-dep' }),
+        buildResource({ uid: 'uid-dep', kind: 'Deployment', name: 'payments-api' }),
+      ],
+      manifest: '{"kind":"Deployment","metadata":{"name":"payments-api"}}',
+    })
+    renderApp('/applications/onboarding-1')
+    const user = userEvent.setup()
+
+    await user.click(await screen.findByRole('tab', { name: 'Kubernetes resources' }))
+
+    // Owners come before the objects they own, so the tree reads top-down.
+    const rows = await screen.findAllByRole('listitem')
+    expect(rows.map((row) => row.textContent)).toEqual([
+      expect.stringContaining('payments-api'),
+      expect.stringContaining('payments-api-1'),
+      expect.stringContaining('payments-api-abc'),
+    ])
+
+    await user.click(screen.getByText('payments-api-1'))
+    expect(screen.getByText('apps/v1')).toBeInTheDocument()
+
+    // The manifest is a separate request, made only when asked for.
+    await user.click(screen.getByRole('button', { name: 'Show live manifest' }))
+    expect(await screen.findByLabelText('Manifest for payments-api-1')).toHaveTextContent(
+      '"kind": "Deployment"',
+    )
+  })
+
+  it('deletes a resource only after the warning is confirmed', async () => {
+    const { fetchMock } = mockAPI({
+      applications: [
+        buildApplication({ targets: [buildTarget({ id: 'target-1', region: 'us-east-1' })] }),
+      ],
+      resources: [buildResource({ uid: 'uid-dep', kind: 'Deployment', name: 'payments-api' })],
+    })
+    renderApp('/applications/onboarding-1')
+    const user = userEvent.setup()
+
+    await user.click(await screen.findByRole('tab', { name: 'Kubernetes resources' }))
+    // The list view is where a row carries its own delete action.
+    await user.click(await screen.findByRole('button', { name: 'List' }))
+    await user.click(
+      await screen.findByRole('button', { name: 'Delete Deployment payments-api' }),
+    )
+
+    const dialog = screen.getByRole('alertdialog')
+    expect(within(dialog).getByText(/recreates it on the next sync/)).toBeInTheDocument()
+
+    // Cancelling must not touch the cluster.
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    expect(
+      fetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === 'DELETE'),
+    ).toBe(false)
+
+    await user.click(screen.getByRole('button', { name: 'Delete Deployment payments-api' }))
+    await user.click(screen.getByRole('button', { name: 'Delete Deployment' }))
+
+    const deleteCall = fetchMock.mock.calls.find(
+      ([, init]) => (init as RequestInit | undefined)?.method === 'DELETE',
+    )
+    expect(String(deleteCall?.[0])).toContain('kind=Deployment')
+    expect(String(deleteCall?.[0])).toContain('name=payments-api')
+    expect(await screen.findByText(/was deleted from/)).toBeInTheDocument()
+  })
+
+  it('toggles between the tree and the list, remembering the choice', async () => {
+    const store = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => store.set(key, value),
+      removeItem: (key: string) => store.delete(key),
+    })
+    mockAPI({
+      applications: [
+        buildApplication({ targets: [buildTarget({ id: 'target-1', region: 'us-east-1' })] }),
+      ],
+      resources: [buildResource({ uid: 'uid-dep', kind: 'Deployment', name: 'payments-api' })],
+    })
+    const view = renderApp('/applications/onboarding-1')
+    const user = userEvent.setup()
+
+    await user.click(await screen.findByRole('tab', { name: 'Kubernetes resources' }))
+
+    // The graph is the default, and it is a graph, not a table.
+    expect(await screen.findByRole('button', { name: 'Tree' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(screen.queryByRole('columnheader', { name: /Kind/ })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'List' }))
+    expect(await screen.findByRole('columnheader', { name: /Kind/ })).toBeInTheDocument()
+    expect(store.get('kubeops-resource-view')).toBe('list')
+
+    // A fresh mount opens on the remembered view.
+    view.unmount()
+    renderApp('/applications/onboarding-1')
+    await user.click(await screen.findByRole('tab', { name: 'Kubernetes resources' }))
+    expect(await screen.findByRole('columnheader', { name: /Kind/ })).toBeInTheDocument()
+
+    vi.unstubAllGlobals()
+  })
+
+  it('sorts and filters the resource list', async () => {
+    mockAPI({
+      applications: [
+        buildApplication({ targets: [buildTarget({ id: 'target-1', region: 'us-east-1' })] }),
+      ],
+      resources: [
+        buildResource({ uid: 'uid-dep', kind: 'Deployment', name: 'api' }),
+        buildResource({ uid: 'uid-pod-b', kind: 'Pod', name: 'api-b', parentUid: 'uid-dep' }),
+        buildResource({ uid: 'uid-pod-a', kind: 'Pod', name: 'api-a', parentUid: 'uid-dep' }),
+      ],
+    })
+    renderApp('/applications/onboarding-1')
+    const user = userEvent.setup()
+
+    await user.click(await screen.findByRole('tab', { name: 'Kubernetes resources' }))
+    await user.click(await screen.findByRole('button', { name: 'List' }))
+
+    const names = () =>
+      screen
+        .getAllByRole('row')
+        .slice(1)
+        .map((row) => within(row).getAllByRole('cell')[1].textContent)
+
+    expect(names()).toEqual(['api', 'api-a', 'api-b'])
+
+    // Sorting by kind descending puts the pods above the deployment.
+    await user.click(screen.getByRole('button', { name: /Kind/ }))
+    expect(screen.getByRole('columnheader', { name: /Kind/ })).toHaveAttribute(
+      'aria-sort',
+      'descending',
+    )
+    expect(names()).toEqual(['api-a', 'api-b', 'api'])
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Kind' }), 'Pod')
+    expect(names()).toEqual(['api-a', 'api-b'])
+  })
+
+  it('opens the same detail drawer from a graph card', async () => {
+    mockAPI({
+      applications: [
+        buildApplication({ targets: [buildTarget({ id: 'target-1', region: 'us-east-1' })] }),
+      ],
+      resources: [buildResource({ uid: 'uid-dep', kind: 'Deployment', name: 'payments-api' })],
+    })
+    renderApp('/applications/onboarding-1')
+    const user = userEvent.setup()
+
+    await user.click(await screen.findByRole('tab', { name: 'Kubernetes resources' }))
+    await user.click(await screen.findByRole('button', { name: /payments-api/ }))
+
+    const drawer = await screen.findByRole('dialog')
+    expect(within(drawer).getByRole('heading', { name: 'payments-api' })).toBeInTheDocument()
+    expect(within(drawer).getByText('apps/v1')).toBeInTheDocument()
+
+    // Deleting from the graph goes through the drawer, then the same warning.
+    await user.click(within(drawer).getByRole('button', { name: 'Delete resource' }))
+    expect(
+      within(screen.getByRole('alertdialog')).getByText(/recreates it on the next sync/),
+    ).toBeInTheDocument()
+  })
+
+  it('switches between the target, chart, and timeline tabs', async () => {
+    mockAPI({
+      applications: [
+        buildApplication({
+          targets: [buildTarget({ id: 'target-1', region: 'us-east-1' })],
+        }),
+      ],
+    })
+    renderApp('/applications/onboarding-1')
+    const user = userEvent.setup()
+
+    // Targets are what an operator came for, so they are the default panel.
+    expect(
+      await screen.findByRole('article', { name: 'Deployment target prod-us-east' }),
+    ).toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: 'Chart & values' }))
+    expect(screen.getByText('global-app 1.2.3')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('article', { name: 'Deployment target prod-us-east' }),
+    ).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: 'Timeline' }))
+    expect(screen.getByText('Onboarded')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: 'Deployment targets' }))
+    expect(
+      screen.getByRole('article', { name: 'Deployment target prod-us-east' }),
+    ).toBeInTheDocument()
+  })
+
+  it('filters deployment targets with the region rail', async () => {
+    mockAPI({
+      applications: [
+        buildApplication({
+          targets: [
+            buildTarget({ id: 'target-1', region: 'us-east-1' }),
+            buildTarget({ id: 'target-2', region: 'eu-west-1', clusterName: 'prod-eu' }),
+          ],
+        }),
+      ],
+    })
+    renderApp('/applications/onboarding-1')
+    const user = userEvent.setup()
+
+    expect(
+      await screen.findByRole('article', { name: 'Deployment target prod-eu' }),
+    ).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^eu-west-1/ }))
+
+    expect(screen.getByRole('article', { name: 'Deployment target prod-eu' })).toBeInTheDocument()
+    expect(
+      screen.queryByRole('article', { name: 'Deployment target prod-us-east' }),
+    ).not.toBeInTheDocument()
   })
 
   // The proxy authenticates the deep link, so this panel has no reason to hold Argo

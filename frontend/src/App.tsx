@@ -4,6 +4,7 @@ import { FleetDashboard } from './components/FleetDashboard'
 import { ApplicationsList } from './components/ApplicationsList'
 import { ApplicationOnboardingForm } from './components/ApplicationOnboardingForm'
 import { ApplicationDetail } from './components/ApplicationDetail'
+import { ThemeToggle } from './components/ThemeToggle'
 
 function navClass({ isActive }: { isActive: boolean }) {
   return `primary-nav-link ${isActive ? 'is-active' : ''}`
@@ -12,25 +13,29 @@ function navClass({ isActive }: { isActive: boolean }) {
 function AppShell() {
   return (
     <div className="app-shell">
-      <main className="dashboard">
-        <header className="topbar">
-          <Link className="header-brand" to="/" aria-label="KubeOps home">
-            <KubernetesLogo className="brand-mark" />
-            <strong>KubeOps</strong>
-          </Link>
-          <nav className="primary-nav" aria-label="Primary">
-            <NavLink to="/" end className={navClass}>
-              Fleet
-            </NavLink>
-            <NavLink to="/applications" className={navClass}>
-              Applications
-            </NavLink>
-          </nav>
-        </header>
-
-        <div className="dashboard-content">
-          <Outlet />
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
+      <header className="topbar">
+        <Link className="header-brand" to="/" aria-label="KubeOps home">
+          <KubernetesLogo className="brand-mark" />
+          <strong>KubeOps</strong>
+        </Link>
+        <nav className="primary-nav" aria-label="Primary">
+          <NavLink to="/" end className={navClass}>
+            Fleet
+          </NavLink>
+          <NavLink to="/applications" className={navClass}>
+            Applications
+          </NavLink>
+        </nav>
+        <div className="topbar-actions">
+          <ThemeToggle />
         </div>
+      </header>
+
+      <main className="dashboard-content" id="main">
+        <Outlet />
       </main>
     </div>
   )
