@@ -1,4 +1,4 @@
-.PHONY: db-up db-down dev dev-setup dev-argocd dev-frontend dev-backend test test-integration lint build
+.PHONY: db-up db-down db-destroy dev dev-setup dev-recreate dev-argocd dev-frontend dev-backend test test-integration lint build
 
 db-up:
 	docker compose up -d postgres
@@ -6,10 +6,20 @@ db-up:
 db-down:
 	docker compose down
 
+db-destroy:
+	docker compose down --volumes --remove-orphans
+
 dev: dev-setup
 	./scripts/dev-local.sh
 
 dev-setup: db-up dev-argocd
+
+dev-recreate:
+	$(MAKE) db-destroy
+	docker desktop kubernetes reset-cluster
+	minikube delete --profile "$${KUBEOPS_MINIKUBE_CONTEXT:-minikube}"
+	minikube start --profile "$${KUBEOPS_MINIKUBE_CONTEXT:-minikube}" --driver=docker
+	$(MAKE) dev-setup
 
 dev-argocd:
 	./scripts/setup-local-argocd.sh
