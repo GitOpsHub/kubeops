@@ -155,7 +155,14 @@ func (c *HTTPArgoClient) GetApplication(
 		return ApplicationState{}, err
 	}
 	request.Header.Set("Authorization", "Bearer "+c.token)
-	return c.do(request)
+	state, err := c.do(request)
+	var apiErr argoAPIError
+	if errors.As(err, &apiErr) && apiErr.status == http.StatusForbidden {
+		// Argo CD deliberately returns PermissionDenied instead of NotFound for
+		// an absent application to avoid disclosing its existence.
+		return ApplicationState{}, ErrApplicationNotFound
+	}
+	return state, err
 }
 
 func (c *HTTPArgoClient) SyncApplication(
@@ -228,7 +235,7 @@ func (c *HTTPArgoClient) do(request *http.Request) (ApplicationState, error) {
 		// The body is discarded deliberately: it can echo credentials back. See
 		// TestHTTPArgoClientDoesNotExposeResponseBody.
 		io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-		return ApplicationState{}, fmt.Errorf("Argo CD API returned status %d", response.StatusCode)
+		return ApplicationState{}, argoAPIError{status: response.StatusCode}
 	}
 	var application struct {
 		Status struct {
@@ -258,6 +265,14 @@ func (c *HTTPArgoClient) do(request *http.Request) (ApplicationState, error) {
 		OperationPhase: application.Status.OperationState.Phase,
 		Message:        message,
 	}, nil
+}
+
+type argoAPIError struct {
+	status int
+}
+
+func (e argoAPIError) Error() string {
+	return fmt.Sprintf("Argo CD API returned status %d", e.status)
 }
 
 func valueOrUnknown(value string) string {

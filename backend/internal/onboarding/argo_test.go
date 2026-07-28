@@ -3,6 +3,7 @@ package onboarding
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,6 +11,24 @@ import (
 
 	"github.com/GitOpsHub/kubeops/backend/internal/config"
 )
+
+func TestHTTPArgoClientTreatsForbiddenGetAsMissingApplication(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "permission denied", http.StatusForbidden)
+	}))
+	defer server.Close()
+	client, err := NewHTTPArgoClient(config.ArgoTarget{
+		SourceID: "aws", ServerURL: server.URL, Token: "test-token",
+	}, config.OnboardingConfig{RequestTimeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = client.GetApplication(context.Background(), "payments", "argo-cd")
+	if !errors.Is(err, ErrApplicationNotFound) {
+		t.Fatalf("expected missing application, got %v", err)
+	}
+}
 
 func TestHTTPArgoClientCreatesHelmApplication(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
