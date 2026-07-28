@@ -82,24 +82,23 @@ type Service struct {
 	store   Repository
 	config  config.OnboardingConfig
 	clients map[string]ArgoClient
-	// uiTargets holds only the targets that expose Argo CD UI access, so deep links
-	// are omitted for targets reachable by API token alone.
-	uiTargets map[string]config.ArgoTarget
+	// linkTargets holds every configured Argo CD target. Deep links go through this
+	// backend's proxy, which authenticates with the API token, so a target needs no
+	// UI credentials to be linkable.
+	linkTargets map[string]config.ArgoTarget
 	github    ValuesRepositoryManager
 }
 
 func NewService(repository Repository, cfg config.OnboardingConfig) (*Service, error) {
 	clients := make(map[string]ArgoClient, len(cfg.ArgoTargets))
-	uiTargets := make(map[string]config.ArgoTarget, len(cfg.ArgoTargets))
+	linkTargets := make(map[string]config.ArgoTarget, len(cfg.ArgoTargets))
 	for _, target := range cfg.ArgoTargets {
 		client, err := NewHTTPArgoClient(target, cfg)
 		if err != nil {
 			return nil, err
 		}
 		clients[targetKey(target.SourceID, target.ProviderResourceID)] = client
-		if target.UIURL != "" && target.Username != "" {
-			uiTargets[targetKey(target.SourceID, target.ProviderResourceID)] = target
-		}
+		linkTargets[targetKey(target.SourceID, target.ProviderResourceID)] = target
 	}
 	github, err := NewGitHubClient(cfg)
 	if err != nil {
@@ -127,7 +126,7 @@ func NewService(repository Repository, cfg config.OnboardingConfig) (*Service, e
 			return nil, fmt.Errorf("persist Argo CD UI credential: %w", err)
 		}
 	}
-	svc := &Service{store: repository, config: cfg, clients: clients, uiTargets: uiTargets}
+	svc := &Service{store: repository, config: cfg, clients: clients, linkTargets: linkTargets}
 	// NewGitHubClient returns a nil *GitHubClient when onboarding is unconfigured.
 	// Assign it to the interface field only when non-nil, otherwise the field holds
 	// a typed nil that defeats the `s.github == nil` guard in validateInput and
@@ -427,15 +426,21 @@ func (s *Service) List(
 	return page, nil
 }
 
-// enrichTargets attaches the Argo CD deep link and username for every target whose
-// cluster maps to a configured Argo CD target with UI access.
+// enrichTargets attaches the Argo CD deep link for every target whose cluster maps
+// to a configured Argo CD target, plus the username when that target also has UI
+// credentials configured for signing in to Argo CD directly.
 func (s *Service) enrichTargets(targets []model.ApplicationDeployment) {
 	for i := range targets {
-		target, ok := s.uiTargets[targetKey(targets[i].SourceID, targets[i].ProviderResourceID)]
+		target, ok := s.linkTargets[targetKey(targets[i].SourceID, targets[i].ProviderResourceID)]
 		if !ok {
 			continue
 		}
-		targets[i].ArgoApplicationURL = target.UIURL + "/applications/" +
+		// Routed through this backend's Argo CD proxy rather than straight at
+		// target.UIURL: the proxy attaches the API token and terminates TLS against
+		// the Argo CD server, so the browser needs no Argo CD login and no trust in
+		// that server's certificate.
+		targets[i].ArgoApplicationURL = s.config.PublicBaseURL + "/argo/" +
+			target.ProxyID() + "/applications/" +
 			url.PathEscape(targets[i].ArgoApplication)
 		targets[i].ArgoUsername = target.Username
 	}

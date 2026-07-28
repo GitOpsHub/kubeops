@@ -2,7 +2,9 @@ package config
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
@@ -41,6 +43,15 @@ type ArgoTarget struct {
 	Password           string `yaml:"-"`
 }
 
+// ProxyID is the URL path segment that addresses this target through the Argo CD
+// reverse proxy. It is derived rather than configured so the routing key stays
+// URL-safe and stable across restarts, and so cluster ARNs and kubeconfig paths
+// never appear in browser URLs, history, or access logs.
+func (t ArgoTarget) ProxyID() string {
+	sum := sha256.Sum256([]byte(t.SourceID + "\x00" + t.ProviderResourceID))
+	return hex.EncodeToString(sum[:8])
+}
+
 type OnboardingConfig struct {
 	HelmRepoURL       string
 	HelmChart         string
@@ -62,6 +73,10 @@ type OnboardingConfig struct {
 	PollInterval      time.Duration
 	DeploymentTimeout time.Duration
 	RequestTimeout    time.Duration
+	// PublicBaseURL is where a browser reaches this backend. Argo CD deep links are
+	// built against it because they are served by the reverse proxy on this origin
+	// rather than by the Argo CD server itself.
+	PublicBaseURL string
 }
 
 func Load(envFile string) (Config, error) {
@@ -117,6 +132,14 @@ func loadOnboardingConfig() (OnboardingConfig, error) {
 		return OnboardingConfig{}, fmt.Errorf("ARGO_REQUEST_TIMEOUT must be a positive duration")
 	}
 
+	publicBaseURL := strings.TrimSuffix(valueOrDefault("PUBLIC_BASE_URL", "http://"+
+		valueOrDefault("BACKEND_HOST", "127.0.0.1")+":"+
+		valueOrDefault("BACKEND_PORT", "8080")), "/")
+	if parsed, err := url.Parse(publicBaseURL); err != nil ||
+		parsed.Scheme == "" || parsed.Host == "" {
+		return OnboardingConfig{}, fmt.Errorf("PUBLIC_BASE_URL must be an absolute URL")
+	}
+
 	targetsFile := valueOrDefault("ARGO_TARGETS_FILE", "../config/argo-targets.yaml")
 	targets, err := loadArgoTargets(targetsFile)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -165,6 +188,7 @@ func loadOnboardingConfig() (OnboardingConfig, error) {
 		PollInterval:      pollInterval,
 		DeploymentTimeout: deploymentTimeout,
 		RequestTimeout:    requestTimeout,
+		PublicBaseURL:     publicBaseURL,
 	}, nil
 }
 

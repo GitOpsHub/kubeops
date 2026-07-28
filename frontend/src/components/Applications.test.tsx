@@ -19,14 +19,6 @@ function onboardingRequests(fetchMock: ReturnType<typeof mockAPI>['fetchMock']) 
     .filter((url) => url.includes('/application-onboardings?'))
 }
 
-// userEvent.setup() installs its own clipboard stub, so the spy has to replace it
-// afterwards to observe what the component writes.
-function stubClipboard() {
-  const writeText = vi.fn().mockResolvedValue(undefined)
-  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
-  return writeText
-}
-
 afterEach(() => {
   vi.restoreAllMocks()
   vi.useRealTimers()
@@ -175,47 +167,27 @@ describe('application detail', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('argo-access'))).toBe(false)
   })
 
-  it('copies the Argo password to the clipboard only when requested', async () => {
-    const { fetchMock, state } = mockAPI({
+  // The proxy authenticates the deep link, so this panel has no reason to hold Argo
+  // CD credentials or to offer them to the operator.
+  it('exposes no Argo credentials on the deployment targets', async () => {
+    const { fetchMock } = mockAPI({
       applications: [buildApplication()],
       argoPassword: 'super-secret',
     })
     renderApp('/applications/onboarding-1')
-    const user = userEvent.setup()
-    const writeText = stubClipboard()
 
-    await user.click(await screen.findByRole('button', { name: 'Copy password' }))
-
-    await waitFor(() => {
-      expect(writeText).toHaveBeenCalledWith('super-secret')
-    })
-    expect(
-      fetchMock.mock.calls.filter(([url]) => String(url).includes('argo-access')),
-    ).toHaveLength(1)
-    expect(await screen.findByText('Password copied to the clipboard.')).toBeInTheDocument()
-    // The password is never rendered.
-    expect(screen.queryByText(state.argoPassword)).not.toBeInTheDocument()
-  })
-
-  it('reports a failed password copy', async () => {
-    mockAPI({ applications: [buildApplication()], argoAccessStatus: 404 })
-    renderApp('/applications/onboarding-1')
-    const user = userEvent.setup()
-    const writeText = stubClipboard()
-
-    await user.click(await screen.findByRole('button', { name: 'Copy password' }))
-
-    expect(
-      await screen.findByText('Argo CD access is not configured for this cluster'),
-    ).toBeInTheDocument()
-    expect(writeText).not.toHaveBeenCalled()
+    expect(await screen.findByRole('link', { name: 'Open in Argo CD' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Copy password' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Username/)).not.toBeInTheDocument()
+    expect(screen.queryByText('super-secret')).not.toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('argo-access'))).toBe(false)
   })
 
   it('omits Argo actions when the target has no UI access', async () => {
     mockAPI({
       applications: [
         buildApplication({
-          targets: [buildTarget({ argoApplicationUrl: undefined, argoUsername: undefined })],
+          targets: [buildTarget({ argoApplicationUrl: undefined })],
         }),
       ],
     })
@@ -224,7 +196,7 @@ describe('application detail', () => {
     expect(
       await screen.findByText('Argo CD UI access is not configured for this cluster.'),
     ).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Copy password' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Open in Argo CD' })).not.toBeInTheDocument()
   })
 
   it('shows an empty state when the application has no targets', async () => {

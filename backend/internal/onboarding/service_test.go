@@ -622,23 +622,33 @@ func TestGetAndListEnrichArgoApplicationLinks(t *testing.T) {
 			},
 		},
 	}}
-	service := &Service{store: repository, uiTargets: map[string]config.ArgoTarget{
-		targetKey("aws", "arn:cluster/prod"): {
-			UIURL: "https://argo.example.test", Username: "kubeops",
+	linked := config.ArgoTarget{
+		SourceID: "aws", ProviderResourceID: "arn:cluster/prod",
+		UIURL: "https://argo.example.test", Username: "kubeops",
+	}
+	service := &Service{
+		store:  repository,
+		config: config.OnboardingConfig{PublicBaseURL: "https://kubeops.example.test"},
+		linkTargets: map[string]config.ArgoTarget{
+			targetKey("aws", "arn:cluster/prod"): linked,
 		},
-	}}
+	}
 
 	record, err := service.Get(context.Background(), "onboarding-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.Targets[0].ArgoApplicationURL != "https://argo.example.test/applications/payments%20api" {
+	// The link addresses this backend's Argo CD proxy, not the Argo CD server, so
+	// the browser needs no Argo CD session and no trust in its certificate.
+	wantURL := "https://kubeops.example.test/argo/" + linked.ProxyID() +
+		"/applications/payments%20api"
+	if record.Targets[0].ArgoApplicationURL != wantURL {
 		t.Fatalf("unexpected Argo URL: %q", record.Targets[0].ArgoApplicationURL)
 	}
 	if record.Targets[0].ArgoUsername != "kubeops" {
 		t.Fatalf("unexpected Argo username: %q", record.Targets[0].ArgoUsername)
 	}
-	// A target without configured UI access must not advertise Argo CD links.
+	// A cluster with no Argo CD target at all still advertises nothing.
 	if record.Targets[1].ArgoApplicationURL != "" || record.Targets[1].ArgoUsername != "" {
 		t.Fatalf("unexpected Argo access on unconfigured target: %#v", record.Targets[1])
 	}
@@ -658,10 +668,13 @@ func TestGetAndListEnrichArgoApplicationLinks(t *testing.T) {
 	}
 }
 
-func TestNewServiceSkipsArgoUIAccessWithoutUIURL(t *testing.T) {
+// A target reachable by API token alone is still linkable, because the proxy signs
+// requests with that token. Only the username, which exists for signing in to Argo
+// CD directly, stays empty.
+func TestEnrichLinksTokenOnlyTargetWithoutUsername(t *testing.T) {
 	t.Setenv("ARGO_TOKEN", "token")
 	service, err := NewService(&fakeRepository{}, config.OnboardingConfig{
-		RequestTimeout: time.Second,
+		RequestTimeout: time.Second, PublicBaseURL: "https://kubeops.example.test",
 		ArgoTargets: []config.ArgoTarget{{
 			SourceID: "aws", ProviderResourceID: "arn:cluster/prod",
 			ServerURL: "https://argo.example.test", Token: "token",
@@ -670,7 +683,16 @@ func TestNewServiceSkipsArgoUIAccessWithoutUIURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(service.uiTargets) != 0 {
-		t.Fatalf("expected no UI targets, got %#v", service.uiTargets)
+
+	targets := []model.ApplicationDeployment{{
+		SourceID: "aws", ProviderResourceID: "arn:cluster/prod", ArgoApplication: "payments",
+	}}
+	service.enrichTargets(targets)
+
+	if targets[0].ArgoApplicationURL == "" {
+		t.Fatal("token-only target was not linked")
+	}
+	if targets[0].ArgoUsername != "" {
+		t.Fatalf("unexpected username without UI credentials: %q", targets[0].ArgoUsername)
 	}
 }

@@ -95,6 +95,15 @@ func newHandler(
 	mux.HandleFunc("GET /api/application-onboardings/{id}", api.applicationOnboarding)
 	mux.HandleFunc("POST /api/application-onboardings/{id}/sync", api.syncApplicationOnboarding)
 	mux.HandleFunc("POST /api/application-onboardings/{id}/offboard", api.offboardApplicationOnboarding)
+	// Serves the Argo CD UI on this origin so the browser needs neither Argo CD
+	// credentials nor trust in the Argo CD server's certificate.
+	if proxy, err := newArgoProxy(cfg.Onboarding.ArgoTargets); err != nil {
+		// A misconfigured target must not take down the rest of the API; the deep
+		// links simply stay unavailable.
+		slog.Error("configure Argo CD proxy", "error", err)
+	} else {
+		mux.Handle(argoProxyPrefix, proxy)
+	}
 	return withCORS(withRequestLog(mux), cfg.CORSAllowedOrigin)
 }
 
