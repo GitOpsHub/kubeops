@@ -16,6 +16,13 @@
       "cwd": "backend",
       "port": 8080,
       "autoPort": false
+    },
+    {
+      "name": "database",
+      "runtimeExecutable": "make",
+      "runtimeArgs": ["dev-setup"],
+      "port": 5432,
+      "autoPort": false
     }
   ]
 }

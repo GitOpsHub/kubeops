@@ -31,6 +31,19 @@ control. Press Ctrl-C to stop the local processes. Override the defaults with
 `KUBEOPS_DOCKER_CONTEXT`, `KUBEOPS_MINIKUBE_CONTEXT`,
 `KUBEOPS_DOCKER_ARGO_PORT`, or `KUBEOPS_MINIKUBE_ARGO_PORT`.
 
+To discard and recreate the complete local environment, run:
+
+```sh
+make dev-recreate
+```
+
+This is destructive: it removes the PostgreSQL volume and all stored data,
+resets the Docker Desktop Kubernetes cluster, and deletes the configured
+Minikube profile before recreating both clusters and rerunning `dev-setup`.
+It does not modify remote Kubernetes contexts such as GKE. Set
+`KUBEOPS_MINIKUBE_CONTEXT` when the Minikube profile is not named `minikube`.
+Use `make db-destroy` when only the local PostgreSQL data should be discarded.
+
 Set `ARGO_GITHUB_READ_TOKEN` to a dedicated read-only GitHub token when Argo CD
 must clone private `GitOpsHub` values repositories. The setup intentionally does
 not copy a broad GitHub CLI credential into either cluster.
