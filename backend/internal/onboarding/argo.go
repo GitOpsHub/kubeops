@@ -44,6 +44,8 @@ type ApplicationState struct {
 type ArgoClient interface {
 	CreateApplication(context.Context, ApplicationSpec) (ApplicationState, error)
 	GetApplication(context.Context, string, string) (ApplicationState, error)
+	SyncApplication(context.Context, string, string) (ApplicationState, error)
+	DeleteApplication(context.Context, string, string) error
 }
 
 type HTTPArgoClient struct {
@@ -154,6 +156,58 @@ func (c *HTTPArgoClient) GetApplication(
 	}
 	request.Header.Set("Authorization", "Bearer "+c.token)
 	return c.do(request)
+}
+
+func (c *HTTPArgoClient) SyncApplication(
+	ctx context.Context,
+	name, argoNamespace string,
+) (ApplicationState, error) {
+	body, err := json.Marshal(map[string]any{
+		"name":         name,
+		"appNamespace": argoNamespace,
+		"prune":        true,
+	})
+	if err != nil {
+		return ApplicationState{}, err
+	}
+	endpoint := c.serverURL + "/api/v1/applications/" + url.PathEscape(name) + "/sync"
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return ApplicationState{}, err
+	}
+	request.Header.Set("Authorization", "Bearer "+c.token)
+	request.Header.Set("Content-Type", "application/json")
+	return c.do(request)
+}
+
+func (c *HTTPArgoClient) DeleteApplication(
+	ctx context.Context,
+	name, argoNamespace string,
+) error {
+	query := url.Values{
+		"appNamespace":      []string{argoNamespace},
+		"cascade":           []string{"true"},
+		"propagationPolicy": []string{"foreground"},
+	}
+	endpoint := c.serverURL + "/api/v1/applications/" + url.PathEscape(name) + "?" + query.Encode()
+	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", "Bearer "+c.token)
+	response, err := c.client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+	if response.StatusCode == http.StatusNotFound {
+		return ErrApplicationNotFound
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("Argo CD API returned status %d", response.StatusCode)
+	}
+	return nil
 }
 
 func (c *HTTPArgoClient) do(request *http.Request) (ApplicationState, error) {

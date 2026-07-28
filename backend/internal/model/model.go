@@ -15,6 +15,7 @@ const (
 	OnboardingHealthy     = "healthy"
 	OnboardingPartial     = "partial"
 	OnboardingFailed      = "failed"
+	OnboardingOffboarded  = "offboarded"
 )
 
 type CloudSource struct {
@@ -191,22 +192,23 @@ type SyncRun struct {
 }
 
 type ApplicationOnboarding struct {
-	ID                   string                  `json:"id"`
-	Name                 string                  `json:"name"`
-	Namespace            string                  `json:"namespace"`
-	ChartRepoURL         string                  `json:"chartRepoUrl"`
-	ChartName            string                  `json:"chartName"`
-	ChartRevision        string                  `json:"chartRevision"`
-	ValuesDigest         string                  `json:"valuesDigest"`
-	ValuesRepositoryURL  string                  `json:"valuesRepositoryUrl"`
-	ValuesRepositoryName string                  `json:"valuesRepositoryName"`
-	ValuesRevision       string                  `json:"valuesRevision"`
-	ValuesCommitSHA      string                  `json:"valuesCommitSha"`
-	Status               string                  `json:"status"`
-	Targets              []ApplicationDeployment `json:"targets"`
-	CreatedAt            time.Time               `json:"createdAt"`
-	UpdatedAt            time.Time               `json:"updatedAt"`
-	CompletedAt          *time.Time              `json:"completedAt"`
+	ID                       string                  `json:"id"`
+	Name                     string                  `json:"name"`
+	Namespace                string                  `json:"namespace"`
+	ChartRepoURL             string                  `json:"chartRepoUrl"`
+	ChartName                string                  `json:"chartName"`
+	ChartRevision            string                  `json:"chartRevision"`
+	ValuesDigest             string                  `json:"valuesDigest"`
+	ValuesRepositoryURL      string                  `json:"valuesRepositoryUrl"`
+	ValuesRepositoryCloneURL string                  `json:"valuesRepositoryCloneUrl,omitempty"`
+	ValuesRepositoryName     string                  `json:"valuesRepositoryName"`
+	ValuesRevision           string                  `json:"valuesRevision"`
+	ValuesCommitSHA          string                  `json:"valuesCommitSha"`
+	Status                   string                  `json:"status"`
+	Targets                  []ApplicationDeployment `json:"targets"`
+	CreatedAt                time.Time               `json:"createdAt"`
+	UpdatedAt                time.Time               `json:"updatedAt"`
+	CompletedAt              *time.Time              `json:"completedAt"`
 }
 
 type ApplicationDeployment struct {
@@ -218,6 +220,7 @@ type ApplicationDeployment struct {
 	SourceID           string `json:"sourceId"`
 	ProviderResourceID string `json:"providerResourceId"`
 	ArgoApplication    string `json:"argoApplication"`
+	HasRegionValues    bool   `json:"hasRegionValues"`
 	// ArgoApplicationURL and ArgoUsername are derived from the configured Argo CD
 	// target and stay empty when that target exposes no UI access.
 	ArgoApplicationURL string     `json:"argoApplicationUrl,omitempty"`

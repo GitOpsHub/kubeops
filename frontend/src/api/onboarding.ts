@@ -1,7 +1,7 @@
 import type { Cluster, ClusterPage } from './inventory'
 
-export type DeploymentStatus = 'creating' | 'progressing' | 'healthy' | 'failed'
-export type OnboardingStatus = 'progressing' | 'healthy' | 'partial' | 'failed'
+export type DeploymentStatus = 'creating' | 'progressing' | 'healthy' | 'failed' | 'offboarded'
+export type OnboardingStatus = 'progressing' | 'healthy' | 'partial' | 'failed' | 'offboarded'
 
 export type ApplicationDeployment = {
   id: string
@@ -12,6 +12,7 @@ export type ApplicationDeployment = {
   sourceId: string
   providerResourceId: string
   argoApplication: string
+  hasRegionValues: boolean
   // Present only when the cluster's Argo CD target exposes UI access.
   argoApplicationUrl?: string
   argoUsername?: string
@@ -33,6 +34,7 @@ export type ApplicationOnboarding = {
   chartRevision: string
   valuesDigest: string
   valuesRepositoryUrl: string
+  valuesRepositoryCloneUrl?: string
   valuesRepositoryName: string
   valuesRevision: string
   valuesCommitSha: string
@@ -77,6 +79,7 @@ export const onboardingStatuses: OnboardingStatus[] = [
   'healthy',
   'partial',
   'failed',
+  'offboarded',
 ]
 
 export const applicationsPageSize = 20
@@ -147,4 +150,18 @@ export function createApplicationOnboarding(input: CreateOnboardingInput) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
   })
+}
+
+export function syncApplicationOnboarding(id: string) {
+  return request<ApplicationOnboarding>(
+    `/application-onboardings/${encodeURIComponent(id)}/sync`,
+    { method: 'POST' },
+  )
+}
+
+export function offboardApplicationOnboarding(id: string) {
+  return request<ApplicationOnboarding>(
+    `/application-onboardings/${encodeURIComponent(id)}/offboard`,
+    { method: 'POST' },
+  )
 }

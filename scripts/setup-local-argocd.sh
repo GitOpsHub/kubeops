@@ -167,7 +167,7 @@ verify_token() {
 configure_repo_credentials() {
   local context="$1"
   local token="$2"
-  local username="${GITHUB_REPOSITORY_USERNAME:-git}"
+  local username="$3"
 
   GITHUB_REPO_TOKEN="$token" kubectl --context "$context" -n "$ARGO_NAMESPACE" \
     create secret generic kubeops-github-repo-creds \
@@ -177,6 +177,24 @@ configure_repo_credentials() {
     --from-literal=password="$token" \
     --dry-run=client -o yaml |
     kubectl label --local -f - argocd.argoproj.io/secret-type=repo-creds -o yaml |
+    kubectl --context "$context" apply -f - >/dev/null
+}
+
+configure_helm_registry_credentials() {
+  local context="$1"
+  local token="$2"
+  local username="$3"
+
+  kubectl --context "$context" -n "$ARGO_NAMESPACE" \
+    create secret generic kubeops-ghcr-helm-creds \
+    --from-literal=type=helm \
+    --from-literal=name=kubeops-ghcr \
+    --from-literal=url=ghcr.io/gitopshub/charts \
+    --from-literal=enableOCI=true \
+    --from-literal=username="$username" \
+    --from-literal=password="$token" \
+    --dry-run=client -o yaml |
+    kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml |
     kubectl --context "$context" apply -f - >/dev/null
 }
 
@@ -325,12 +343,25 @@ install_argocd "$DOCKER_CONTEXT" false
 install_argocd "$MINIKUBE_CONTEXT" false
 
 github_read_token="${ARGO_GITHUB_READ_TOKEN:-$(env_value ARGO_GITHUB_READ_TOKEN)}"
+github_repository_username="$(
+  if [[ -n "${GITHUB_REPOSITORY_USERNAME:-}" ]]; then
+    printf '%s' "$GITHUB_REPOSITORY_USERNAME"
+  else
+    env_value GITHUB_REPOSITORY_USERNAME
+  fi
+)"
 if [[ -n "$github_read_token" ]]; then
-  configure_repo_credentials "$DOCKER_CONTEXT" "$github_read_token"
-  configure_repo_credentials "$MINIKUBE_CONTEXT" "$github_read_token"
+  if [[ -z "$github_repository_username" ]]; then
+    echo "GITHUB_REPOSITORY_USERNAME must identify the owner of ARGO_GITHUB_READ_TOKEN." >&2
+    exit 1
+  fi
+  configure_repo_credentials "$DOCKER_CONTEXT" "$github_read_token" "$github_repository_username"
+  configure_repo_credentials "$MINIKUBE_CONTEXT" "$github_read_token" "$github_repository_username"
+  configure_helm_registry_credentials "$DOCKER_CONTEXT" "$github_read_token" "$github_repository_username"
+  configure_helm_registry_credentials "$MINIKUBE_CONTEXT" "$github_read_token" "$github_repository_username"
 else
-  echo "Argo CD private repository credentials were not configured."
-  echo "Set ARGO_GITHUB_READ_TOKEN to a read-only GitHub token before onboarding private repositories."
+  echo "Argo CD private Git and GHCR credentials were not configured."
+  echo "Set ARGO_GITHUB_READ_TOKEN to a read-only GitHub token before onboarding private repositories or charts."
 fi
 
 echo "Local Argo CD is configured for $DOCKER_CONTEXT and $MINIKUBE_CONTEXT."

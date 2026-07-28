@@ -84,3 +84,62 @@ func TestHTTPArgoClientDoesNotExposeResponseBody(t *testing.T) {
 		t.Fatalf("unexpected safe error: %v", err)
 	}
 }
+
+func TestHTTPArgoClientSyncsAndCascadeDeletesApplication(t *testing.T) {
+	var synced, deleted bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			t.Fatal("missing bearer token")
+		}
+		switch r.Method {
+		case http.MethodPost:
+			if r.URL.Path != "/api/v1/applications/payments/sync" {
+				t.Fatalf("unexpected sync path: %s", r.URL.Path)
+			}
+			var body struct {
+				Name         string `json:"name"`
+				AppNamespace string `json:"appNamespace"`
+				Prune        bool   `json:"prune"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body.Name != "payments" || body.AppNamespace != "argo-cd" || !body.Prune {
+				t.Fatalf("unexpected sync body: %#v", body)
+			}
+			synced = true
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(
+				`{"status":{"sync":{"status":"OutOfSync"},"health":{"status":"Progressing"}}}`,
+			))
+		case http.MethodDelete:
+			if r.URL.Path != "/api/v1/applications/payments" ||
+				r.URL.Query().Get("appNamespace") != "argo-cd" ||
+				r.URL.Query().Get("cascade") != "true" ||
+				r.URL.Query().Get("propagationPolicy") != "foreground" {
+				t.Fatalf("unexpected delete request: %s", r.URL.String())
+			}
+			deleted = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewHTTPArgoClient(config.ArgoTarget{
+		SourceID: "aws", ServerURL: server.URL, Token: "test-token",
+	}, config.OnboardingConfig{RequestTimeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.SyncApplication(context.Background(), "payments", "argo-cd"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.DeleteApplication(context.Background(), "payments", "argo-cd"); err != nil {
+		t.Fatal(err)
+	}
+	if !synced || !deleted {
+		t.Fatalf("expected sync and delete calls, got synced=%t deleted=%t", synced, deleted)
+	}
+}

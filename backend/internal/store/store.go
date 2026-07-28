@@ -572,6 +572,7 @@ func (s *Store) CreateApplicationOnboarding(
 	ctx context.Context,
 	onboarding model.ApplicationOnboarding,
 	clusters []model.Cluster,
+	regionValues map[string]bool,
 ) (model.ApplicationOnboarding, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -582,13 +583,14 @@ func (s *Store) CreateApplicationOnboarding(
 	err = tx.QueryRow(ctx, `
 		INSERT INTO application_onboardings (
 			name, namespace, chart_repo_url, chart_name, chart_revision, values_digest,
-			values_repository_url, values_repository_name, values_revision, values_commit_sha
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			values_repository_url, values_repository_clone_url, values_repository_name,
+			values_revision, values_commit_sha
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		RETURNING id::text, status, created_at, updated_at`,
 		onboarding.Name, onboarding.Namespace, onboarding.ChartRepoURL,
 		onboarding.ChartName, onboarding.ChartRevision, onboarding.ValuesDigest,
-		onboarding.ValuesRepositoryURL, onboarding.ValuesRepositoryName,
-		onboarding.ValuesRevision, onboarding.ValuesCommitSHA,
+		onboarding.ValuesRepositoryURL, onboarding.ValuesRepositoryCloneURL,
+		onboarding.ValuesRepositoryName, onboarding.ValuesRevision, onboarding.ValuesCommitSHA,
 	).Scan(&onboarding.ID, &onboarding.Status, &onboarding.CreatedAt, &onboarding.UpdatedAt)
 	if err != nil {
 		return model.ApplicationOnboarding{}, err
@@ -600,17 +602,19 @@ func (s *Store) CreateApplicationOnboarding(
 		err := tx.QueryRow(ctx, `
 			INSERT INTO application_deployments (
 				onboarding_id, cluster_id, cluster_name, region, source_id,
-				provider_resource_id, argo_application
-			) VALUES ($1, $2, $3, $4, $5, $6, $7)
+				provider_resource_id, argo_application, has_region_values
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 			RETURNING id::text, onboarding_id::text, cluster_id::text, cluster_name,
-				region, source_id, provider_resource_id, argo_application, status,
+				region, source_id, provider_resource_id, argo_application,
+				has_region_values, status,
 				sync_status, health_status, message, created_at, updated_at, completed_at`,
 			onboarding.ID, cluster.ID, cluster.Name, cluster.Location, cluster.SourceID,
-			cluster.ProviderResourceID, onboarding.Name,
+			cluster.ProviderResourceID, onboarding.Name, regionValues[cluster.Location],
 		).Scan(
 			&target.ID, &target.OnboardingID, &target.ClusterID, &target.ClusterName,
 			&target.Region, &target.SourceID, &target.ProviderResourceID, &target.ArgoApplication,
-			&target.Status, &target.SyncStatus, &target.HealthStatus, &target.Message,
+			&target.HasRegionValues, &target.Status, &target.SyncStatus,
+			&target.HealthStatus, &target.Message,
 			&target.CreatedAt, &target.UpdatedAt, &target.CompletedAt,
 		)
 		if err != nil {
@@ -628,14 +632,14 @@ func (s *Store) GetApplicationOnboarding(ctx context.Context, id string) (model.
 	var onboarding model.ApplicationOnboarding
 	err := s.pool.QueryRow(ctx, `
 		SELECT id::text, name, namespace, chart_repo_url, chart_name, chart_revision,
-			values_digest, values_repository_url, values_repository_name,
+			values_digest, values_repository_url, values_repository_clone_url, values_repository_name,
 			values_revision, values_commit_sha, status, created_at, updated_at, completed_at
 		FROM application_onboardings
 		WHERE id::text = $1`, id).Scan(
 		&onboarding.ID, &onboarding.Name, &onboarding.Namespace,
 		&onboarding.ChartRepoURL, &onboarding.ChartName, &onboarding.ChartRevision,
 		&onboarding.ValuesDigest, &onboarding.ValuesRepositoryURL,
-		&onboarding.ValuesRepositoryName, &onboarding.ValuesRevision,
+		&onboarding.ValuesRepositoryCloneURL, &onboarding.ValuesRepositoryName, &onboarding.ValuesRevision,
 		&onboarding.ValuesCommitSHA, &onboarding.Status, &onboarding.CreatedAt,
 		&onboarding.UpdatedAt, &onboarding.CompletedAt,
 	)
@@ -691,7 +695,7 @@ func (s *Store) ListApplicationOnboardings(
 	args = append(args, filter.PageSize, (filter.Page-1)*filter.PageSize)
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 		SELECT id::text, name, namespace, chart_repo_url, chart_name, chart_revision,
-			values_digest, values_repository_url, values_repository_name,
+			values_digest, values_repository_url, values_repository_clone_url, values_repository_name,
 			values_revision, values_commit_sha, status, created_at, updated_at, completed_at
 		FROM application_onboardings
 		WHERE %s
@@ -708,7 +712,8 @@ func (s *Store) ListApplicationOnboardings(
 			&onboarding.ID, &onboarding.Name, &onboarding.Namespace,
 			&onboarding.ChartRepoURL, &onboarding.ChartName, &onboarding.ChartRevision,
 			&onboarding.ValuesDigest, &onboarding.ValuesRepositoryURL,
-			&onboarding.ValuesRepositoryName, &onboarding.ValuesRevision,
+			&onboarding.ValuesRepositoryCloneURL, &onboarding.ValuesRepositoryName,
+			&onboarding.ValuesRevision,
 			&onboarding.ValuesCommitSHA, &onboarding.Status, &onboarding.CreatedAt,
 			&onboarding.UpdatedAt, &onboarding.CompletedAt,
 		); err != nil {
@@ -735,7 +740,8 @@ func (s *Store) listApplicationDeployments(
 ) ([]model.ApplicationDeployment, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id::text, onboarding_id::text, cluster_id::text, cluster_name,
-			region, source_id, provider_resource_id, argo_application, status,
+			region, source_id, provider_resource_id, argo_application,
+			has_region_values, status,
 			sync_status, health_status, message, created_at, updated_at, completed_at
 		FROM application_deployments
 		WHERE onboarding_id::text = $1
@@ -750,7 +756,8 @@ func (s *Store) listApplicationDeployments(
 		if err := rows.Scan(
 			&target.ID, &target.OnboardingID, &target.ClusterID, &target.ClusterName,
 			&target.Region, &target.SourceID, &target.ProviderResourceID, &target.ArgoApplication,
-			&target.Status, &target.SyncStatus, &target.HealthStatus, &target.Message,
+			&target.HasRegionValues, &target.Status, &target.SyncStatus,
+			&target.HealthStatus, &target.Message,
 			&target.CreatedAt, &target.UpdatedAt, &target.CompletedAt,
 		); err != nil {
 			return nil, err
@@ -765,7 +772,8 @@ func (s *Store) ListActiveApplicationDeployments(
 ) ([]model.ApplicationDeployment, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id::text, onboarding_id::text, cluster_id::text, cluster_name,
-			region, source_id, provider_resource_id, argo_application, status,
+			region, source_id, provider_resource_id, argo_application,
+			has_region_values, status,
 			sync_status, health_status, message, created_at, updated_at, completed_at
 		FROM application_deployments
 		WHERE status IN ('creating', 'progressing')
@@ -780,7 +788,8 @@ func (s *Store) ListActiveApplicationDeployments(
 		if err := rows.Scan(
 			&target.ID, &target.OnboardingID, &target.ClusterID, &target.ClusterName,
 			&target.Region, &target.SourceID, &target.ProviderResourceID, &target.ArgoApplication,
-			&target.Status, &target.SyncStatus, &target.HealthStatus, &target.Message,
+			&target.HasRegionValues, &target.Status, &target.SyncStatus,
+			&target.HealthStatus, &target.Message,
 			&target.CreatedAt, &target.UpdatedAt, &target.CompletedAt,
 		); err != nil {
 			return nil, err
@@ -821,7 +830,8 @@ func (s *Store) UpdateApplicationDeployment(
 		UPDATE application_deployments
 		SET status = $2, sync_status = $3, health_status = $4, message = $5,
 			updated_at = NOW(),
-			completed_at = CASE WHEN $2 IN ('healthy', 'failed') THEN NOW() ELSE NULL END
+			completed_at = CASE WHEN $2 IN ('healthy', 'failed', 'offboarded')
+				THEN NOW() ELSE NULL END
 		WHERE id::text = $1`,
 		id, status, syncStatus, healthStatus, message,
 	); err != nil {
@@ -832,21 +842,24 @@ func (s *Store) UpdateApplicationDeployment(
 		WITH totals AS (
 			SELECT COUNT(*) AS total,
 				COUNT(*) FILTER (WHERE status = 'healthy') AS healthy,
-				COUNT(*) FILTER (WHERE status = 'failed') AS failed
+				COUNT(*) FILTER (WHERE status = 'failed') AS failed,
+				COUNT(*) FILTER (WHERE status = 'offboarded') AS offboarded
 			FROM application_deployments
 			WHERE onboarding_id::text = $1
 		), next AS (
 			SELECT CASE
+				WHEN offboarded = total THEN 'offboarded'
 				WHEN healthy = total THEN 'healthy'
 				WHEN failed = total THEN 'failed'
-				WHEN healthy + failed = total AND failed > 0 THEN 'partial'
+				WHEN healthy + failed + offboarded = total
+					AND (failed > 0 OR offboarded > 0) THEN 'partial'
 				ELSE 'progressing'
 			END AS status
 			FROM totals
 		)
 		UPDATE application_onboardings
 		SET status = next.status, updated_at = NOW(),
-			completed_at = CASE WHEN next.status IN ('healthy', 'failed', 'partial')
+			completed_at = CASE WHEN next.status IN ('healthy', 'failed', 'partial', 'offboarded')
 				THEN NOW() ELSE NULL END
 		FROM next
 		WHERE id::text = $1`, onboardingID)

@@ -7,7 +7,13 @@ configs:
     policy.default: ""
     policy.csv: |
       p, role:kubeops, applications, create, */*, allow
+      p, role:kubeops, applications, create, */*/*, allow
       p, role:kubeops, applications, get, */*, allow
+      p, role:kubeops, applications, get, */*/*, allow
+      p, role:kubeops, applications, sync, */*, allow
+      p, role:kubeops, applications, sync, */*/*, allow
+      p, role:kubeops, applications, delete, */*, allow
+      p, role:kubeops, applications, delete, */*/*, allow
       p, role:kubeops, projects, get, *, allow
       g, kubeops, role:kubeops
 

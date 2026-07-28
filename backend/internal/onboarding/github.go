@@ -16,8 +16,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,21 +25,26 @@ import (
 	"github.com/GitOpsHub/kubeops/backend/internal/config"
 )
 
-var ErrRepositoryExists = errors.New("GitHub repository already exists")
-
 type ValuesRepository struct {
-	Name      string
-	URL       string
-	CloneURL  string
-	Revision  string
-	CommitSHA string
+	Name         string
+	URL          string
+	CloneURL     string
+	Revision     string
+	CommitSHA    string
+	ValuesYAML   string
+	RegionValues map[string]bool
+	Existing     bool
 }
 
 type ValuesRepositoryManager interface {
-	// Provision creates the values repository with a shared base values.yaml and
-	// one <region>/values.yaml override per entry in regionValues.
-	Provision(ctx context.Context, name, baseValues string, regionValues map[string]string) (ValuesRepository, error)
-	Delete(context.Context, string) error
+	// Ensure creates the values repository or adopts it when it already exists.
+	// Existing repositories are read without overwriting their values.
+	Ensure(
+		ctx context.Context,
+		name, baseValues string,
+		regionValues map[string]string,
+		targetRegions []string,
+	) (ValuesRepository, error)
 }
 
 type GitHubClient struct {
@@ -110,10 +115,11 @@ func parsePrivateKey(keyPEM []byte) (*rsa.PrivateKey, error) {
 	return key, nil
 }
 
-func (c *GitHubClient) Provision(
+func (c *GitHubClient) Ensure(
 	ctx context.Context,
 	name, valuesYAML string,
 	regionValues map[string]string,
+	targetRegions []string,
 ) (ValuesRepository, error) {
 	token, err := c.authenticationToken(ctx)
 	if err != nil {
@@ -137,7 +143,7 @@ func (c *GitHubClient) Provision(
 		&repository,
 	)
 	if status == http.StatusUnprocessableEntity {
-		return ValuesRepository{}, ErrRepositoryExists
+		return c.loadExisting(ctx, token, name, targetRegions)
 	}
 	if err != nil {
 		return ValuesRepository{}, err
@@ -161,7 +167,6 @@ func (c *GitHubClient) Provision(
 		&commit,
 	)
 	if err != nil {
-		_ = c.deleteWithToken(context.WithoutCancel(ctx), token, name)
 		return ValuesRepository{}, fmt.Errorf("create values.yaml: %w", err)
 	}
 
@@ -189,32 +194,88 @@ func (c *GitHubClient) Provision(
 			&regionCommit,
 		)
 		if err != nil {
-			_ = c.deleteWithToken(context.WithoutCancel(ctx), token, name)
 			return ValuesRepository{}, fmt.Errorf("create %s/values.yaml: %w", region, err)
 		}
 		commit.Commit.SHA = regionCommit.Commit.SHA
 	}
 	return ValuesRepository{
-		Name:      repository.Name,
-		URL:       repository.HTMLURL,
-		CloneURL:  repository.CloneURL,
-		Revision:  repository.DefaultBranch,
-		CommitSHA: commit.Commit.SHA,
+		Name: repository.Name, URL: repository.HTMLURL, CloneURL: repository.CloneURL,
+		Revision: repository.DefaultBranch, CommitSHA: commit.Commit.SHA,
+		ValuesYAML: valuesYAML, RegionValues: regionKeys(regionValues),
 	}, nil
 }
 
-func (c *GitHubClient) Delete(ctx context.Context, name string) error {
-	token, err := c.authenticationToken(ctx)
-	if err != nil {
-		return err
+func (c *GitHubClient) loadExisting(
+	ctx context.Context,
+	token, name string,
+	targetRegions []string,
+) (ValuesRepository, error) {
+	var repository struct {
+		Name          string `json:"name"`
+		HTMLURL       string `json:"html_url"`
+		CloneURL      string `json:"clone_url"`
+		DefaultBranch string `json:"default_branch"`
 	}
-	return c.deleteWithToken(ctx, token, name)
+	repositoryPath := "/repos/" + url.PathEscape(c.organization) + "/" + url.PathEscape(name)
+	if _, err := c.request(ctx, token, http.MethodGet, repositoryPath, nil, &repository); err != nil {
+		return ValuesRepository{}, fmt.Errorf("load existing values repository: %w", err)
+	}
+	if repository.DefaultBranch == "" {
+		repository.DefaultBranch = "main"
+	}
+
+	var valuesFile struct {
+		Content  string `json:"content"`
+		Encoding string `json:"encoding"`
+	}
+	valuesPath := repositoryPath + "/contents/values.yaml?ref=" +
+		url.QueryEscape(repository.DefaultBranch)
+	if _, err := c.request(ctx, token, http.MethodGet, valuesPath, nil, &valuesFile); err != nil {
+		return ValuesRepository{}, fmt.Errorf("load existing values.yaml: %w", err)
+	}
+	if valuesFile.Encoding != "base64" {
+		return ValuesRepository{}, errors.New("existing values.yaml uses an unsupported encoding")
+	}
+	valuesYAML, err := base64.StdEncoding.DecodeString(valuesFile.Content)
+	if err != nil {
+		return ValuesRepository{}, errors.New("existing values.yaml is not valid base64")
+	}
+
+	var commit struct {
+		SHA string `json:"sha"`
+	}
+	commitPath := repositoryPath + "/commits/" + url.PathEscape(repository.DefaultBranch)
+	if _, err := c.request(ctx, token, http.MethodGet, commitPath, nil, &commit); err != nil {
+		return ValuesRepository{}, fmt.Errorf("load existing values commit: %w", err)
+	}
+
+	regions := make(map[string]bool)
+	for _, region := range uniqueStrings(targetRegions) {
+		path := repositoryPath + "/contents/" + url.PathEscape(region) +
+			"/values.yaml?ref=" + url.QueryEscape(repository.DefaultBranch)
+		status, requestErr := c.request(ctx, token, http.MethodGet, path, nil, &struct{}{})
+		if status == http.StatusNotFound {
+			continue
+		}
+		if requestErr != nil {
+			return ValuesRepository{}, fmt.Errorf("check existing %s values: %w", region, requestErr)
+		}
+		regions[region] = true
+	}
+
+	return ValuesRepository{
+		Name: repository.Name, URL: repository.HTMLURL, CloneURL: repository.CloneURL,
+		Revision: repository.DefaultBranch, CommitSHA: commit.SHA,
+		ValuesYAML: string(valuesYAML), RegionValues: regions, Existing: true,
+	}, nil
 }
 
-func (c *GitHubClient) deleteWithToken(ctx context.Context, token, name string) error {
-	_, err := c.request(ctx, token, http.MethodDelete,
-		"/repos/"+url.PathEscape(c.organization)+"/"+url.PathEscape(name), nil, nil)
-	return err
+func regionKeys(values map[string]string) map[string]bool {
+	regions := make(map[string]bool, len(values))
+	for region := range values {
+		regions[region] = true
+	}
+	return regions
 }
 
 func (c *GitHubClient) authenticationToken(ctx context.Context) (string, error) {

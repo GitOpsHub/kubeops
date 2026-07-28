@@ -82,6 +82,26 @@ button {
   background: #285fc8;
 }
 
+.danger-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0 17px;
+  border: 1px solid #d9a8b2;
+  border-radius: 5px;
+  color: #9e2840;
+  background: #fff7f8;
+  font-size: 0.75rem;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.danger-button:hover:not(:disabled) {
+  border-color: var(--danger);
+  background: #fcecef;
+}
+
 button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
@@ -319,6 +339,28 @@ kbd {
 }
 
 .error-banner span {
+  font-size: 0.78rem;
+}
+
+.success-banner {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 18px;
+  padding: 13px 16px;
+  border: 1px solid #b9dfd3;
+  border-left: 3px solid var(--success);
+  border-radius: 4px;
+  color: #0b6c52;
+  background: #effaf6;
+}
+
+.success-banner div {
+  display: grid;
+  gap: 3px;
+}
+
+.success-banner span {
   font-size: 0.78rem;
 }
 
@@ -1827,6 +1869,11 @@ pre {
   background: #fae3e8;
 }
 
+.deployment-pill--offboarded {
+  color: #566176;
+  background: #e9edf3;
+}
+
 .sync-dot--healthy {
   background: var(--success);
 }
@@ -2102,6 +2149,52 @@ pre {
   text-decoration: underline;
 }
 
+.application-detail .heading-actions {
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.offboard-confirmation {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin: -6px 0 18px;
+  padding: 16px 18px;
+  border: 1px solid #e8bdc6;
+  border-left: 3px solid var(--danger);
+  border-radius: 6px;
+  background: #fff7f8;
+}
+
+.offboard-confirmation > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.offboard-confirmation strong {
+  color: #7c293a;
+  font-size: 0.8rem;
+}
+
+.offboard-confirmation span {
+  max-width: 720px;
+  color: #7d5360;
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+.offboard-confirmation > div:last-child {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.lifecycle-message {
+  margin-top: -6px;
+}
+
 .target-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
@@ -2203,6 +2296,12 @@ pre {
 }
 
 @media (max-width: 720px) {
+  .offboard-confirmation,
+  .offboard-confirmation > div:last-child {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .page-topline {
     align-items: stretch;
     flex-direction: column;

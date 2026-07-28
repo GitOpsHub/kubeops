@@ -71,10 +71,12 @@ type fakeClusterManager struct {
 }
 
 type fakeApplicationOnboarder struct {
-	input  onboarding.CreateInput
-	filter model.ApplicationOnboardingFilter
-	record model.ApplicationOnboarding
-	err    error
+	input      onboarding.CreateInput
+	filter     model.ApplicationOnboardingFilter
+	record     model.ApplicationOnboarding
+	err        error
+	syncID     string
+	offboardID string
 }
 
 func (f *fakeApplicationOnboarder) Create(
@@ -88,6 +90,20 @@ func (f *fakeApplicationOnboarder) Get(
 	context.Context,
 	string,
 ) (model.ApplicationOnboarding, error) {
+	return f.record, f.err
+}
+func (f *fakeApplicationOnboarder) Sync(
+	_ context.Context,
+	id string,
+) (model.ApplicationOnboarding, error) {
+	f.syncID = id
+	return f.record, f.err
+}
+func (f *fakeApplicationOnboarder) Offboard(
+	_ context.Context,
+	id string,
+) (model.ApplicationOnboarding, error) {
+	f.offboardID = id
 	return f.record, f.err
 }
 func (f *fakeApplicationOnboarder) List(
@@ -370,6 +386,38 @@ func TestCreateApplicationOnboardingValidationError(t *testing.T) {
 	)
 	if response.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("expected status 422, got %d", response.Code)
+	}
+}
+
+func TestApplicationLifecycleActions(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		path   string
+		called func(*fakeApplicationOnboarder) string
+	}{
+		{
+			name: "sync", path: "/api/application-onboardings/onboarding-1/sync",
+			called: func(onboarder *fakeApplicationOnboarder) string { return onboarder.syncID },
+		},
+		{
+			name: "offboard", path: "/api/application-onboardings/onboarding-1/offboard",
+			called: func(onboarder *fakeApplicationOnboarder) string { return onboarder.offboardID },
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			onboarder := &fakeApplicationOnboarder{record: model.ApplicationOnboarding{
+				ID: "onboarding-1", Name: "payments",
+			}}
+			handler := NewHandlerWithOnboarding(
+				config.Config{}, &fakeRepository{}, &fakeClusterManager{}, onboarder,
+			)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, test.path, nil))
+
+			if response.Code != http.StatusOK || test.called(onboarder) != "onboarding-1" {
+				t.Fatalf("unexpected lifecycle response: %d %s", response.Code, response.Body.String())
+			}
+		})
 	}
 }
 

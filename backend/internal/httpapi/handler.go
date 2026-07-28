@@ -36,6 +36,8 @@ type ClusterManager interface {
 type ApplicationOnboarder interface {
 	Create(context.Context, onboarding.CreateInput) (model.ApplicationOnboarding, error)
 	Get(context.Context, string) (model.ApplicationOnboarding, error)
+	Sync(context.Context, string) (model.ApplicationOnboarding, error)
+	Offboard(context.Context, string) (model.ApplicationOnboarding, error)
 	List(
 		context.Context,
 		model.ApplicationOnboardingFilter,
@@ -91,6 +93,8 @@ func newHandler(
 	mux.HandleFunc("GET /api/application-onboardings", api.applicationOnboardings)
 	mux.HandleFunc("GET /api/application-onboardings/defaults", api.applicationOnboardingDefaults)
 	mux.HandleFunc("GET /api/application-onboardings/{id}", api.applicationOnboarding)
+	mux.HandleFunc("POST /api/application-onboardings/{id}/sync", api.syncApplicationOnboarding)
+	mux.HandleFunc("POST /api/application-onboardings/{id}/offboard", api.offboardApplicationOnboarding)
 	return withCORS(withRequestLog(mux), cfg.CORSAllowedOrigin)
 }
 
@@ -411,8 +415,12 @@ func (api *API) applicationOnboardings(w http.ResponseWriter, r *http.Request) {
 		filter.Status != model.OnboardingProgressing &&
 		filter.Status != model.OnboardingHealthy &&
 		filter.Status != model.OnboardingPartial &&
-		filter.Status != model.OnboardingFailed {
-		writeError(w, http.StatusBadRequest, "status must be progressing, healthy, partial, or failed")
+		filter.Status != model.OnboardingFailed &&
+		filter.Status != model.OnboardingOffboarded {
+		writeError(
+			w, http.StatusBadRequest,
+			"status must be progressing, healthy, partial, failed, or offboarded",
+		)
 		return
 	}
 	page, err := api.onboarder.List(r.Context(), filter)
@@ -448,6 +456,49 @@ func (api *API) applicationOnboarding(w http.ResponseWriter, r *http.Request) {
 		}
 		slog.Error("get application onboarding", "onboarding", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "unable to load application onboarding")
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+
+func (api *API) syncApplicationOnboarding(w http.ResponseWriter, r *http.Request) {
+	if api.onboarder == nil {
+		writeError(w, http.StatusServiceUnavailable, "application onboarding is not available")
+		return
+	}
+	api.runApplicationAction(w, r, "sync", api.onboarder.Sync)
+}
+
+func (api *API) offboardApplicationOnboarding(w http.ResponseWriter, r *http.Request) {
+	if api.onboarder == nil {
+		writeError(w, http.StatusServiceUnavailable, "application onboarding is not available")
+		return
+	}
+	api.runApplicationAction(w, r, "offboard", api.onboarder.Offboard)
+}
+
+func (api *API) runApplicationAction(
+	w http.ResponseWriter,
+	r *http.Request,
+	action string,
+	run func(context.Context, string) (model.ApplicationOnboarding, error),
+) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "application onboarding id is required")
+		return
+	}
+	item, err := run(r.Context(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "application onboarding not found")
+		return
+	}
+	if err != nil {
+		if aborted(r) {
+			return
+		}
+		slog.Error(action+" application onboarding", "onboarding", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "unable to "+action+" application")
 		return
 	}
 	writeJSON(w, http.StatusOK, item)

@@ -17,6 +17,7 @@ export function buildTarget(overrides: Partial<ApplicationDeployment> = {}): App
     sourceId: 'aws-platform',
     providerResourceId: 'arn:aws:eks:us-east-1:123:cluster/prod',
     argoApplication: 'payments-api',
+    hasRegionValues: false,
     argoApplicationUrl: 'https://argo.example.test/applications/payments-api',
     argoUsername: 'kubeops',
     status: 'progressing',
@@ -41,6 +42,7 @@ export function buildApplication(
     chartRevision: '1.2.3',
     valuesDigest: 'sha256:test',
     valuesRepositoryUrl: 'https://github.com/GitOpsHub/payments-api',
+    valuesRepositoryCloneUrl: 'https://github.com/GitOpsHub/payments-api.git',
     valuesRepositoryName: 'payments-api',
     valuesRevision: 'main',
     valuesCommitSha: 'commit-1',
@@ -128,6 +130,29 @@ export function mockAPI(initial: Partial<MockState> = {}) {
         page,
         pageSize,
       })
+    }
+
+    const lifecycleMatch = path.match(
+      /^\/application-onboardings\/([^/]+)\/(sync|offboard)$/,
+    )
+    if (lifecycleMatch && init?.method === 'POST') {
+      const id = decodeURIComponent(lifecycleMatch[1])
+      const found = state.applications.find((item) => item.id === id)
+      if (!found) {
+        return Response.json({ error: 'application onboarding not found' }, { status: 404 })
+      }
+      const offboard = lifecycleMatch[2] === 'offboard'
+      found.status = offboard ? 'offboarded' : 'progressing'
+      found.targets = found.targets.map((target) => ({
+        ...target,
+        status: offboard ? 'offboarded' : 'progressing',
+        syncStatus: offboard ? 'Unknown' : 'OutOfSync',
+        healthStatus: offboard ? 'Missing' : 'Progressing',
+        message: offboard
+          ? 'Removed from the cluster; GitHub values were preserved'
+          : '',
+      }))
+      return Response.json(found)
     }
 
     if (path.startsWith('/application-onboardings/')) {
