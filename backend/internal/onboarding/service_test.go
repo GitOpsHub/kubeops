@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,6 +23,8 @@ type fakeRepository struct {
 	updates  map[string]model.ApplicationDeployment
 	access   model.EncryptedArgoAccess
 	filter   model.ApplicationOnboardingFilter
+	// restarted records the onboardings whose deployment-timeout window was reopened.
+	restarted []string
 }
 
 func (f *fakeRepository) GetClustersByIDs(context.Context, []string) ([]model.Cluster, error) {
@@ -89,6 +93,16 @@ func (f *fakeRepository) UpdateApplicationDeployment(
 	target.HealthStatus = healthStatus
 	target.Message = message
 	f.updates[id] = target
+	return nil
+}
+func (f *fakeRepository) RestartApplicationDeploymentAttempts(
+	_ context.Context,
+	onboardingID string,
+) error {
+	f.restarted = append(f.restarted, onboardingID)
+	for index := range f.active {
+		f.active[index].AttemptStartedAt = time.Now()
+	}
 	return nil
 }
 func (f *fakeRepository) UpsertArgoAccess(
@@ -434,6 +448,7 @@ func TestReconcileMarksSyncedHealthyApplicationHealthy(t *testing.T) {
 	target := model.ApplicationDeployment{
 		ID: "target-1", SourceID: "aws", ProviderResourceID: "arn:cluster/prod",
 		ArgoApplication: "payments", CreatedAt: time.Now(),
+		AttemptStartedAt: time.Now(),
 	}
 	repository := &fakeRepository{active: []model.ApplicationDeployment{target}}
 	client := &fakeArgoClient{state: ApplicationState{
@@ -455,11 +470,126 @@ func TestReconcileMarksSyncedHealthyApplicationHealthy(t *testing.T) {
 	}
 }
 
+// A target onboarded long ago and re-synced moments ago must be judged on the
+// current attempt. Measuring the timeout from CreatedAt failed every target of an
+// onboarding older than the timeout before Argo CD was ever read, so no amount of
+// re-syncing could bring it back to healthy.
+func TestReconcileTimesOutOnAttemptNotTargetAge(t *testing.T) {
+	target := model.ApplicationDeployment{
+		ID: "target-1", SourceID: "aws", ProviderResourceID: "arn:cluster/prod",
+		ArgoApplication: "payments", Status: "progressing",
+		CreatedAt:        time.Now().Add(-48 * time.Hour),
+		AttemptStartedAt: time.Now(),
+	}
+	repository := &fakeRepository{active: []model.ApplicationDeployment{target}}
+	client := &fakeArgoClient{state: ApplicationState{
+		SyncStatus: "Synced", HealthStatus: "Healthy",
+	}}
+	service := &Service{
+		store: repository,
+		config: config.OnboardingConfig{
+			ArgoNamespace: "argo-cd", RequestTimeout: time.Second,
+			DeploymentTimeout: 15 * time.Minute,
+		},
+		clients: map[string]ArgoClient{targetKey("aws", "arn:cluster/prod"): client},
+	}
+
+	service.reconcile(context.Background())
+
+	if update := repository.updates[target.ID]; update.Status != "healthy" {
+		t.Fatalf("stale target age timed out a fresh attempt: %#v", update)
+	}
+}
+
+// The timeout must still fire once the current attempt itself exhausts it.
+func TestReconcileTimesOutExhaustedAttempt(t *testing.T) {
+	target := model.ApplicationDeployment{
+		ID: "target-1", SourceID: "aws", ProviderResourceID: "arn:cluster/prod",
+		ArgoApplication: "payments", Status: "progressing",
+		CreatedAt:        time.Now().Add(-48 * time.Hour),
+		AttemptStartedAt: time.Now().Add(-30 * time.Minute),
+	}
+	repository := &fakeRepository{active: []model.ApplicationDeployment{target}}
+	client := &fakeArgoClient{state: ApplicationState{
+		SyncStatus: "Synced", HealthStatus: "Healthy",
+	}}
+	service := &Service{
+		store: repository,
+		config: config.OnboardingConfig{
+			ArgoNamespace: "argo-cd", RequestTimeout: time.Second,
+			DeploymentTimeout: 15 * time.Minute,
+		},
+		clients: map[string]ArgoClient{targetKey("aws", "arn:cluster/prod"): client},
+	}
+
+	service.reconcile(context.Background())
+
+	update := repository.updates[target.ID]
+	if update.Status != "failed" ||
+		update.Message != "deployment did not become healthy before the configured timeout" {
+		t.Fatalf("exhausted attempt was not timed out: %#v", update)
+	}
+}
+
+// A dead port-forward reported as "did not accept the application" sends
+// operators to the manifest instead of to the network.
+func TestSafeCreateErrorSeparatesUnreachableFromRejected(t *testing.T) {
+	unreachable := &url.Error{
+		Op: "Post", URL: "https://localhost:18081/api/v1/applications",
+		Err: errors.New("dial tcp [::1]:18081: connect: connection refused"),
+	}
+	if got := safeCreateError(unreachable); got != "Argo CD could not be reached" {
+		t.Fatalf("connection refused was misreported: %q", got)
+	}
+	if got := safeCreateError(argoAPIError{status: 400}); got != "Argo CD did not accept the application" {
+		t.Fatalf("API rejection was misreported: %q", got)
+	}
+	if got := safeCreateError(ErrApplicationConflict); got != "an Argo CD application with this name already exists" {
+		t.Fatalf("conflict was misreported: %q", got)
+	}
+	// The raw transport error can echo request details, so it must not reach the client.
+	if strings.Contains(safeCreateError(unreachable), "18081") {
+		t.Fatal("transport detail leaked to the client message")
+	}
+}
+
+func TestSyncRestartsDeploymentTimeoutWindow(t *testing.T) {
+	target := model.ApplicationDeployment{
+		ID: "target-1", ClusterName: "prod", SourceID: "aws",
+		ProviderResourceID: "arn:cluster/prod", ArgoApplication: "payments",
+		Status: "failed", SyncStatus: "Unknown", HealthStatus: "Unknown",
+	}
+	repository := &fakeRepository{record: model.ApplicationOnboarding{
+		ID: "onboarding-1", Name: "payments", Namespace: "payments",
+		ChartRepoURL: "repo", ChartName: "chart", ChartRevision: "1",
+		ValuesRepositoryCloneURL: "https://github.com/GitOpsHub/payments.git",
+		ValuesRevision:           "main", Targets: []model.ApplicationDeployment{target},
+	}}
+	client := &fakeArgoClient{
+		state: ApplicationState{SyncStatus: "Synced", HealthStatus: "Healthy"},
+	}
+	service := &Service{
+		store: repository,
+		config: config.OnboardingConfig{
+			ArgoNamespace: "argo-cd", ArgoProject: "default", RequestTimeout: time.Second,
+		},
+		clients: map[string]ArgoClient{targetKey("aws", "arn:cluster/prod"): client},
+	}
+
+	if _, err := service.Sync(context.Background(), "onboarding-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(repository.restarted) != 1 || repository.restarted[0] != "onboarding-1" {
+		t.Fatalf("sync did not reopen the timeout window: %#v", repository.restarted)
+	}
+}
+
 func TestReconcileDoesNotRaceApplicationCreation(t *testing.T) {
 	target := model.ApplicationDeployment{
 		ID: "target-1", SourceID: "aws", ProviderResourceID: "arn:cluster/prod",
 		ArgoApplication: "payments", Status: "creating",
-		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		CreatedAt: time.Now(), UpdatedAt: time.Now(), AttemptStartedAt: time.Now(),
 	}
 	repository := &fakeRepository{active: []model.ApplicationDeployment{target}}
 	client := &fakeArgoClient{getErr: errors.New("permission denied")}

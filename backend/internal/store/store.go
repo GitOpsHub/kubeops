@@ -607,7 +607,8 @@ func (s *Store) CreateApplicationOnboarding(
 			RETURNING id::text, onboarding_id::text, cluster_id::text, cluster_name,
 				region, source_id, provider_resource_id, argo_application,
 				has_region_values, status,
-				sync_status, health_status, message, created_at, updated_at, completed_at`,
+				sync_status, health_status, message, created_at, updated_at, completed_at,
+				attempt_started_at`,
 			onboarding.ID, cluster.ID, cluster.Name, cluster.Location, cluster.SourceID,
 			cluster.ProviderResourceID, onboarding.Name, regionValues[cluster.Location],
 		).Scan(
@@ -616,6 +617,7 @@ func (s *Store) CreateApplicationOnboarding(
 			&target.HasRegionValues, &target.Status, &target.SyncStatus,
 			&target.HealthStatus, &target.Message,
 			&target.CreatedAt, &target.UpdatedAt, &target.CompletedAt,
+			&target.AttemptStartedAt,
 		)
 		if err != nil {
 			return model.ApplicationOnboarding{}, err
@@ -742,7 +744,8 @@ func (s *Store) listApplicationDeployments(
 		SELECT id::text, onboarding_id::text, cluster_id::text, cluster_name,
 			region, source_id, provider_resource_id, argo_application,
 			has_region_values, status,
-			sync_status, health_status, message, created_at, updated_at, completed_at
+			sync_status, health_status, message, created_at, updated_at, completed_at,
+			attempt_started_at
 		FROM application_deployments
 		WHERE onboarding_id::text = $1
 		ORDER BY cluster_name`, onboardingID)
@@ -759,6 +762,7 @@ func (s *Store) listApplicationDeployments(
 			&target.HasRegionValues, &target.Status, &target.SyncStatus,
 			&target.HealthStatus, &target.Message,
 			&target.CreatedAt, &target.UpdatedAt, &target.CompletedAt,
+			&target.AttemptStartedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -774,7 +778,8 @@ func (s *Store) ListActiveApplicationDeployments(
 		SELECT id::text, onboarding_id::text, cluster_id::text, cluster_name,
 			region, source_id, provider_resource_id, argo_application,
 			has_region_values, status,
-			sync_status, health_status, message, created_at, updated_at, completed_at
+			sync_status, health_status, message, created_at, updated_at, completed_at,
+			attempt_started_at
 		FROM application_deployments
 		WHERE status IN ('creating', 'progressing')
 		ORDER BY updated_at`)
@@ -791,12 +796,27 @@ func (s *Store) ListActiveApplicationDeployments(
 			&target.HasRegionValues, &target.Status, &target.SyncStatus,
 			&target.HealthStatus, &target.Message,
 			&target.CreatedAt, &target.UpdatedAt, &target.CompletedAt,
+			&target.AttemptStartedAt,
 		); err != nil {
 			return nil, err
 		}
 		targets = append(targets, target)
 	}
 	return targets, rows.Err()
+}
+
+// RestartApplicationDeploymentAttempts opens a fresh deployment-timeout window for
+// every target of an onboarding. Sync calls it so a target that already exhausted
+// its window is judged on the new attempt instead of staying failed forever.
+func (s *Store) RestartApplicationDeploymentAttempts(
+	ctx context.Context,
+	onboardingID string,
+) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE application_deployments
+		SET attempt_started_at = NOW()
+		WHERE onboarding_id::text = $1`, onboardingID)
+	return err
 }
 
 func (s *Store) UpdateApplicationDeployment(
