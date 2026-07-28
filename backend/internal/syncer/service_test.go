@@ -11,12 +11,22 @@ import (
 )
 
 type fakeStore struct {
-	run       *model.SyncRun
-	completed []model.Cluster
-	failed    string
+	run           *model.SyncRun
+	completed     []model.Cluster
+	failed        string
+	startupCalls  []string
+	recoverError  error
+	queueAllError error
 }
 
-func (f *fakeStore) QueueAll(context.Context, string) error { return nil }
+func (f *fakeStore) RecoverRunningSyncs(context.Context) error {
+	f.startupCalls = append(f.startupCalls, "recover")
+	return f.recoverError
+}
+func (f *fakeStore) QueueAll(_ context.Context, trigger string) error {
+	f.startupCalls = append(f.startupCalls, "queue:"+trigger)
+	return f.queueAllError
+}
 func (f *fakeStore) ClaimNextSync(context.Context) (*model.SyncRun, error) {
 	run := f.run
 	f.run = nil
@@ -75,6 +85,32 @@ func TestRunNextNormalizesAllProviderResults(t *testing.T) {
 				t.Fatalf("unexpected clusters: %#v", repository.completed)
 			}
 		})
+	}
+}
+
+func TestInitializeRecoversInterruptedSyncsBeforeQueueing(t *testing.T) {
+	repository := &fakeStore{}
+	service := New(repository, nil, nil, 5*time.Minute, 1)
+
+	if err := service.initialize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(repository.startupCalls) != 2 ||
+		repository.startupCalls[0] != "recover" ||
+		repository.startupCalls[1] != "queue:startup" {
+		t.Fatalf("unexpected startup calls: %#v", repository.startupCalls)
+	}
+}
+
+func TestInitializeDoesNotQueueWhenRecoveryFails(t *testing.T) {
+	repository := &fakeStore{recoverError: errors.New("recover failed")}
+	service := New(repository, nil, nil, 5*time.Minute, 1)
+
+	if err := service.initialize(context.Background()); err == nil {
+		t.Fatal("expected recovery error")
+	}
+	if len(repository.startupCalls) != 1 || repository.startupCalls[0] != "recover" {
+		t.Fatalf("unexpected startup calls: %#v", repository.startupCalls)
 	}
 }
 

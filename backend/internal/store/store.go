@@ -364,6 +364,22 @@ func (s *Store) QueueSync(ctx context.Context, sourceID, trigger string) (model.
 	return run, nil
 }
 
+func (s *Store) RecoverRunningSyncs(ctx context.Context) error {
+	const message = "sync interrupted by backend restart"
+	_, err := s.pool.Exec(ctx, `
+		WITH interrupted AS (
+			UPDATE sync_runs
+			SET status = 'failed', error = $1, completed_at = NOW()
+			WHERE status = 'running'
+			RETURNING source_id
+		)
+		UPDATE cloud_sources
+		SET last_sync_status = 'failed', last_sync_at = NOW(),
+			last_sync_error = $1, updated_at = NOW()
+		WHERE id IN (SELECT source_id FROM interrupted)`, message)
+	return err
+}
+
 func (s *Store) QueueAll(ctx context.Context, trigger string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

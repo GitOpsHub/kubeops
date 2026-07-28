@@ -69,6 +69,42 @@ func TestInventoryLifecycle(t *testing.T) {
 	if err != nil || claimed == nil || claimed.ID != run.ID {
 		t.Fatalf("unexpected claimed run: %#v, %v", claimed, err)
 	}
+	interruptedRunID := claimed.ID
+
+	if err := repository.RecoverRunningSyncs(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var recoveredStatus, recoveredError, sourceStatus, sourceError string
+	var hasCompletedAt bool
+	if err := repository.pool.QueryRow(ctx, `
+		SELECT status, error, completed_at IS NOT NULL
+		FROM sync_runs WHERE id = $1`, claimed.ID,
+	).Scan(&recoveredStatus, &recoveredError, &hasCompletedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.pool.QueryRow(ctx, `
+		SELECT last_sync_status, last_sync_error
+		FROM cloud_sources WHERE id = $1`, sources[0].ID,
+	).Scan(&sourceStatus, &sourceError); err != nil {
+		t.Fatal(err)
+	}
+	if recoveredStatus != "failed" || !hasCompletedAt ||
+		recoveredError != "sync interrupted by backend restart" ||
+		sourceStatus != "failed" || sourceError != recoveredError {
+		t.Fatalf(
+			"unexpected recovered sync: status=%q error=%q completed=%t source_status=%q source_error=%q",
+			recoveredStatus, recoveredError, hasCompletedAt, sourceStatus, sourceError,
+		)
+	}
+
+	run, err = repository.QueueSync(ctx, sources[0].ID, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err = repository.ClaimNextSync(ctx)
+	if err != nil || claimed == nil || claimed.ID != run.ID {
+		t.Fatalf("unexpected replacement run: %#v, %v", claimed, err)
+	}
 
 	nodeCount := int32(3)
 	if err := repository.CompleteSync(ctx, *claimed, []model.Cluster{
@@ -216,7 +252,9 @@ func TestInventoryLifecycle(t *testing.T) {
 	}
 
 	runs, err := repository.ListSyncRuns(ctx, 10)
-	if err != nil || len(runs) != 6 || runs[0].RemovedCount != 1 {
+	if err != nil || len(runs) != 7 || runs[0].RemovedCount != 1 ||
+		runs[6].ID != interruptedRunID || runs[6].Status != "failed" ||
+		runs[6].Error != "sync interrupted by backend restart" {
 		t.Fatalf("unexpected sync history: %#v, %v", runs, err)
 	}
 }
