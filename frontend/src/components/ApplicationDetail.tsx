@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   ApiError,
   getApplicationOnboarding,
@@ -22,6 +22,7 @@ const statusSummaries: Record<OnboardingStatus, string> = {
 
 export function ApplicationDetail() {
   const { id = '' } = useParams()
+  const navigate = useNavigate()
   const [record, setRecord] = useState<ApplicationOnboarding | null>(null)
   const [loading, setLoading] = useState(true)
   const [missing, setMissing] = useState(false)
@@ -97,10 +98,13 @@ export function ApplicationDetail() {
       setRecord(next)
       setConfirmingOffboard(false)
       if (next.status === 'offboarded') {
-        setActionMessage('Cluster resources were removed. The GitHub values repository was kept.')
-      } else {
-        setActionError('One or more clusters could not be offboarded. GitHub values were kept.')
+        // Nothing is left to operate on, so the application leaves the UI rather
+        // than lingering as a dead row. The record and its GitHub values are kept,
+        // and the offboarded status filter still finds it.
+        navigate('/applications', { replace: true })
+        return
       }
+      setActionError('One or more clusters could not be offboarded. GitHub values were kept.')
     } catch (offboardError) {
       setActionError(
         offboardError instanceof Error

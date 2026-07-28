@@ -104,6 +104,29 @@ func TestHTTPArgoClientDoesNotExposeResponseBody(t *testing.T) {
 	}
 }
 
+// Argo CD hides a missing application behind PermissionDenied on delete just as it
+// does on read. Reporting that as a failure would leave an application that is
+// already gone permanently stuck at "failed" on every retry.
+func TestHTTPArgoClientTreatsForbiddenDeleteAsMissingApplication(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "permission denied", http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	client, err := NewHTTPArgoClient(config.ArgoTarget{
+		SourceID: "aws", ServerURL: server.URL, Token: "test-token",
+	}, config.OnboardingConfig{RequestTimeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := client.DeleteApplication(
+		context.Background(), "payments", "argo-cd",
+	); !errors.Is(err, ErrApplicationNotFound) {
+		t.Fatalf("expected ErrApplicationNotFound, got %v", err)
+	}
+}
+
 func TestHTTPArgoClientSyncsAndCascadeDeletesApplication(t *testing.T) {
 	var synced, deleted bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -137,6 +160,11 @@ func TestHTTPArgoClientSyncsAndCascadeDeletesApplication(t *testing.T) {
 				r.URL.Query().Get("cascade") != "true" ||
 				r.URL.Query().Get("propagationPolicy") != "foreground" {
 				t.Fatalf("unexpected delete request: %s", r.URL.String())
+			}
+			// Argo CD's grpc-gateway answers 415 to a DELETE that declares no media
+			// type, so the header is part of the contract even with no body.
+			if r.Header.Get("Content-Type") != "application/json" {
+				t.Fatalf("delete declared no media type: %q", r.Header.Get("Content-Type"))
 			}
 			deleted = true
 			w.WriteHeader(http.StatusNoContent)
