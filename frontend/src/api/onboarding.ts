@@ -152,6 +152,87 @@ export function createApplicationOnboarding(input: CreateOnboardingInput) {
   })
 }
 
+/** One Kubernetes object Argo CD manages for a deployment target. */
+export type ResourceNode = {
+  group: string
+  version: string
+  kind: string
+  namespace: string
+  name: string
+  uid: string
+  /** Empty for a root node; otherwise the uid of the owner. */
+  parentUid: string
+  healthStatus: string
+  syncStatus: string
+  createdAt: string
+  images?: string[]
+  info?: { name: string; value: string }[]
+}
+
+/** The tuple Argo CD addresses a resource by. */
+export type ResourceRef = Pick<
+  ResourceNode,
+  'group' | 'version' | 'kind' | 'namespace' | 'name'
+>
+
+function resourceQuery(ref: ResourceRef) {
+  return new URLSearchParams({
+    group: ref.group,
+    version: ref.version,
+    kind: ref.kind,
+    namespace: ref.namespace,
+    name: ref.name,
+  })
+}
+
+function resourcePath(onboardingId: string, targetId: string) {
+  return (
+    `/application-onboardings/${encodeURIComponent(onboardingId)}` +
+    `/targets/${encodeURIComponent(targetId)}/resources`
+  )
+}
+
+export async function getTargetResources(
+  onboardingId: string,
+  targetId: string,
+  signal?: AbortSignal,
+) {
+  const response = await request<{ items: ResourceNode[] }>(
+    resourcePath(onboardingId, targetId),
+    { signal },
+  )
+  return response.items ?? []
+}
+
+export async function getResourceManifest(
+  onboardingId: string,
+  targetId: string,
+  ref: ResourceRef,
+  signal?: AbortSignal,
+) {
+  const response = await request<{ manifest: string }>(
+    `${resourcePath(onboardingId, targetId)}/manifest?${resourceQuery(ref)}`,
+    { signal },
+  )
+  return response.manifest
+}
+
+export async function deleteResource(
+  onboardingId: string,
+  targetId: string,
+  ref: ResourceRef,
+) {
+  const url = `${apiBaseUrl}${resourcePath(onboardingId, targetId)}?${resourceQuery(ref)}`
+  const response = await fetch(url, { method: 'DELETE' })
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { error?: string }
+    throw new ApiError(
+      body.error || `Request failed with status ${response.status}`,
+      response.status,
+    )
+  }
+}
+
 export function syncApplicationOnboarding(id: string) {
   return request<ApplicationOnboarding>(
     `/application-onboardings/${encodeURIComponent(id)}/sync`,

@@ -5,6 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Onboard applications to Kubernetes with KubeOps." />
     <title>KubeOps</title>
+    <script>
+      // Applies the stored theme before first paint so a dark-theme reload
+      // never flashes light. useTheme owns it from mount onwards.
+      try {
+        var stored = localStorage.getItem('kubeops-theme')
+        if (stored === 'light' || stored === 'dark') {
+          document.documentElement.dataset.theme = stored
+        }
+      } catch (error) {
+        // Blocked storage just means we fall back to prefers-color-scheme.
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

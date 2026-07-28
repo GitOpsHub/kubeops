@@ -1,0 +1,499 @@
+/* Cluster detail drawer and its scale-confirmation dialog. */
+
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  justify-content: flex-end;
+  background: var(--scrim);
+  backdrop-filter: blur(2px);
+}
+
+.detail-drawer {
+  position: relative;
+  display: grid;
+  gap: var(--space-5);
+  align-content: start;
+  width: min(560px, 100%);
+  padding: var(--space-6);
+  overflow-y: auto;
+  background: var(--canvas);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+}
+
+.drawer-close {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-lg);
+  line-height: 1;
+}
+
+.drawer-close:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+.drawer-identity {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  padding-right: var(--space-7);
+}
+
+.drawer-identity > div {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.drawer-kubernetes-logo {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+}
+
+.detail-drawer h2 {
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: var(--text-xl);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.drawer-source {
+  margin-top: calc(var(--space-5) * -1);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.operations-section {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.operations-heading {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.operations-heading > div {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.read-only-badge {
+  padding: 2px var(--space-2);
+  color: var(--text-subtle);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-2xs);
+}
+
+.overview-grid,
+.network-grid {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  margin: 0;
+}
+
+.overview-grid > div,
+.network-grid > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.overview-grid dt,
+.network-grid dt {
+  color: var(--text-subtle);
+  font-size: var(--text-xs);
+}
+
+.overview-grid dd,
+.network-grid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+/* Node pools ----------------------------------------------------------- */
+
+.node-pool-list {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.node-pool-card {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+/* Configured capacity, drawn to scale rather than only stated as a number. */
+.capacity-rail {
+  height: var(--rail-width);
+  background: var(--border);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+
+.capacity-rail span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.node-pool-title {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.node-pool-title > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.node-pool-title strong {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.node-pool-title span {
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+}
+
+.pool-status {
+  padding: 2px var(--space-2);
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-2xs);
+  white-space: nowrap;
+}
+
+.pool-facts {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.pool-facts > span {
+  display: grid;
+  gap: 2px;
+  color: var(--text-subtle);
+  font-size: var(--text-xs);
+}
+
+.pool-facts strong {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.pool-zones {
+  color: var(--text-subtle);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+
+.pool-note {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+
+.scale-control {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.scale-control label {
+  display: grid;
+  gap: var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.scale-control input {
+  width: 88px;
+  font-family: var(--font-mono);
+}
+
+.scale-control button {
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.scale-control button:hover:not(:disabled) {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.operation-state {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  color: var(--warn);
+  font-size: var(--text-2xs);
+}
+
+.operation-state i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentcolor;
+  animation: badge-pulse 1.6s ease-in-out infinite;
+}
+
+.scale-message {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.drawer-state {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-4);
+  color: var(--text-muted);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+}
+
+.drawer-state--error {
+  justify-content: space-between;
+  color: var(--err);
+  background: var(--err-soft);
+}
+
+.drawer-state button {
+  padding: 0 var(--space-3);
+  min-height: 30px;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid currentcolor;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.argo-access {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.argo-access-actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.argo-access-actions a,
+.argo-access-actions button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.argo-access-actions a:hover,
+.argo-access-actions button:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.resource-id {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+}
+
+.resource-id code {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.metadata {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.metadata > span {
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+}
+
+.metadata pre {
+  margin: 0;
+  padding: var(--space-3);
+  overflow-x: auto;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+}
+
+/* Scale confirmation --------------------------------------------------- */
+
+.confirmation-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: var(--scrim);
+}
+
+.scale-confirmation {
+  display: grid;
+  gap: var(--space-3);
+  width: min(420px, 100%);
+  padding: var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+}
+
+.scale-confirmation p:not(.section-label, .confirmation-warning) {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.scale-delta {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+}
+
+.scale-delta span {
+  color: var(--text-subtle);
+  font-size: var(--text-xl);
+}
+
+.scale-delta i {
+  color: var(--text-subtle);
+  font-style: normal;
+}
+
+.scale-delta strong {
+  color: var(--accent);
+  font-size: var(--text-2xl);
+  font-weight: 600;
+}
+
+.confirmation-warning {
+  padding: var(--space-2) var(--space-3);
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+}
+
+.confirmation-actions {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+
+.confirmation-actions button {
+  min-height: 34px;
+  padding: 0 var(--space-4);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.confirmation-actions .confirm-scale {
+  color: var(--accent-fg);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* `.confirmation-actions button` outranks `.danger-button` on its own, which
+   left the destructive action in a dialog looking like the cancel beside it. */
+.confirmation-actions .danger-button {
+  color: var(--err);
+  background: var(--err-soft);
+  border-color: color-mix(in srgb, var(--err) 35%, transparent);
+}
+
+.confirmation-actions .danger-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--err) 18%, transparent);
+  border-color: var(--err);
+}
+
+.confirmation-actions .confirm-scale:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+@media (max-width: 720px) {
+  .detail-drawer {
+    padding: var(--space-5) var(--space-4);
+  }
+}

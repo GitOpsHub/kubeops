@@ -1,4 +1,6 @@
 import type { ApplicationDeployment } from '../api/onboarding'
+import { StateDelta } from './StateDelta'
+import { StatusBadge } from './StatusBadge'
 
 type Props = {
   target: ApplicationDeployment
@@ -17,24 +19,14 @@ export function DeploymentTargetPanel({ target }: Props) {
           <strong>{target.clusterName}</strong>
           <span>{target.region || 'no region'}</span>
         </div>
-        <span className={`deployment-pill deployment-pill--${target.status}`}>
-          {target.status}
-        </span>
+        <StatusBadge status={target.status} />
       </header>
 
-      <dl className="target-facts">
-        <div>
-          <dt>Argo application</dt>
-          <dd className="mono">{target.argoApplication}</dd>
-        </div>
-        <div>
-          <dt>Sync status</dt>
-          <dd>{target.syncStatus || 'Unknown'}</dd>
-        </div>
-        <div>
-          <dt>Health</dt>
-          <dd>{target.healthStatus || 'Unknown'}</dd>
-        </div>
+      <StateDelta syncStatus={target.syncStatus} healthStatus={target.healthStatus} />
+
+      <dl className="target-argo-name">
+        <dt>Argo application</dt>
+        <dd>{target.argoApplication}</dd>
       </dl>
 
       {target.message && (

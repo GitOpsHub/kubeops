@@ -94,7 +94,9 @@ describe('App', () => {
     renderApp()
     const user = userEvent.setup()
 
-    await user.click(await screen.findByRole('button', { name: /prod-us-east/ }))
+    // Each row offers two ways in: the cluster name, and "Open details for …"
+    // in the actions cell. Anchoring the name picks out the former.
+    await user.click(await screen.findByRole('button', { name: /^prod-us-east/ }))
 
     expect(await screen.findByRole('heading', { name: 'Node pools' })).toBeInTheDocument()
     expect(await screen.findByText('vpc-123')).toBeInTheDocument()
@@ -156,5 +158,31 @@ describe('App', () => {
     renderApp('/nope')
 
     expect(await screen.findByText('Page not found')).toBeInTheDocument()
+  })
+
+  it('switches the theme and remembers the choice', async () => {
+    // This environment provides no localStorage, which is also why the hook
+    // guards every access to it.
+    const store = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => store.set(key, value),
+      removeItem: (key: string) => store.delete(key),
+    })
+    mockAPI()
+    renderApp()
+    const user = userEvent.setup()
+
+    // With no stored choice and no matchMedia, the hook resolves to light —
+    // the same answer as a browser reporting no dark preference.
+    expect(document.documentElement.dataset.theme).toBe('light')
+
+    await user.click(await screen.findByRole('button', { name: 'Switch to dark theme' }))
+
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(store.get('kubeops-theme')).toBe('dark')
+    expect(screen.getByRole('button', { name: 'Switch to light theme' })).toBeInTheDocument()
+
+    vi.unstubAllGlobals()
   })
 })

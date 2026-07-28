@@ -3,6 +3,8 @@ import type {
   ApplicationDeployment,
   ApplicationOnboarding,
   OnboardingStatus,
+  ResourceNode,
+  ResourceRef,
 } from '../api/onboarding'
 
 export const timestamp = new Date().toISOString()
@@ -59,6 +61,26 @@ export type MockState = {
   applications: ApplicationOnboarding[]
   argoPassword: string
   argoAccessStatus: number
+  resources: ResourceNode[]
+  manifest: string
+  /** Refs the UI asked to delete, in order. */
+  deletedResources: ResourceRef[]
+}
+
+export function buildResource(overrides: Partial<ResourceNode> = {}): ResourceNode {
+  return {
+    group: 'apps',
+    version: 'v1',
+    kind: 'Deployment',
+    namespace: 'payments',
+    name: 'payments-api',
+    uid: 'uid-deployment',
+    parentUid: '',
+    healthStatus: 'Healthy',
+    syncStatus: 'Synced',
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  }
 }
 
 /**
@@ -70,12 +92,37 @@ export function mockAPI(initial: Partial<MockState> = {}) {
     applications: initial.applications ?? [],
     argoPassword: initial.argoPassword ?? 'argo-password',
     argoAccessStatus: initial.argoAccessStatus ?? 200,
+    resources: initial.resources ?? [],
+    manifest: initial.manifest ?? '{"kind":"Deployment"}',
+    deletedResources: [],
   }
 
   const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (request, init) => {
     const url = new URL(String(request), 'http://localhost')
     const path = url.pathname.replace(/^\/api/, '')
     const query = url.searchParams
+
+    const resourceRoute = path.match(
+      /^\/application-onboardings\/([^/]+)\/targets\/([^/]+)\/resources(\/manifest)?$/,
+    )
+    if (resourceRoute) {
+      const [, , , manifestSuffix] = resourceRoute
+      if (init?.method === 'DELETE') {
+        state.deletedResources.push({
+          group: query.get('group') ?? '',
+          version: query.get('version') ?? '',
+          kind: query.get('kind') ?? '',
+          namespace: query.get('namespace') ?? '',
+          name: query.get('name') ?? '',
+        })
+        state.resources = state.resources.filter((item) => item.name !== query.get('name'))
+        return new Response(null, { status: 204 })
+      }
+      if (manifestSuffix) {
+        return Response.json({ manifest: state.manifest })
+      }
+      return Response.json({ items: state.resources })
+    }
 
     if (path === '/application-onboardings' && init?.method === 'POST') {
       const submitted = JSON.parse(String(init.body)) as {

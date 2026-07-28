@@ -1,0 +1,314 @@
+/* Kubernetes resource views: the graph canvas, the flat table, and the toggle. */
+
+/* Resources live on one cluster, so a multi-cluster application picks which
+   target it is inspecting before either view is drawn. */
+.target-switch {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+}
+
+.target-switch-item {
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.target-switch-item:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.target-switch-item.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.resource-explorer {
+  display: grid;
+  gap: var(--space-4);
+}
+
+/* View toggle ---------------------------------------------------------- */
+
+.view-toggle {
+  display: inline-flex;
+  justify-self: start;
+  padding: 3px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+}
+
+.view-toggle button {
+  padding: var(--space-1) var(--space-4);
+  color: var(--text-muted);
+  background: none;
+  border: 0;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.view-toggle button:hover {
+  color: var(--text);
+}
+
+.view-toggle button.is-active {
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Graph ---------------------------------------------------------------- */
+
+.graph-shell {
+  display: grid;
+  gap: var(--space-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.graph-toolbar {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.graph-zoom {
+  display: inline-flex;
+  gap: var(--space-1);
+  align-items: center;
+}
+
+.graph-zoom button {
+  min-width: 30px;
+  min-height: 26px;
+  padding: 0 var(--space-2);
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+}
+
+.graph-zoom button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+/* The canvas scrolls inside its own box, so a wide graph never pushes the
+   page sideways. */
+.graph-scroll {
+  padding: var(--space-5);
+  overflow: auto;
+  max-height: 620px;
+}
+
+.graph-canvas {
+  position: relative;
+  transform-origin: top left;
+  transition: transform var(--duration-med);
+}
+
+.graph-edges {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.graph-edges path {
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+}
+
+.graph-nodes {
+  position: relative;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.graph-node {
+  position: absolute;
+}
+
+.graph-card {
+  display: grid;
+  gap: var(--space-1);
+  /* Not `center`: an auto row whose content is `overflow: hidden` contributes
+     no min-content size, so a centred grid collapses the name to nothing the
+     moment the card is even slightly too short. */
+  align-content: space-between;
+  width: 100%;
+  height: 100%;
+  padding: var(--space-3);
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+}
+
+.graph-card:hover {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-md);
+}
+
+.graph-card.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft), var(--shadow-md);
+}
+
+.graph-card-top,
+.graph-card-state {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.graph-card-state {
+  justify-content: flex-start;
+}
+
+.graph-card-name {
+  overflow: hidden;
+  min-height: 1.4em;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graph-card:hover .graph-card-name {
+  color: var(--accent);
+}
+
+/* Table ---------------------------------------------------------------- */
+
+.resource-table {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.column-sort {
+  display: inline-flex;
+  gap: var(--space-1);
+  align-items: center;
+  padding: 0;
+  color: inherit;
+  background: none;
+  border: 0;
+  font: inherit;
+}
+
+.column-sort:hover {
+  color: var(--text);
+}
+
+.sort-caret {
+  color: var(--accent);
+  font-size: var(--text-2xs);
+}
+
+.resource-name-button {
+  padding: 0;
+  color: var(--text);
+  background: none;
+  border: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  text-align: left;
+}
+
+.resource-name-button:hover {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* Shared bits ---------------------------------------------------------- */
+
+.resource-kind {
+  flex: 0 0 auto;
+  padding: 2px var(--space-2);
+  color: var(--text-muted);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.resource-sync,
+.resource-age {
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+  white-space: nowrap;
+}
+
+.resource-delete {
+  padding: var(--space-1) var(--space-3);
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+}
+
+.resource-delete:hover {
+  color: var(--err);
+  background: var(--err-soft);
+  border-color: color-mix(in srgb, var(--err) 40%, transparent);
+}
+
+.resource-manifest {
+  max-height: 420px;
+  margin: 0;
+  padding: var(--space-4);
+  overflow: auto;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+
+.resource-manifest-actions {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* The drawer's destructive action sits apart from the facts above it. */
+.drawer-danger {
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 720px) {
+  .graph-scroll {
+    padding: var(--space-4);
+    max-height: 480px;
+  }
+}
