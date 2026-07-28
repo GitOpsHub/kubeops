@@ -19,6 +19,7 @@ type Service struct {
 }
 
 type Repository interface {
+	RecoverRunningSyncs(context.Context) error
 	QueueAll(context.Context, string) error
 	ClaimNextSync(context.Context) (*model.SyncRun, error)
 	CompleteSync(context.Context, model.SyncRun, []model.Cluster) error
@@ -43,14 +44,21 @@ func New(
 }
 
 func (s *Service) Start(ctx context.Context) {
-	if err := s.store.QueueAll(ctx, "startup"); err != nil {
-		slog.Error("queue startup syncs", "error", err)
+	if err := s.initialize(ctx); err != nil {
+		slog.Error("initialize cluster syncs", "error", err)
 	}
 
 	go s.schedule(ctx)
 	for worker := 0; worker < s.workerCount; worker++ {
 		go s.work(ctx, worker+1)
 	}
+}
+
+func (s *Service) initialize(ctx context.Context) error {
+	if err := s.store.RecoverRunningSyncs(ctx); err != nil {
+		return err
+	}
+	return s.store.QueueAll(ctx, "startup")
 }
 
 func (s *Service) schedule(ctx context.Context) {

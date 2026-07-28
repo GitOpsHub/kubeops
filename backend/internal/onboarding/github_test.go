@@ -6,7 +6,6 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -88,7 +87,9 @@ func TestGitHubClientProvisionsValuesRepository(t *testing.T) {
 		appID: 1, installationID: 2, privateKey: privateKey,
 		client: &http.Client{Timeout: time.Second},
 	}
-	repository, err := client.Provision(context.Background(), "payments", "replicaCount: 2\n", nil)
+	repository, err := client.Ensure(
+		context.Background(), "payments", "replicaCount: 2\n", nil, nil,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +99,7 @@ func TestGitHubClientProvisionsValuesRepository(t *testing.T) {
 	}
 }
 
-func TestGitHubClientMapsConflictWithoutExposingBody(t *testing.T) {
+func TestGitHubClientReusesExistingRepositoryValues(t *testing.T) {
 	privateKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "access_tokens") {
@@ -107,7 +108,28 @@ func TestGitHubClientMapsConflictWithoutExposingBody(t *testing.T) {
 			})
 			return
 		}
-		http.Error(w, "token=secret-value", http.StatusUnprocessableEntity)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/orgs/GitOpsHub/repos":
+			http.Error(w, "repository exists token=secret-value", http.StatusUnprocessableEntity)
+		case r.URL.Path == "/repos/GitOpsHub/payments":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"name": "payments", "html_url": "https://github.com/GitOpsHub/payments",
+				"clone_url":      "https://github.com/GitOpsHub/payments.git",
+				"default_branch": "main",
+			})
+		case r.URL.Path == "/repos/GitOpsHub/payments/contents/values.yaml":
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"encoding": "base64",
+				"content":  base64.StdEncoding.EncodeToString([]byte("replicaCount: 9\n")),
+			})
+		case r.URL.Path == "/repos/GitOpsHub/payments/commits/main":
+			_ = json.NewEncoder(w).Encode(map[string]string{"sha": "existing-commit"})
+		case r.URL.Path == "/repos/GitOpsHub/payments/contents/us-east-1/values.yaml":
+			_ = json.NewEncoder(w).Encode(map[string]string{})
+		default:
+			http.NotFound(w, r)
+		}
 	}))
 	defer server.Close()
 	client := &GitHubClient{
@@ -115,13 +137,21 @@ func TestGitHubClientMapsConflictWithoutExposingBody(t *testing.T) {
 		appID: 1, installationID: 2, privateKey: privateKey,
 		client: &http.Client{Timeout: time.Second},
 	}
-	_, err := client.Provision(context.Background(), "payments", "{}\n", nil)
-	if !errors.Is(err, ErrRepositoryExists) || strings.Contains(err.Error(), "secret-value") {
-		t.Fatalf("unexpected safe conflict: %v", err)
+	repository, err := client.Ensure(
+		context.Background(), "payments", "replicaCount: 2\n", nil,
+		[]string{"us-east-1", "eu-west-1"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !repository.Existing || repository.ValuesYAML != "replicaCount: 9\n" ||
+		repository.CommitSHA != "existing-commit" || !repository.RegionValues["us-east-1"] ||
+		repository.RegionValues["eu-west-1"] {
+		t.Fatalf("unexpected existing repository: %#v", repository)
 	}
 }
 
-func TestGitHubClientCleansUpWhenValuesCommitFails(t *testing.T) {
+func TestGitHubClientPreservesRepositoryWhenValuesCommitFails(t *testing.T) {
 	privateKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 	var deleted bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -149,10 +179,10 @@ func TestGitHubClientCleansUpWhenValuesCommitFails(t *testing.T) {
 		appID: 1, installationID: 2, privateKey: privateKey,
 		client: &http.Client{Timeout: time.Second},
 	}
-	if _, err := client.Provision(context.Background(), "payments", "{}\n", nil); err == nil {
+	if _, err := client.Ensure(context.Background(), "payments", "{}\n", nil, nil); err == nil {
 		t.Fatal("expected values commit failure")
 	}
-	if !deleted {
-		t.Fatal("expected newly created repository cleanup")
+	if deleted {
+		t.Fatal("values repository must be preserved after a provisioning failure")
 	}
 }

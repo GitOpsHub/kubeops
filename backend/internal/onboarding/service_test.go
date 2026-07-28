@@ -3,6 +3,9 @@ package onboarding
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"testing"
 	"time"
 
@@ -27,6 +30,7 @@ func (f *fakeRepository) CreateApplicationOnboarding(
 	_ context.Context,
 	record model.ApplicationOnboarding,
 	clusters []model.Cluster,
+	regionValues map[string]bool,
 ) (model.ApplicationOnboarding, error) {
 	record.ID = "onboarding-1"
 	record.Status = "progressing"
@@ -37,7 +41,8 @@ func (f *fakeRepository) CreateApplicationOnboarding(
 			ClusterID: cluster.ID, ClusterName: cluster.Name, Region: cluster.Location,
 			SourceID:           cluster.SourceID,
 			ProviderResourceID: cluster.ProviderResourceID, ArgoApplication: record.Name,
-			Status: "creating", SyncStatus: "Unknown", HealthStatus: "Unknown",
+			HasRegionValues: regionValues[cluster.Location],
+			Status:          "creating", SyncStatus: "Unknown", HealthStatus: "Unknown",
 			CreatedAt: time.Now(),
 		})
 	}
@@ -95,9 +100,15 @@ func (f *fakeRepository) UpsertArgoAccess(
 }
 
 type fakeArgoClient struct {
-	created ApplicationSpec
-	state   ApplicationState
-	err     error
+	created   ApplicationSpec
+	synced    string
+	deleted   string
+	state     ApplicationState
+	err       error
+	createErr error
+	getErr    error
+	syncErr   error
+	deleteErr error
 }
 
 type fakeValuesRepositoryManager struct {
@@ -107,18 +118,21 @@ type fakeValuesRepositoryManager struct {
 	regions    map[string]string
 }
 
-func (f *fakeValuesRepositoryManager) Provision(
+func (f *fakeValuesRepositoryManager) Ensure(
 	_ context.Context,
 	_ string,
-	_ string,
+	baseValues string,
 	regionValues map[string]string,
+	_ []string,
 ) (ValuesRepository, error) {
 	f.regions = regionValues
+	if f.repository.ValuesYAML == "" {
+		f.repository.ValuesYAML = baseValues
+	}
+	if f.repository.RegionValues == nil {
+		f.repository.RegionValues = regionKeys(regionValues)
+	}
 	return f.repository, f.err
-}
-func (f *fakeValuesRepositoryManager) Delete(_ context.Context, name string) error {
-	f.deleted = name
-	return nil
 }
 
 func (f *fakeArgoClient) CreateApplication(
@@ -126,6 +140,9 @@ func (f *fakeArgoClient) CreateApplication(
 	spec ApplicationSpec,
 ) (ApplicationState, error) {
 	f.created = spec
+	if f.createErr != nil {
+		return f.state, f.createErr
+	}
 	return f.state, f.err
 }
 func (f *fakeArgoClient) GetApplication(
@@ -133,7 +150,30 @@ func (f *fakeArgoClient) GetApplication(
 	string,
 	string,
 ) (ApplicationState, error) {
+	if f.getErr != nil {
+		return f.state, f.getErr
+	}
 	return f.state, f.err
+}
+func (f *fakeArgoClient) SyncApplication(
+	_ context.Context,
+	name, _ string,
+) (ApplicationState, error) {
+	f.synced = name
+	if f.syncErr != nil {
+		return f.state, f.syncErr
+	}
+	return f.state, f.err
+}
+func (f *fakeArgoClient) DeleteApplication(
+	_ context.Context,
+	name, _ string,
+) error {
+	f.deleted = name
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
+	return f.err
 }
 
 func TestCreateApplicationOnboarding(t *testing.T) {
@@ -237,6 +277,112 @@ func TestCreateApplicationOnboardingLayersRegionValues(t *testing.T) {
 	}
 }
 
+func TestCreateApplicationOnboardingReusesGitHubValues(t *testing.T) {
+	cluster := model.Cluster{
+		ID: "cluster-1", Name: "prod", SourceID: "aws",
+		ProviderResourceID: "arn:cluster/prod",
+	}
+	repository := &fakeRepository{clusters: []model.Cluster{cluster}}
+	client := &fakeArgoClient{}
+	existingValues := "replicaCount: 9\n"
+	valuesManager := &fakeValuesRepositoryManager{repository: ValuesRepository{
+		Name: "payments", URL: "https://github.com/GitOpsHub/payments",
+		CloneURL: "https://github.com/GitOpsHub/payments.git",
+		Revision: "main", CommitSHA: "existing-commit",
+		ValuesYAML: existingValues, Existing: true,
+	}}
+	service := &Service{
+		store: repository,
+		config: config.OnboardingConfig{
+			HelmRepoURL: "repo", HelmChart: "chart", HelmRevision: "1",
+			ArgoProject: "default", ArgoNamespace: "argo-cd",
+			RequestTimeout: time.Second, HelmDefaultsYAML: "{}\n",
+		},
+		clients: map[string]ArgoClient{targetKey("aws", "arn:cluster/prod"): client},
+		github:  valuesManager,
+	}
+
+	record, err := service.Create(context.Background(), CreateInput{
+		Name: "payments", Namespace: "payments", ClusterIDs: []string{"cluster-1"},
+		ValuesYAML: "replicaCount: 2\n",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256([]byte(existingValues))
+	if record.ValuesDigest != "sha256:"+hex.EncodeToString(digest[:]) ||
+		record.ValuesCommitSHA != "existing-commit" ||
+		record.ValuesRepositoryCloneURL != valuesManager.repository.CloneURL {
+		t.Fatalf("existing repository metadata was not persisted: %#v", record)
+	}
+}
+
+func TestSyncRecreatesMissingApplicationAndSynchronizesIt(t *testing.T) {
+	target := model.ApplicationDeployment{
+		ID: "target-1", ClusterName: "prod", SourceID: "aws",
+		ProviderResourceID: "arn:cluster/prod", ArgoApplication: "payments",
+		Status: "failed", SyncStatus: "Unknown", HealthStatus: "Unknown",
+	}
+	repository := &fakeRepository{record: model.ApplicationOnboarding{
+		ID: "onboarding-1", Name: "payments", Namespace: "payments",
+		ChartRepoURL: "repo", ChartName: "chart", ChartRevision: "1",
+		ValuesRepositoryURL:      "https://github.com/GitOpsHub/payments",
+		ValuesRepositoryCloneURL: "https://github.com/GitOpsHub/payments.git",
+		ValuesRevision:           "main", Targets: []model.ApplicationDeployment{target},
+	}}
+	client := &fakeArgoClient{
+		state: ApplicationState{SyncStatus: "Synced", HealthStatus: "Healthy"},
+	}
+	service := &Service{
+		store: repository,
+		config: config.OnboardingConfig{
+			ArgoProject: "default", ArgoNamespace: "argo-cd", RequestTimeout: time.Second,
+		},
+		clients: map[string]ArgoClient{targetKey("aws", "arn:cluster/prod"): client},
+	}
+
+	if _, err := service.Sync(context.Background(), "onboarding-1"); err != nil {
+		t.Fatal(err)
+	}
+	if client.created.Name != "payments" || client.synced != "payments" ||
+		repository.updates[target.ID].Status != "healthy" {
+		t.Fatalf("application was not recreated and synced: client=%#v update=%#v",
+			client, repository.updates[target.ID])
+	}
+}
+
+func TestOffboardDeletesApplicationButPreservesRepositoryRecord(t *testing.T) {
+	target := model.ApplicationDeployment{
+		ID: "target-1", ClusterName: "prod", SourceID: "aws",
+		ProviderResourceID: "arn:cluster/prod", ArgoApplication: "payments",
+		Status: "healthy", SyncStatus: "Synced", HealthStatus: "Healthy",
+	}
+	repository := &fakeRepository{record: model.ApplicationOnboarding{
+		ID: "onboarding-1", Name: "payments",
+		ValuesRepositoryURL: "https://github.com/GitOpsHub/payments",
+		Targets:             []model.ApplicationDeployment{target},
+	}}
+	client := &fakeArgoClient{}
+	service := &Service{
+		store: repository,
+		config: config.OnboardingConfig{
+			ArgoNamespace: "argo-cd", RequestTimeout: time.Second,
+		},
+		clients: map[string]ArgoClient{targetKey("aws", "arn:cluster/prod"): client},
+	}
+
+	record, err := service.Offboard(context.Background(), "onboarding-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.deleted != "payments" ||
+		repository.updates[target.ID].Status != "offboarded" ||
+		record.ValuesRepositoryURL != "https://github.com/GitOpsHub/payments" {
+		t.Fatalf("unexpected offboard result: client=%#v record=%#v update=%#v",
+			client, record, repository.updates[target.ID])
+	}
+}
+
 func TestNewServiceEncryptsArgoUIAccess(t *testing.T) {
 	repository := &fakeRepository{}
 	key := bytes.Repeat([]byte{3}, secure.KeyBytes)
@@ -306,6 +452,30 @@ func TestReconcileMarksSyncedHealthyApplicationHealthy(t *testing.T) {
 
 	if repository.updates[target.ID].Status != "healthy" {
 		t.Fatalf("unexpected update: %#v", repository.updates[target.ID])
+	}
+}
+
+func TestReconcileDoesNotRaceApplicationCreation(t *testing.T) {
+	target := model.ApplicationDeployment{
+		ID: "target-1", SourceID: "aws", ProviderResourceID: "arn:cluster/prod",
+		ArgoApplication: "payments", Status: "creating",
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	repository := &fakeRepository{active: []model.ApplicationDeployment{target}}
+	client := &fakeArgoClient{getErr: errors.New("permission denied")}
+	service := &Service{
+		store: repository,
+		config: config.OnboardingConfig{
+			ArgoNamespace: "argo-cd", RequestTimeout: 10 * time.Second,
+			DeploymentTimeout: 15 * time.Minute,
+		},
+		clients: map[string]ArgoClient{targetKey("aws", "arn:cluster/prod"): client},
+	}
+
+	service.reconcile(context.Background())
+
+	if len(repository.updates) != 0 {
+		t.Fatalf("creation result was overwritten by reconciliation: %#v", repository.updates)
 	}
 }
 

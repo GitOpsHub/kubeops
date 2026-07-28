@@ -234,6 +234,55 @@ describe('application detail', () => {
     expect(await screen.findByText(/has no deployment targets/)).toBeInTheDocument()
   })
 
+  it('syncs every deployment target from the application detail', async () => {
+    const { fetchMock } = mockAPI({
+      applications: [buildApplication({ status: 'failed' })],
+    })
+    renderApp('/applications/onboarding-1')
+    const user = userEvent.setup()
+
+    await user.click(await screen.findByRole('button', { name: 'Sync resources' }))
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/application-onboardings/onboarding-1/sync'),
+        expect.objectContaining({ method: 'POST' }),
+      )
+    })
+    expect(
+      await screen.findByText('Synchronization started for every deployment target.'),
+    ).toBeInTheDocument()
+  })
+
+  it('offboards cluster resources only after confirmation and preserves GitHub', async () => {
+    const { fetchMock } = mockAPI({
+      applications: [buildApplication({ status: 'healthy' })],
+    })
+    renderApp('/applications/onboarding-1')
+    const user = userEvent.setup()
+
+    await user.click(await screen.findByRole('button', { name: 'Offboard' }))
+    expect(
+      screen.getByText(/The GitHub repository and its values will remain available/),
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Offboard application' }))
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/application-onboardings/onboarding-1/offboard'),
+        expect.objectContaining({ method: 'POST' }),
+      )
+    })
+    expect(
+      await screen.findByText('Cluster resources were removed. The GitHub values repository was kept.'),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'payments-api ↗' })).toHaveAttribute(
+      'href',
+      'https://github.com/GitOpsHub/payments-api',
+    )
+    expect(screen.getByRole('button', { name: 'Re-onboard from GitHub' })).toBeInTheDocument()
+  })
+
   it('polls every five seconds until the deployment reaches a terminal state', async () => {
     // Only the polling interval is faked so React Testing Library keeps using real
     // timers for its own async helpers.

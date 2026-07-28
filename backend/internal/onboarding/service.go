@@ -29,6 +29,7 @@ type Repository interface {
 		context.Context,
 		model.ApplicationOnboarding,
 		[]model.Cluster,
+		map[string]bool,
 	) (model.ApplicationOnboarding, error)
 	GetApplicationOnboarding(context.Context, string) (model.ApplicationOnboarding, error)
 	ListApplicationOnboardings(
@@ -181,33 +182,34 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 		regionValues[region] = values
 	}
 
-	valuesRepository, err := s.github.Provision(ctx, input.Name, input.ValuesYAML, regionValues)
-	if errors.Is(err, ErrRepositoryExists) {
-		return model.ApplicationOnboarding{}, ConflictError{
-			Message: "a GitHub repository with this application name already exists",
-		}
+	targetRegionNames := make([]string, 0, len(targetRegions))
+	for region := range targetRegions {
+		targetRegionNames = append(targetRegionNames, region)
 	}
+	valuesRepository, err := s.github.Ensure(
+		ctx, input.Name, input.ValuesYAML, regionValues, targetRegionNames,
+	)
 	if err != nil {
 		return model.ApplicationOnboarding{}, ExternalError{
-			Err: fmt.Errorf("provision GitHub values repository: %w", err),
+			Err: fmt.Errorf("prepare GitHub values repository: %w", err),
 		}
 	}
 
-	digest := sha256.Sum256([]byte(input.ValuesYAML))
+	digest := sha256.Sum256([]byte(valuesRepository.ValuesYAML))
 	onboarding, err := s.store.CreateApplicationOnboarding(ctx, model.ApplicationOnboarding{
-		Name:                 input.Name,
-		Namespace:            input.Namespace,
-		ChartRepoURL:         s.config.HelmRepoURL,
-		ChartName:            s.config.HelmChart,
-		ChartRevision:        s.config.HelmRevision,
-		ValuesDigest:         "sha256:" + hex.EncodeToString(digest[:]),
-		ValuesRepositoryURL:  valuesRepository.URL,
-		ValuesRepositoryName: valuesRepository.Name,
-		ValuesRevision:       valuesRepository.Revision,
-		ValuesCommitSHA:      valuesRepository.CommitSHA,
-	}, clusters)
+		Name:                     input.Name,
+		Namespace:                input.Namespace,
+		ChartRepoURL:             s.config.HelmRepoURL,
+		ChartName:                s.config.HelmChart,
+		ChartRevision:            s.config.HelmRevision,
+		ValuesDigest:             "sha256:" + hex.EncodeToString(digest[:]),
+		ValuesRepositoryURL:      valuesRepository.URL,
+		ValuesRepositoryCloneURL: valuesRepository.CloneURL,
+		ValuesRepositoryName:     valuesRepository.Name,
+		ValuesRevision:           valuesRepository.Revision,
+		ValuesCommitSHA:          valuesRepository.CommitSHA,
+	}, clusters, valuesRepository.RegionValues)
 	if err != nil {
-		_ = s.github.Delete(context.WithoutCancel(ctx), valuesRepository.Name)
 		return model.ApplicationOnboarding{}, fmt.Errorf("store application onboarding: %w", err)
 	}
 
@@ -221,18 +223,8 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 			client := s.clients[targetKey(target.SourceID, target.ProviderResourceID)]
 			callCtx, cancel := context.WithTimeout(ctx, s.config.RequestTimeout)
 			defer cancel()
-			state, createErr := client.CreateApplication(callCtx, ApplicationSpec{
-				Name:           input.Name,
-				Namespace:      input.Namespace,
-				Project:        s.config.ArgoProject,
-				RepoURL:        s.config.HelmRepoURL,
-				Chart:          s.config.HelmChart,
-				Revision:       s.config.HelmRevision,
-				ValuesRepoURL:  valuesRepository.CloneURL,
-				ValuesRevision: valuesRepository.Revision,
-				Region:         regionOverride(regionValues, target.Region),
-				ArgoNamespace:  s.config.ArgoNamespace,
-			})
+			target.HasRegionValues = valuesRepository.RegionValues[target.Region]
+			state, createErr := client.CreateApplication(callCtx, s.applicationSpec(onboarding, target))
 			status, message := stateToDeployment(state)
 			if createErr != nil {
 				// The client only ever sees the sanitised message, so the real
@@ -262,6 +254,143 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 		return model.ApplicationOnboarding{}, fmt.Errorf("store Argo CD creation result: %w", updateErr)
 	}
 	return s.Get(ctx, onboarding.ID)
+}
+
+func (s *Service) Sync(ctx context.Context, id string) (model.ApplicationOnboarding, error) {
+	record, err := s.store.GetApplicationOnboarding(ctx, id)
+	if err != nil {
+		return model.ApplicationOnboarding{}, err
+	}
+	if err := s.forEachTarget(ctx, record, "sync", func(
+		callCtx context.Context,
+		client ArgoClient,
+		target model.ApplicationDeployment,
+	) (string, string, string, string) {
+		if _, createErr := client.CreateApplication(
+			callCtx, s.applicationSpec(record, target),
+		); createErr != nil && !errors.Is(createErr, ErrApplicationConflict) {
+			slog.Error("ensure Argo CD application",
+				"onboarding", record.ID, "target", target.ID,
+				"cluster", target.ClusterName, "application", target.ArgoApplication,
+				"error", createErr)
+			return "failed", "Unknown", "Unknown", safeCreateError(createErr)
+		}
+
+		state, syncErr := client.SyncApplication(
+			callCtx, target.ArgoApplication, s.config.ArgoNamespace,
+		)
+		if syncErr != nil {
+			slog.Error("sync Argo CD application",
+				"onboarding", record.ID, "target", target.ID,
+				"cluster", target.ClusterName, "application", target.ArgoApplication,
+				"error", syncErr)
+			return "failed", "Unknown", "Unknown", "Argo CD could not start synchronization"
+		}
+		status, message := stateToDeployment(state)
+		return status, valueOrUnknown(state.SyncStatus), valueOrUnknown(state.HealthStatus), message
+	}); err != nil {
+		return model.ApplicationOnboarding{}, err
+	}
+	return s.Get(ctx, id)
+}
+
+func (s *Service) Offboard(ctx context.Context, id string) (model.ApplicationOnboarding, error) {
+	record, err := s.store.GetApplicationOnboarding(ctx, id)
+	if err != nil {
+		return model.ApplicationOnboarding{}, err
+	}
+	if err := s.forEachTarget(ctx, record, "offboard", func(
+		callCtx context.Context,
+		client ArgoClient,
+		target model.ApplicationDeployment,
+	) (string, string, string, string) {
+		deleteErr := client.DeleteApplication(
+			callCtx, target.ArgoApplication, s.config.ArgoNamespace,
+		)
+		if deleteErr != nil && !errors.Is(deleteErr, ErrApplicationNotFound) {
+			slog.Error("delete Argo CD application",
+				"onboarding", record.ID, "target", target.ID,
+				"cluster", target.ClusterName, "application", target.ArgoApplication,
+				"error", deleteErr)
+			return "failed", target.SyncStatus, target.HealthStatus,
+				"Argo CD could not remove the application"
+		}
+		return "offboarded", "Unknown", "Missing",
+			"Removed from the cluster; GitHub values were preserved"
+	}); err != nil {
+		return model.ApplicationOnboarding{}, err
+	}
+	return s.Get(ctx, id)
+}
+
+type targetOperation func(
+	context.Context,
+	ArgoClient,
+	model.ApplicationDeployment,
+) (status, syncStatus, healthStatus, message string)
+
+func (s *Service) forEachTarget(
+	ctx context.Context,
+	record model.ApplicationOnboarding,
+	operation string,
+	run targetOperation,
+) error {
+	var wait sync.WaitGroup
+	errs := make(chan error, len(record.Targets))
+	for _, target := range record.Targets {
+		target := target
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			client, ok := s.clients[targetKey(target.SourceID, target.ProviderResourceID)]
+			if !ok {
+				if updateErr := s.store.UpdateApplicationDeployment(
+					context.WithoutCancel(ctx), target.ID, "failed",
+					target.SyncStatus, target.HealthStatus,
+					"Argo CD target configuration is no longer available",
+				); updateErr != nil {
+					errs <- fmt.Errorf("%s target %s: %w", operation, target.ID, updateErr)
+				}
+				return
+			}
+			callCtx, cancel := context.WithTimeout(ctx, s.config.RequestTimeout)
+			status, syncStatus, healthStatus, message := run(callCtx, client, target)
+			cancel()
+			if updateErr := s.store.UpdateApplicationDeployment(
+				context.WithoutCancel(ctx), target.ID,
+				status, syncStatus, healthStatus, message,
+			); updateErr != nil {
+				errs <- fmt.Errorf("%s target %s: %w", operation, target.ID, updateErr)
+			}
+		}()
+	}
+	wait.Wait()
+	close(errs)
+	if operationErr := <-errs; operationErr != nil {
+		return operationErr
+	}
+	return nil
+}
+
+func (s *Service) applicationSpec(
+	record model.ApplicationOnboarding,
+	target model.ApplicationDeployment,
+) ApplicationSpec {
+	cloneURL := record.ValuesRepositoryCloneURL
+	if cloneURL == "" {
+		cloneURL = strings.TrimSuffix(record.ValuesRepositoryURL, "/") + ".git"
+	}
+	region := ""
+	if target.HasRegionValues {
+		region = target.Region
+	}
+	return ApplicationSpec{
+		Name: record.Name, Namespace: record.Namespace,
+		Project: s.config.ArgoProject, RepoURL: record.ChartRepoURL,
+		Chart: record.ChartName, Revision: record.ChartRevision,
+		ValuesRepoURL: cloneURL, ValuesRevision: record.ValuesRevision,
+		Region: region, ArgoNamespace: s.config.ArgoNamespace,
+	}
 }
 
 func (s *Service) Get(ctx context.Context, id string) (model.ApplicationOnboarding, error) {
@@ -333,6 +462,13 @@ func (s *Service) reconcile(ctx context.Context) {
 		return
 	}
 	for _, target := range targets {
+		// Creation runs concurrently with reconciliation. A target can be selected
+		// as "creating" immediately before CreateApplication finishes and updates
+		// it. Do not let that stale snapshot overwrite the creation result.
+		if target.Status == "creating" &&
+			time.Since(target.UpdatedAt) < s.config.RequestTimeout {
+			continue
+		}
 		if time.Since(target.CreatedAt) >= s.config.DeploymentTimeout {
 			if err := s.store.UpdateApplicationDeployment(
 				ctx, target.ID, "failed", target.SyncStatus, target.HealthStatus,

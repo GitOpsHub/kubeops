@@ -45,8 +45,10 @@ It does not modify remote Kubernetes contexts such as GKE. Set
 Use `make db-destroy` when only the local PostgreSQL data should be discarded.
 
 Set `ARGO_GITHUB_READ_TOKEN` to a dedicated read-only GitHub token when Argo CD
-must clone private `GitOpsHub` values repositories. The setup intentionally does
-not copy a broad GitHub CLI credential into either cluster.
+must clone private `GitOpsHub` values repositories or pull the private GHCR Helm
+chart. Set `GITHUB_REPOSITORY_USERNAME` to the GitHub username associated with
+that token. The setup intentionally does not copy a broad GitHub CLI credential
+into either cluster.
 
 Set the desired sources to `enabled: true`. Authentication uses each provider’s standard credential chain:
 
@@ -125,11 +127,15 @@ the password is never fetched until then and is never rendered.
 
 The onboarding view creates one Argo CD Application per selected cluster with
 automated sync, pruning, self-healing, and namespace creation enabled. Argo uses
-the public OCI chart plus `$values/values.yaml` from the private application
-repository. Configure a separate read-only GitHub App credential template in
-every Argo instance for `https://github.com/GitOpsHub`. KubeOps stores the initial
+the OCI chart plus `$values/values.yaml` from the private application
+repository. For production, configure a separate read-only GitHub App credential
+template in every Argo instance for `https://github.com/GitOpsHub`. KubeOps stores the initial
 commit SHA and values digest, but not the values contents. Values must refer to
 existing Kubernetes or external secrets instead of containing secret material.
+When a values repository already exists, onboarding reuses its current
+`values.yaml`, revision, and commit instead of overwriting it. Offboarding removes
+the Argo CD Application and its managed cluster resources while preserving the
+GitHub repository for a later re-onboarding.
 
 ## Inventory API
 
@@ -141,6 +147,8 @@ existing Kubernetes or external secrets instead of containing secret material.
 - `GET /api/sync-runs` — recent reconciliation history
 - `POST /api/cloud-sources/{id}/sync` — queue a source refresh
 - `POST /api/application-onboardings` — create Argo CD Applications for selected clusters
+- `POST /api/application-onboardings/{id}/sync` — recreate missing Argo CD Applications and sync every target
+- `POST /api/application-onboardings/{id}/offboard` — remove every target from its cluster while preserving GitHub values
 - `GET /api/application-onboardings` — page, search, and filter onboarded applications with
   `page`, `pageSize`, `search` (case-insensitive over name and namespace), and `status`
   (`progressing`, `healthy`, `partial`, or `failed`); the legacy `limit` parameter remains

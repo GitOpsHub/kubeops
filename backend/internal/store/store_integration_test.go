@@ -69,6 +69,42 @@ func TestInventoryLifecycle(t *testing.T) {
 	if err != nil || claimed == nil || claimed.ID != run.ID {
 		t.Fatalf("unexpected claimed run: %#v, %v", claimed, err)
 	}
+	interruptedRunID := claimed.ID
+
+	if err := repository.RecoverRunningSyncs(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var recoveredStatus, recoveredError, sourceStatus, sourceError string
+	var hasCompletedAt bool
+	if err := repository.pool.QueryRow(ctx, `
+		SELECT status, error, completed_at IS NOT NULL
+		FROM sync_runs WHERE id = $1`, claimed.ID,
+	).Scan(&recoveredStatus, &recoveredError, &hasCompletedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.pool.QueryRow(ctx, `
+		SELECT last_sync_status, last_sync_error
+		FROM cloud_sources WHERE id = $1`, sources[0].ID,
+	).Scan(&sourceStatus, &sourceError); err != nil {
+		t.Fatal(err)
+	}
+	if recoveredStatus != "failed" || !hasCompletedAt ||
+		recoveredError != "sync interrupted by backend restart" ||
+		sourceStatus != "failed" || sourceError != recoveredError {
+		t.Fatalf(
+			"unexpected recovered sync: status=%q error=%q completed=%t source_status=%q source_error=%q",
+			recoveredStatus, recoveredError, hasCompletedAt, sourceStatus, sourceError,
+		)
+	}
+
+	run, err = repository.QueueSync(ctx, sources[0].ID, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err = repository.ClaimNextSync(ctx)
+	if err != nil || claimed == nil || claimed.ID != run.ID {
+		t.Fatalf("unexpected replacement run: %#v, %v", claimed, err)
+	}
 
 	nodeCount := int32(3)
 	if err := repository.CompleteSync(ctx, *claimed, []model.Cluster{
@@ -127,9 +163,10 @@ func TestInventoryLifecycle(t *testing.T) {
 	onboarding, err := repository.CreateApplicationOnboarding(ctx, model.ApplicationOnboarding{
 		Name: "payments", Namespace: "payments", ChartRepoURL: "https://charts.example.test",
 		ChartName: "global-app", ChartRevision: "1.2.3", ValuesDigest: "sha256:test",
-		ValuesRepositoryURL:  "https://github.com/GitOpsHub/payments",
-		ValuesRepositoryName: "payments", ValuesRevision: "main", ValuesCommitSHA: "commit-1",
-	}, []model.Cluster{page.Items[0]})
+		ValuesRepositoryURL:      "https://github.com/GitOpsHub/payments",
+		ValuesRepositoryCloneURL: "https://github.com/GitOpsHub/payments.git",
+		ValuesRepositoryName:     "payments", ValuesRevision: "main", ValuesCommitSHA: "commit-1",
+	}, []model.Cluster{page.Items[0]}, map[string]bool{page.Items[0].Location: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +181,9 @@ func TestInventoryLifecycle(t *testing.T) {
 	storedOnboarding, err := repository.GetApplicationOnboarding(ctx, onboarding.ID)
 	if err != nil || storedOnboarding.Status != "healthy" ||
 		storedOnboarding.Targets[0].HealthStatus != "Healthy" ||
-		storedOnboarding.ValuesCommitSHA != "commit-1" {
+		!storedOnboarding.Targets[0].HasRegionValues ||
+		storedOnboarding.ValuesCommitSHA != "commit-1" ||
+		storedOnboarding.ValuesRepositoryCloneURL != "https://github.com/GitOpsHub/payments.git" {
 		t.Fatalf("unexpected stored onboarding: %#v, %v", storedOnboarding, err)
 	}
 
@@ -153,7 +192,7 @@ func TestInventoryLifecycle(t *testing.T) {
 		ChartName: "global-app", ChartRevision: "1.2.3", ValuesDigest: "sha256:test",
 		ValuesRepositoryURL:  "https://github.com/GitOpsHub/checkout",
 		ValuesRepositoryName: "checkout", ValuesRevision: "main", ValuesCommitSHA: "commit-2",
-	}, []model.Cluster{page.Items[0]}); err != nil {
+	}, []model.Cluster{page.Items[0]}, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -184,6 +223,17 @@ func TestInventoryLifecycle(t *testing.T) {
 	if err != nil || byStatus.Total != 1 || byStatus.Items[0].Name != "payments" ||
 		len(byStatus.Items[0].Targets) != 1 {
 		t.Fatalf("unexpected status filter result: %#v, %v", byStatus, err)
+	}
+	if err := repository.UpdateApplicationDeployment(
+		ctx, onboarding.Targets[0].ID, "offboarded", "Unknown", "Missing",
+		"Removed from the cluster; GitHub values were preserved",
+	); err != nil {
+		t.Fatal(err)
+	}
+	offboarded, err := repository.GetApplicationOnboarding(ctx, onboarding.ID)
+	if err != nil || offboarded.Status != "offboarded" ||
+		offboarded.ValuesRepositoryURL != "https://github.com/GitOpsHub/payments" {
+		t.Fatalf("unexpected offboarded onboarding: %#v, %v", offboarded, err)
 	}
 
 	run, err = repository.QueueSync(ctx, sources[0].ID, "scheduled")
@@ -216,7 +266,9 @@ func TestInventoryLifecycle(t *testing.T) {
 	}
 
 	runs, err := repository.ListSyncRuns(ctx, 10)
-	if err != nil || len(runs) != 6 || runs[0].RemovedCount != 1 {
+	if err != nil || len(runs) != 7 || runs[0].RemovedCount != 1 ||
+		runs[6].ID != interruptedRunID || runs[6].Status != "failed" ||
+		runs[6].Error != "sync interrupted by backend restart" {
 		t.Fatalf("unexpected sync history: %#v, %v", runs, err)
 	}
 }
@@ -286,7 +338,7 @@ func TestConcurrentDeploymentUpdatesSettleParentStatus(t *testing.T) {
 			Namespace: "race", ChartRepoURL: "repo", ChartName: "chart",
 			ChartRevision: "1", ValuesDigest: "digest", ValuesRepositoryURL: "url",
 			ValuesRepositoryName: "name", ValuesRevision: "main", ValuesCommitSHA: "sha",
-		}, clusterPage.Items)
+		}, clusterPage.Items, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

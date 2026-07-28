@@ -3,6 +3,8 @@ import { Link, useParams } from 'react-router-dom'
 import {
   ApiError,
   getApplicationOnboarding,
+  offboardApplicationOnboarding,
+  syncApplicationOnboarding,
   type ApplicationOnboarding,
   type OnboardingStatus,
 } from '../api/onboarding'
@@ -15,6 +17,7 @@ const statusSummaries: Record<OnboardingStatus, string> = {
   healthy: 'Every target is synced and healthy.',
   partial: 'Some targets are healthy while others failed.',
   failed: 'Every target failed to reach a healthy state.',
+  offboarded: 'Cluster resources were removed; GitHub values are preserved.',
 }
 
 export function ApplicationDetail() {
@@ -23,6 +26,10 @@ export function ApplicationDetail() {
   const [loading, setLoading] = useState(true)
   const [missing, setMissing] = useState(false)
   const [error, setError] = useState('')
+  const [action, setAction] = useState<'sync' | 'offboard' | null>(null)
+  const [actionMessage, setActionMessage] = useState('')
+  const [actionError, setActionError] = useState('')
+  const [confirmingOffboard, setConfirmingOffboard] = useState(false)
 
   const load = useCallback(
     async (signal?: AbortSignal, quiet = false) => {
@@ -59,6 +66,51 @@ export function ApplicationDetail() {
       window.clearInterval(interval)
     }
   }, [load])
+
+  async function syncResources() {
+    setAction('sync')
+    setActionMessage('')
+    setActionError('')
+    try {
+      const next = await syncApplicationOnboarding(id)
+      setRecord(next)
+      if (next.targets.some((target) => target.status === 'failed')) {
+        setActionError('Synchronization could not start for one or more deployment targets.')
+      } else {
+        setActionMessage('Synchronization started for every deployment target.')
+      }
+    } catch (syncError) {
+      setActionError(
+        syncError instanceof Error ? syncError.message : 'Synchronization could not be started.',
+      )
+    } finally {
+      setAction(null)
+    }
+  }
+
+  async function offboard() {
+    setAction('offboard')
+    setActionMessage('')
+    setActionError('')
+    try {
+      const next = await offboardApplicationOnboarding(id)
+      setRecord(next)
+      setConfirmingOffboard(false)
+      if (next.status === 'offboarded') {
+        setActionMessage('Cluster resources were removed. The GitHub values repository was kept.')
+      } else {
+        setActionError('One or more clusters could not be offboarded. GitHub values were kept.')
+      }
+    } catch (offboardError) {
+      setActionError(
+        offboardError instanceof Error
+          ? offboardError.message
+          : 'Application could not be offboarded.',
+      )
+    } finally {
+      setAction(null)
+    }
+  }
 
   if (missing) {
     return (
@@ -137,8 +189,71 @@ export function ApplicationDetail() {
           <span className={`deployment-pill deployment-pill--${record.status}`}>
             {record.status}
           </span>
+          <button
+            type="button"
+            className="primary-button"
+            disabled={action !== null || record.targets.length === 0}
+            onClick={() => void syncResources()}
+          >
+            {action === 'sync'
+              ? 'Syncing…'
+              : record.status === 'offboarded'
+                ? 'Re-onboard from GitHub'
+                : 'Sync resources'}
+          </button>
+          <button
+            type="button"
+            className="danger-button"
+            disabled={action !== null || record.status === 'offboarded' || record.targets.length === 0}
+            onClick={() => setConfirmingOffboard(true)}
+          >
+            Offboard
+          </button>
         </div>
       </header>
+
+      {confirmingOffboard && (
+        <section className="offboard-confirmation" aria-labelledby="offboard-heading">
+          <div>
+            <strong id="offboard-heading">Remove this application from every cluster?</strong>
+            <span>
+              Argo CD will delete the application and its managed resources from{' '}
+              {record.targets.length} {record.targets.length === 1 ? 'cluster' : 'clusters'}.
+              The GitHub repository and its values will remain available.
+            </span>
+          </div>
+          <div>
+            <button
+              type="button"
+              className="text-button"
+              disabled={action !== null}
+              onClick={() => setConfirmingOffboard(false)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="danger-button"
+              disabled={action !== null}
+              onClick={() => void offboard()}
+            >
+              {action === 'offboard' ? 'Offboarding…' : 'Offboard application'}
+            </button>
+          </div>
+        </section>
+      )}
+
+      {(actionMessage || actionError) && (
+        <div
+          className={actionError ? 'error-banner lifecycle-message' : 'success-banner lifecycle-message'}
+          role={actionError ? 'alert' : 'status'}
+        >
+          <div>
+            <strong>{actionError ? 'Application action failed' : 'Application updated'}</strong>
+            <span>{actionError || actionMessage}</span>
+          </div>
+        </div>
+      )}
 
       <dl className="application-facts">
         <div>
