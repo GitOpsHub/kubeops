@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"testing"
 	"time"
 
@@ -451,6 +452,30 @@ func TestReconcileMarksSyncedHealthyApplicationHealthy(t *testing.T) {
 
 	if repository.updates[target.ID].Status != "healthy" {
 		t.Fatalf("unexpected update: %#v", repository.updates[target.ID])
+	}
+}
+
+func TestReconcileDoesNotRaceApplicationCreation(t *testing.T) {
+	target := model.ApplicationDeployment{
+		ID: "target-1", SourceID: "aws", ProviderResourceID: "arn:cluster/prod",
+		ArgoApplication: "payments", Status: "creating",
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	repository := &fakeRepository{active: []model.ApplicationDeployment{target}}
+	client := &fakeArgoClient{getErr: errors.New("permission denied")}
+	service := &Service{
+		store: repository,
+		config: config.OnboardingConfig{
+			ArgoNamespace: "argo-cd", RequestTimeout: 10 * time.Second,
+			DeploymentTimeout: 15 * time.Minute,
+		},
+		clients: map[string]ArgoClient{targetKey("aws", "arn:cluster/prod"): client},
+	}
+
+	service.reconcile(context.Background())
+
+	if len(repository.updates) != 0 {
+		t.Fatalf("creation result was overwritten by reconciliation: %#v", repository.updates)
 	}
 }
 

@@ -462,6 +462,13 @@ func (s *Service) reconcile(ctx context.Context) {
 		return
 	}
 	for _, target := range targets {
+		// Creation runs concurrently with reconciliation. A target can be selected
+		// as "creating" immediately before CreateApplication finishes and updates
+		// it. Do not let that stale snapshot overwrite the creation result.
+		if target.Status == "creating" &&
+			time.Since(target.UpdatedAt) < s.config.RequestTimeout {
+			continue
+		}
 		if time.Since(target.CreatedAt) >= s.config.DeploymentTimeout {
 			if err := s.store.UpdateApplicationDeployment(
 				ctx, target.ID, "failed", target.SyncStatus, target.HealthStatus,
