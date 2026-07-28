@@ -77,6 +77,13 @@ make lint
 make build
 ```
 
+`make test-integration` truncates every table, so it runs against a dedicated
+`kubeops_test` database that the target creates in the local PostgreSQL
+container when it is missing. The tests abort unless `TEST_DATABASE_URL` names a
+database ending in `_test` and different from `DATABASE_URL`, which keeps them
+from wiping local development data. Override with
+`KUBEOPS_ALLOW_DESTRUCTIVE_TESTS=1` only when the target database is disposable.
+
 The root `.env`, `config/cloud-sources.yaml`, and `config/argo-targets.yaml`
 are ignored. Only variables prefixed with `VITE_` are exposed to browser code;
 never place secrets in them.

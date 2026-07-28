@@ -1,4 +1,9 @@
-.PHONY: db-up db-down db-destroy dev dev-setup dev-recreate dev-argocd dev-frontend dev-backend test test-integration lint build
+.PHONY: db-up db-down db-destroy dev dev-setup dev-recreate dev-argocd dev-frontend dev-backend test test-db test-integration lint build
+
+# Integration tests TRUNCATE every table, so they run against their own
+# database rather than the `kubeops` database the local dev stack uses.
+TEST_DB_NAME ?= kubeops_test
+TEST_DATABASE_URL ?= postgres://kubeops:kubeops@127.0.0.1:5432/$(TEST_DB_NAME)?sslmode=disable
 
 db-up:
 	docker compose up -d postgres
@@ -34,8 +39,18 @@ test:
 	cd frontend && npm test
 	cd backend && go test ./...
 
-test-integration:
-	cd backend && TEST_DATABASE_URL=postgres://kubeops:kubeops@127.0.0.1:5432/kubeops?sslmode=disable go test ./internal/store -run TestInventoryLifecycle -count=1
+test-db: db-up
+	@for i in $$(seq 30); do \
+		docker compose exec -T postgres pg_isready -U kubeops -q && exit 0; \
+		sleep 1; \
+	done; \
+	echo "postgres did not become ready" >&2; exit 1
+	@docker compose exec -T postgres psql -U kubeops -d postgres -tAc \
+		"SELECT 1 FROM pg_database WHERE datname = '$(TEST_DB_NAME)'" | grep -q 1 \
+		|| docker compose exec -T postgres createdb -U kubeops $(TEST_DB_NAME)
+
+test-integration: test-db
+	cd backend && TEST_DATABASE_URL='$(TEST_DATABASE_URL)' go test ./internal/store -run TestInventoryLifecycle -count=1
 
 lint:
 	cd frontend && npm run lint

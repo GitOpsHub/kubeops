@@ -4,18 +4,65 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
 )
 
-func TestInventoryLifecycle(t *testing.T) {
+const truncateIntegrationData = "TRUNCATE sync_runs, application_onboardings, clusters, cloud_sources CASCADE"
+
+// integrationDatabaseURL resolves the database these tests are allowed to wipe.
+// They TRUNCATE every table, so pointing TEST_DATABASE_URL at the local dev
+// database destroys real onboarding records — which is exactly what happened
+// when the Makefile target still used the `kubeops` database. Only a database
+// named with a `_test` suffix is accepted, and never the one DATABASE_URL
+// already names. Set KUBEOPS_ALLOW_DESTRUCTIVE_TESTS=1 to bypass both checks.
+func integrationDatabaseURL(t *testing.T) string {
+	t.Helper()
+
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("TEST_DATABASE_URL is not configured")
 	}
+	if os.Getenv("KUBEOPS_ALLOW_DESTRUCTIVE_TESTS") == "1" {
+		return databaseURL
+	}
+
+	name, target, err := databaseIdentity(databaseURL)
+	if err != nil {
+		t.Fatalf("parse TEST_DATABASE_URL: %v", err)
+	}
+	if developmentURL := os.Getenv("DATABASE_URL"); developmentURL != "" {
+		if _, developmentTarget, err := databaseIdentity(developmentURL); err == nil && developmentTarget == target {
+			t.Fatalf("refusing to truncate %s: TEST_DATABASE_URL points at the same database as DATABASE_URL", target)
+		}
+	}
+	if !strings.HasSuffix(name, "_test") {
+		t.Fatalf("refusing to truncate %s: these tests TRUNCATE every table, so TEST_DATABASE_URL must name a database ending in _test (for example kubeops_test)", target)
+	}
+	return databaseURL
+}
+
+// databaseIdentity reports the database name of a PostgreSQL URL plus a
+// host-qualified identifier used to tell two connection strings apart.
+func databaseIdentity(databaseURL string) (name string, target string, err error) {
+	parsed, err := url.Parse(databaseURL)
+	if err != nil {
+		return "", "", err
+	}
+	name = strings.TrimPrefix(parsed.Path, "/")
+	if parsed.Host == "" || name == "" {
+		return "", "", fmt.Errorf("%q is not a postgres://host/database URL", parsed.Redacted())
+	}
+	return name, parsed.Host + "/" + name, nil
+}
+
+func TestInventoryLifecycle(t *testing.T) {
+	databaseURL := integrationDatabaseURL(t)
 
 	ctx := context.Background()
 	repository, err := Open(ctx, databaseURL)
@@ -23,13 +70,13 @@ func TestInventoryLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if _, err := repository.pool.Exec(context.Background(), "TRUNCATE sync_runs, application_onboardings, clusters, cloud_sources CASCADE"); err != nil {
+		if _, err := repository.pool.Exec(context.Background(), truncateIntegrationData); err != nil {
 			t.Errorf("clean integration data: %v", err)
 		}
 		repository.Close()
 	})
 
-	if _, err := repository.pool.Exec(ctx, "TRUNCATE sync_runs, application_onboardings, clusters, cloud_sources CASCADE"); err != nil {
+	if _, err := repository.pool.Exec(ctx, truncateIntegrationData); err != nil {
 		t.Fatal(err)
 	}
 	sources := []model.CloudSource{
@@ -278,24 +325,20 @@ func TestInventoryLifecycle(t *testing.T) {
 // Before the parent row was locked first, the last writer could persist a total it
 // computed before its sibling committed, stranding the onboarding on 'progressing'.
 func TestConcurrentDeploymentUpdatesSettleParentStatus(t *testing.T) {
-	databaseURL := os.Getenv("TEST_DATABASE_URL")
-	if databaseURL == "" {
-		t.Skip("TEST_DATABASE_URL is not configured")
-	}
+	databaseURL := integrationDatabaseURL(t)
 
 	ctx := context.Background()
 	repository, err := Open(ctx, databaseURL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	truncate := "TRUNCATE sync_runs, application_onboardings, clusters, cloud_sources CASCADE"
 	t.Cleanup(func() {
-		if _, err := repository.pool.Exec(context.Background(), truncate); err != nil {
+		if _, err := repository.pool.Exec(context.Background(), truncateIntegrationData); err != nil {
 			t.Errorf("clean integration data: %v", err)
 		}
 		repository.Close()
 	})
-	if _, err := repository.pool.Exec(ctx, truncate); err != nil {
+	if _, err := repository.pool.Exec(ctx, truncateIntegrationData); err != nil {
 		t.Fatal(err)
 	}
 
