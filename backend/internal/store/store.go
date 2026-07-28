@@ -681,6 +681,11 @@ func (s *Store) ListApplicationOnboardings(
 	if filter.Status != "" {
 		args = append(args, filter.Status)
 		clauses = append(clauses, fmt.Sprintf("status = $%d", len(args)))
+	} else {
+		// An offboarded application has no cluster resources left, so it drops out of
+		// the default listing. The record and its GitHub values are kept on purpose,
+		// and selecting the status explicitly still brings it back.
+		clauses = append(clauses, "status <> 'offboarded'")
 	}
 	where := strings.Join(clauses, " AND ")
 

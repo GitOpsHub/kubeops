@@ -117,7 +117,9 @@ export function mockAPI(initial: Partial<MockState> = {}) {
       const page = Number(query.get('page') ?? '1')
       const pageSize = Number(query.get('pageSize') ?? '20')
       const matched = state.applications.filter((item) => {
-        if (status && item.status !== status) return false
+        // Mirrors the backend: offboarded applications leave the default listing but
+        // are still reachable by selecting that status explicitly.
+        if (status ? item.status !== status : item.status === 'offboarded') return false
         if (!search) return true
         return (
           item.name.toLowerCase().includes(search) ||

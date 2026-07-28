@@ -202,13 +202,21 @@ func (c *HTTPArgoClient) DeleteApplication(
 		return err
 	}
 	request.Header.Set("Authorization", "Bearer "+c.token)
+	// Argo CD's grpc-gateway rejects a DELETE without a media type as 415 even
+	// though the request carries no body, which made every offboard fail.
+	request.Header.Set("Content-Type", "application/json")
 	response, err := c.client.Do(request)
 	if err != nil {
 		return err
 	}
 	defer response.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-	if response.StatusCode == http.StatusNotFound {
+	// Argo CD answers PermissionDenied rather than NotFound for an application that
+	// is not there, the same way it does for reads. Treating that as missing keeps
+	// offboarding idempotent: a target whose application is already gone is
+	// offboarded, not failed.
+	if response.StatusCode == http.StatusNotFound ||
+		response.StatusCode == http.StatusForbidden {
 		return ErrApplicationNotFound
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {

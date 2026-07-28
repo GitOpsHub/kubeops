@@ -245,14 +245,32 @@ describe('application detail', () => {
         expect.objectContaining({ method: 'POST' }),
       )
     })
-    expect(
-      await screen.findByText('Cluster resources were removed. The GitHub values repository was kept.'),
-    ).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'payments-api ↗' })).toHaveAttribute(
-      'href',
-      'https://github.com/GitOpsHub/payments-api',
-    )
-    expect(screen.getByRole('button', { name: 'Re-onboard from GitHub' })).toBeInTheDocument()
+    // Nothing is left to operate on, so the application leaves the UI instead of
+    // lingering as a dead row on the detail page.
+    expect(await screen.findByRole('heading', { name: 'Onboarded applications' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'payments-api' })).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.queryByRole('link', { name: /payments-api/ })).not.toBeInTheDocument()
+    })
+  })
+
+  // The record and its GitHub values are deliberately preserved, so the offboarded
+  // filter must still find it along with its re-onboard path.
+  it('keeps an offboarded application reachable under the offboarded status', async () => {
+    mockAPI({ applications: [buildApplication({ status: 'offboarded' })] })
+    renderApp('/applications?status=offboarded')
+
+    expect(await screen.findByRole('link', { name: /payments-api/ })).toBeInTheDocument()
+  })
+
+  it('hides offboarded applications from the default list', async () => {
+    mockAPI({ applications: [buildApplication({ status: 'offboarded' })] })
+    renderApp('/applications')
+
+    expect(await screen.findByRole('heading', { name: 'Onboarded applications' })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.queryByRole('link', { name: /payments-api/ })).not.toBeInTheDocument()
+    })
   })
 
   it('polls every five seconds until the deployment reaches a terminal state', async () => {
