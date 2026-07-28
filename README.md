@@ -102,6 +102,14 @@ details drawer retrieves the password only from the dedicated access endpoint.
 Keep the API restricted to the trusted internal network because this version
 does not include authentication or RBAC.
 
+The UI uses browser history routes: `/` for the fleet inventory, `/applications` for the
+searchable onboarded-application list (filters are kept in the URL query string),
+`/applications/new` for the onboarding form, and `/applications/{id}` for one application's
+deployment targets. Production static hosting must rewrite unknown application routes to
+`index.html`; the Vite dev server already does. Each target links to its specific Argo CD
+Application and copies the cluster's Argo CD password straight to the clipboard on request —
+the password is never fetched until then and is never rendered.
+
 The onboarding view creates one Argo CD Application per selected cluster with
 automated sync, pruning, self-healing, and namespace creation enabled. Argo uses
 the public OCI chart plus `$values/values.yaml` from the private application
@@ -120,6 +128,9 @@ existing Kubernetes or external secrets instead of containing secret material.
 - `GET /api/sync-runs` — recent reconciliation history
 - `POST /api/cloud-sources/{id}/sync` — queue a source refresh
 - `POST /api/application-onboardings` — create Argo CD Applications for selected clusters
-- `GET /api/application-onboardings` — list recent onboarding status
+- `GET /api/application-onboardings` — page, search, and filter onboarded applications with
+  `page`, `pageSize`, `search` (case-insensitive over name and namespace), and `status`
+  (`progressing`, `healthy`, `partial`, or `failed`); the legacy `limit` parameter remains
+  supported as a page-size alias
 - `GET /api/application-onboardings/{id}` — load per-cluster sync and health status
 - `GET /api/health` and `GET /api/ready` — liveness and database readiness

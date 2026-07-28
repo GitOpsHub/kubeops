@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -30,7 +31,10 @@ type Repository interface {
 		[]model.Cluster,
 	) (model.ApplicationOnboarding, error)
 	GetApplicationOnboarding(context.Context, string) (model.ApplicationOnboarding, error)
-	ListApplicationOnboardings(context.Context, int) ([]model.ApplicationOnboarding, error)
+	ListApplicationOnboardings(
+		context.Context,
+		model.ApplicationOnboardingFilter,
+	) (model.ApplicationOnboardingPage, error)
 	ListActiveApplicationDeployments(context.Context) ([]model.ApplicationDeployment, error)
 	UpdateApplicationDeployment(context.Context, string, string, string, string, string) error
 	UpsertArgoAccess(context.Context, model.EncryptedArgoAccess) error
@@ -76,17 +80,24 @@ type Service struct {
 	store   Repository
 	config  config.OnboardingConfig
 	clients map[string]ArgoClient
-	github  ValuesRepositoryManager
+	// uiTargets holds only the targets that expose Argo CD UI access, so deep links
+	// are omitted for targets reachable by API token alone.
+	uiTargets map[string]config.ArgoTarget
+	github    ValuesRepositoryManager
 }
 
 func NewService(repository Repository, cfg config.OnboardingConfig) (*Service, error) {
 	clients := make(map[string]ArgoClient, len(cfg.ArgoTargets))
+	uiTargets := make(map[string]config.ArgoTarget, len(cfg.ArgoTargets))
 	for _, target := range cfg.ArgoTargets {
 		client, err := NewHTTPArgoClient(target, cfg)
 		if err != nil {
 			return nil, err
 		}
 		clients[targetKey(target.SourceID, target.ProviderResourceID)] = client
+		if target.UIURL != "" && target.Username != "" {
+			uiTargets[targetKey(target.SourceID, target.ProviderResourceID)] = target
+		}
 	}
 	github, err := NewGitHubClient(cfg)
 	if err != nil {
@@ -114,7 +125,7 @@ func NewService(repository Repository, cfg config.OnboardingConfig) (*Service, e
 			return nil, fmt.Errorf("persist Argo CD UI credential: %w", err)
 		}
 	}
-	svc := &Service{store: repository, config: cfg, clients: clients}
+	svc := &Service{store: repository, config: cfg, clients: clients, uiTargets: uiTargets}
 	// NewGitHubClient returns a nil *GitHubClient when onboarding is unconfigured.
 	// Assign it to the interface field only when non-nil, otherwise the field holds
 	// a typed nil that defeats the `s.github == nil` guard in validateInput and
@@ -244,15 +255,44 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 	if updateErr := <-errs; updateErr != nil {
 		return model.ApplicationOnboarding{}, fmt.Errorf("store Argo CD creation result: %w", updateErr)
 	}
-	return s.store.GetApplicationOnboarding(ctx, onboarding.ID)
+	return s.Get(ctx, onboarding.ID)
 }
 
 func (s *Service) Get(ctx context.Context, id string) (model.ApplicationOnboarding, error) {
-	return s.store.GetApplicationOnboarding(ctx, id)
+	record, err := s.store.GetApplicationOnboarding(ctx, id)
+	if err != nil {
+		return model.ApplicationOnboarding{}, err
+	}
+	s.enrichTargets(record.Targets)
+	return record, nil
 }
 
-func (s *Service) List(ctx context.Context, limit int) ([]model.ApplicationOnboarding, error) {
-	return s.store.ListApplicationOnboardings(ctx, limit)
+func (s *Service) List(
+	ctx context.Context,
+	filter model.ApplicationOnboardingFilter,
+) (model.ApplicationOnboardingPage, error) {
+	page, err := s.store.ListApplicationOnboardings(ctx, filter)
+	if err != nil {
+		return model.ApplicationOnboardingPage{}, err
+	}
+	for i := range page.Items {
+		s.enrichTargets(page.Items[i].Targets)
+	}
+	return page, nil
+}
+
+// enrichTargets attaches the Argo CD deep link and username for every target whose
+// cluster maps to a configured Argo CD target with UI access.
+func (s *Service) enrichTargets(targets []model.ApplicationDeployment) {
+	for i := range targets {
+		target, ok := s.uiTargets[targetKey(targets[i].SourceID, targets[i].ProviderResourceID)]
+		if !ok {
+			continue
+		}
+		targets[i].ArgoApplicationURL = target.UIURL + "/applications/" +
+			url.PathEscape(targets[i].ArgoApplication)
+		targets[i].ArgoUsername = target.Username
+	}
 }
 
 func (s *Service) Defaults() Defaults {

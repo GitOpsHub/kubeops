@@ -1,226 +1,16 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
+import { mockAPI } from './test/mock-api'
 
-const timestamp = new Date().toISOString()
-
-function mockAPI() {
-  return vi.spyOn(globalThis, 'fetch').mockImplementation(async (request, init) => {
-    const url = String(request)
-    if (url.endsWith('/application-onboardings') && init?.method === 'POST') {
-      const submitted = JSON.parse(String(init.body)) as {
-        name: string
-        namespace: string
-        clusterIds: string[]
-      }
-      return Response.json(
-        {
-          id: 'onboarding-1',
-          name: submitted.name,
-          namespace: submitted.namespace,
-          chartRepoUrl: 'https://charts.example.test',
-          chartName: 'global-app',
-          chartRevision: '1.2.3',
-          valuesDigest: 'sha256:test',
-          valuesRepositoryUrl: `https://github.com/GitOpsHub/${submitted.name}`,
-          valuesRepositoryName: submitted.name,
-          valuesRevision: 'main',
-          valuesCommitSha: 'commit-1',
-          status: 'progressing',
-          createdAt: timestamp,
-          updatedAt: timestamp,
-          completedAt: null,
-          targets: [
-            {
-              id: 'target-1',
-              onboardingId: 'onboarding-1',
-              clusterId: submitted.clusterIds[0],
-              clusterName: 'prod-us-east',
-              region: 'us-east-1',
-              sourceId: 'aws-platform',
-              providerResourceId: 'arn:aws:eks:us-east-1:123:cluster/prod',
-              argoApplication: submitted.name,
-              status: 'progressing',
-              syncStatus: 'OutOfSync',
-              healthStatus: 'Progressing',
-              createdAt: timestamp,
-              updatedAt: timestamp,
-              completedAt: null,
-            },
-          ],
-        },
-        { status: 201 },
-      )
-    }
-    if (url.includes('/application-onboardings?')) {
-      return Response.json({ items: [] })
-    }
-    if (url.endsWith('/application-onboardings/defaults')) {
-      return Response.json({
-        chartRepoUrl: 'ghcr.io/gitopshub/charts',
-        chartName: 'kubeops',
-        chartRevision: '0.0.1',
-        valuesYaml: 'replicaCount: 2\nimage:\n  repository: nginx\n',
-      })
-    }
-    if (url.includes('/clusters/cluster-1/node-pools/workers/scale')) {
-      return Response.json(
-        { nodePoolId: 'workers', desiredCount: 5, status: 'accepted', providerOperationId: 'update-1' },
-        { status: 202 },
-      )
-    }
-    if (url.endsWith('/clusters/cluster-1/argo-access')) {
-      return Response.json({
-        url: 'https://argo.example.test',
-        username: 'kubeops',
-        password: 'cluster-password',
-      })
-    }
-    if (url.endsWith('/clusters/cluster-1/details')) {
-      return Response.json({
-        cluster: {
-          id: 'cluster-1',
-          sourceId: 'aws-platform',
-          sourceName: 'AWS Platform',
-          provider: 'aws',
-          providerResourceId: 'arn:aws:eks:us-east-1:123:cluster/prod',
-          name: 'prod-us-east',
-          location: 'us-east-1',
-          kubernetesVersion: '1.34',
-          status: 'active',
-          endpointAccess: 'private',
-          nodeCount: 12,
-          metadata: {},
-          firstSeenAt: timestamp,
-          lastSeenAt: timestamp,
-          updatedAt: timestamp,
-          removedAt: null,
-        },
-        capability: { canScaleNodes: true },
-        nodePools: [
-          {
-            id: 'workers',
-            name: 'workers',
-            desiredCount: 3,
-            minCount: 1,
-            maxCount: 10,
-            autoscaling: 'unknown',
-            status: 'active',
-            machineType: 'm6i.large',
-            zones: [],
-            scalable: true,
-          },
-        ],
-        networking: {
-          provider: 'aws',
-          endpointAccess: 'private',
-          aws: {
-            vpcId: 'vpc-123',
-            subnetIds: ['subnet-a', 'subnet-b'],
-            clusterSecurityGroupId: 'sg-cluster',
-            additionalSecurityGroupIds: [],
-            publicAccessCidrs: [],
-            ipFamily: 'ipv4',
-            serviceIpv4Cidr: '10.100.0.0/16',
-          },
-        },
-      })
-    }
-    if (url.includes('/clusters?')) {
-      return Response.json({
-        items: [
-          {
-            id: 'cluster-1',
-            sourceId: 'aws-platform',
-            sourceName: 'AWS Platform',
-            provider: 'aws',
-            providerResourceId: 'arn:aws:eks:us-east-1:123:cluster/prod',
-            name: 'prod-us-east',
-            location: 'us-east-1',
-            kubernetesVersion: '1.34',
-            status: 'active',
-            endpointAccess: 'private',
-            nodeCount: 12,
-            metadata: { platformVersion: 'eks.8' },
-            firstSeenAt: timestamp,
-            lastSeenAt: timestamp,
-            updatedAt: timestamp,
-            removedAt: null,
-          },
-        ],
-        total: 1,
-        page: 1,
-        pageSize: 25,
-      })
-    }
-    if (url.endsWith('/cloud-sources')) {
-      return Response.json({
-        items: [
-          {
-            id: 'aws-platform',
-            provider: 'aws',
-            name: 'AWS Platform',
-            scopeId: '123',
-            regions: ['us-east-1'],
-            enabled: true,
-            clusterCount: 1,
-            lastSyncStatus: 'succeeded',
-            lastSyncAt: timestamp,
-          },
-          {
-            id: 'gcp-platform',
-            provider: 'gcp',
-            name: 'Google Cloud Platform',
-            scopeId: 'platform-project',
-            regions: ['-'],
-            enabled: true,
-            clusterCount: 2,
-            lastSyncStatus: 'succeeded',
-            lastSyncAt: timestamp,
-          },
-          {
-            id: 'azure-platform',
-            provider: 'azure',
-            name: 'Azure Platform',
-            scopeId: 'subscription',
-            regions: ['*'],
-            enabled: true,
-            clusterCount: 3,
-            lastSyncStatus: 'succeeded',
-            lastSyncAt: timestamp,
-          },
-        ],
-      })
-    }
-    if (url.includes('/sync-runs')) {
-      return Response.json({
-        items: [
-          {
-            id: 'run-1',
-            sourceId: 'aws-platform',
-            sourceName: 'AWS Platform',
-            provider: 'aws',
-            trigger: 'scheduled',
-            status: 'succeeded',
-            discoveredCount: 1,
-            changedCount: 0,
-            removedCount: 0,
-            queuedAt: timestamp,
-            startedAt: timestamp,
-            completedAt: timestamp,
-          },
-        ],
-      })
-    }
-    if (url.includes('/cloud-sources/aws-platform/sync')) {
-      return Response.json(
-        { id: 'run-2', sourceId: 'aws-platform', trigger: 'manual', status: 'queued' },
-        { status: 202 },
-      )
-    }
-    return Response.json({ error: 'not found' }, { status: 404 })
-  })
+function renderApp(route = '/') {
+  return render(
+    <MemoryRouter initialEntries={[route]}>
+      <App />
+    </MemoryRouter>,
+  )
 }
 
 describe('App', () => {
@@ -230,7 +20,7 @@ describe('App', () => {
 
   it('renders the cross-cloud fleet inventory', async () => {
     mockAPI()
-    render(<App />)
+    renderApp()
 
     expect(await screen.findByRole('heading', { name: 'Fleet control center' })).toBeInTheDocument()
     expect(await screen.findByText('prod-us-east')).toBeInTheDocument()
@@ -245,8 +35,8 @@ describe('App', () => {
   })
 
   it('filters and searches within a selected cloud provider', async () => {
-    const fetchMock = mockAPI()
-    render(<App />)
+    const { fetchMock } = mockAPI()
+    renderApp()
     const user = userEvent.setup()
 
     await user.click(await screen.findByRole('button', { name: 'AKS, 3 clusters' }))
@@ -263,8 +53,8 @@ describe('App', () => {
   })
 
   it('uses the global search across all providers', async () => {
-    const fetchMock = mockAPI()
-    render(<App />)
+    const { fetchMock } = mockAPI()
+    renderApp()
     const user = userEvent.setup()
 
     await user.click(await screen.findByRole('button', { name: 'EKS, 1 cluster' }))
@@ -286,8 +76,8 @@ describe('App', () => {
   })
 
   it('queues a manual cloud source sync', async () => {
-    const fetchMock = mockAPI()
-    render(<App />)
+    const { fetchMock } = mockAPI()
+    renderApp()
     const user = userEvent.setup()
 
     const syncButtons = await screen.findAllByRole('button', { name: 'Sync now' })
@@ -300,8 +90,8 @@ describe('App', () => {
   })
 
   it('shows live networking and confirms node-pool scaling', async () => {
-    const fetchMock = mockAPI()
-    render(<App />)
+    const { fetchMock } = mockAPI()
+    renderApp()
     const user = userEvent.setup()
 
     await user.click(await screen.findByRole('button', { name: /prod-us-east/ }))
@@ -313,8 +103,6 @@ describe('App', () => {
       'href',
       'https://argo.example.test',
     )
-    expect(screen.getByText('kubeops')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Copy password' })).toBeInTheDocument()
 
     const desiredInput = screen.getByRole('spinbutton', { name: 'Desired nodes' })
     await user.clear(desiredInput)
@@ -341,47 +129,32 @@ describe('App', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
       Response.json({ error: 'database is unavailable' }, { status: 503 }),
     )
-    render(<App />)
+    renderApp()
 
     expect(await screen.findByRole('alert')).toHaveTextContent('database is unavailable')
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()
   })
 
-  it('onboards an application to selected regions', async () => {
-    const fetchMock = mockAPI()
-    render(<App />)
+  it('navigates between the fleet and application routes', async () => {
+    mockAPI()
+    renderApp()
     const user = userEvent.setup()
 
-    await user.click(await screen.findByRole('button', { name: 'Onboard application' }))
-    expect(await screen.findByRole('heading', { name: 'Onboard an application' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Fleet control center' })).toBeInTheDocument()
 
-    await user.type(screen.getByLabelText('Application name'), 'payments-api')
-    await user.type(screen.getByLabelText('Namespace'), 'payments')
-    await user.click(await screen.findByRole('checkbox'))
-    await user.click(screen.getByRole('button', { name: 'Onboard application' }))
-
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining('/application-onboardings'),
-        expect.objectContaining({
-          method: 'POST',
-          body: JSON.stringify({
-            name: 'payments-api',
-            namespace: 'payments',
-            clusterIds: ['cluster-1'],
-            valuesYaml: 'replicaCount: 2\nimage:\n  repository: nginx\n',
-            regionValues: {},
-          }),
-        }),
-      )
-    })
+    await user.click(screen.getByRole('link', { name: 'Applications' }))
     expect(
-      await screen.findByText((_, element) => element?.textContent === 'payments · us-east-1'),
+      await screen.findByRole('heading', { name: 'Onboarded applications' }),
     ).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /payments-api/ })).toHaveAttribute(
-      'href',
-      'https://github.com/GitOpsHub/payments-api',
-    )
-    expect(screen.getAllByText('progressing').length).toBeGreaterThan(0)
+
+    await user.click(screen.getByRole('link', { name: 'Fleet' }))
+    expect(await screen.findByRole('heading', { name: 'Fleet control center' })).toBeInTheDocument()
+  })
+
+  it('renders a not-found panel for unknown routes', async () => {
+    mockAPI()
+    renderApp('/nope')
+
+    expect(await screen.findByText('Page not found')).toBeInTheDocument()
   })
 })

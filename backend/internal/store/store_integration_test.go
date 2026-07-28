@@ -21,13 +21,13 @@ func TestInventoryLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if _, err := repository.pool.Exec(context.Background(), "TRUNCATE sync_runs, clusters, cloud_sources CASCADE"); err != nil {
+		if _, err := repository.pool.Exec(context.Background(), "TRUNCATE sync_runs, application_onboardings, clusters, cloud_sources CASCADE"); err != nil {
 			t.Errorf("clean integration data: %v", err)
 		}
 		repository.Close()
 	})
 
-	if _, err := repository.pool.Exec(ctx, "TRUNCATE sync_runs, clusters, cloud_sources CASCADE"); err != nil {
+	if _, err := repository.pool.Exec(ctx, "TRUNCATE sync_runs, application_onboardings, clusters, cloud_sources CASCADE"); err != nil {
 		t.Fatal(err)
 	}
 	sources := []model.CloudSource{
@@ -144,6 +144,44 @@ func TestInventoryLifecycle(t *testing.T) {
 		storedOnboarding.Targets[0].HealthStatus != "Healthy" ||
 		storedOnboarding.ValuesCommitSHA != "commit-1" {
 		t.Fatalf("unexpected stored onboarding: %#v, %v", storedOnboarding, err)
+	}
+
+	if _, err := repository.CreateApplicationOnboarding(ctx, model.ApplicationOnboarding{
+		Name: "checkout", Namespace: "storefront", ChartRepoURL: "https://charts.example.test",
+		ChartName: "global-app", ChartRevision: "1.2.3", ValuesDigest: "sha256:test",
+		ValuesRepositoryURL:  "https://github.com/GitOpsHub/checkout",
+		ValuesRepositoryName: "checkout", ValuesRevision: "main", ValuesCommitSHA: "commit-2",
+	}, []model.Cluster{page.Items[0]}); err != nil {
+		t.Fatal(err)
+	}
+
+	onboardings, err := repository.ListApplicationOnboardings(
+		ctx, model.ApplicationOnboardingFilter{Page: 1, PageSize: 1},
+	)
+	if err != nil || onboardings.Total != 2 || len(onboardings.Items) != 1 ||
+		onboardings.Page != 1 || onboardings.PageSize != 1 {
+		t.Fatalf("unexpected onboarding page: %#v, %v", onboardings, err)
+	}
+	secondPage, err := repository.ListApplicationOnboardings(
+		ctx, model.ApplicationOnboardingFilter{Page: 2, PageSize: 1},
+	)
+	if err != nil || len(secondPage.Items) != 1 ||
+		secondPage.Items[0].ID == onboardings.Items[0].ID {
+		t.Fatalf("unexpected second onboarding page: %#v, %v", secondPage, err)
+	}
+	// Search is case-insensitive and spans both the name and the namespace.
+	byNamespace, err := repository.ListApplicationOnboardings(
+		ctx, model.ApplicationOnboardingFilter{Page: 1, PageSize: 20, Search: "STOREFRONT"},
+	)
+	if err != nil || byNamespace.Total != 1 || byNamespace.Items[0].Name != "checkout" {
+		t.Fatalf("unexpected search result: %#v, %v", byNamespace, err)
+	}
+	byStatus, err := repository.ListApplicationOnboardings(
+		ctx, model.ApplicationOnboardingFilter{Page: 1, PageSize: 20, Status: model.OnboardingHealthy},
+	)
+	if err != nil || byStatus.Total != 1 || byStatus.Items[0].Name != "payments" ||
+		len(byStatus.Items[0].Targets) != 1 {
+		t.Fatalf("unexpected status filter result: %#v, %v", byStatus, err)
 	}
 
 	run, err = repository.QueueSync(ctx, sources[0].ID, "scheduled")

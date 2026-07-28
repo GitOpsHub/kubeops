@@ -36,7 +36,10 @@ type ClusterManager interface {
 type ApplicationOnboarder interface {
 	Create(context.Context, onboarding.CreateInput) (model.ApplicationOnboarding, error)
 	Get(context.Context, string) (model.ApplicationOnboarding, error)
-	List(context.Context, int) ([]model.ApplicationOnboarding, error)
+	List(
+		context.Context,
+		model.ApplicationOnboardingFilter,
+	) (model.ApplicationOnboardingPage, error)
 	Defaults() onboarding.Defaults
 }
 
@@ -363,18 +366,37 @@ func (api *API) applicationOnboardings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "application onboarding is not available")
 		return
 	}
-	limit := intQuery(r.URL.Query().Get("limit"), 20)
-	if limit < 1 || limit > 200 {
-		writeError(w, http.StatusBadRequest, "limit must be between 1 and 200")
+	query := r.URL.Query()
+	// `limit` predates paging and stays supported as a page-size alias.
+	pageSize := query.Get("pageSize")
+	if pageSize == "" {
+		pageSize = query.Get("limit")
+	}
+	filter := model.ApplicationOnboardingFilter{
+		Search:   strings.TrimSpace(query.Get("search")),
+		Status:   strings.ToLower(strings.TrimSpace(query.Get("status"))),
+		Page:     intQuery(query.Get("page"), 1),
+		PageSize: intQuery(pageSize, 20),
+	}
+	if filter.Page < 1 || filter.PageSize < 1 || filter.PageSize > 200 {
+		writeError(w, http.StatusBadRequest, "page must be positive and pageSize must be between 1 and 200")
 		return
 	}
-	items, err := api.onboarder.List(r.Context(), limit)
+	if filter.Status != "" &&
+		filter.Status != model.OnboardingProgressing &&
+		filter.Status != model.OnboardingHealthy &&
+		filter.Status != model.OnboardingPartial &&
+		filter.Status != model.OnboardingFailed {
+		writeError(w, http.StatusBadRequest, "status must be progressing, healthy, partial, or failed")
+		return
+	}
+	page, err := api.onboarder.List(r.Context(), filter)
 	if err != nil {
 		slog.Error("list application onboardings", "error", err)
 		writeError(w, http.StatusInternalServerError, "unable to list application onboardings")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, page)
 }
 
 func (api *API) applicationOnboarding(w http.ResponseWriter, r *http.Request) {

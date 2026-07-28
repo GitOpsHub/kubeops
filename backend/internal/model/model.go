@@ -10,6 +10,13 @@ const (
 	ProviderMinikube = "minikube"
 )
 
+const (
+	OnboardingProgressing = "progressing"
+	OnboardingHealthy     = "healthy"
+	OnboardingPartial     = "partial"
+	OnboardingFailed      = "failed"
+)
+
 type CloudSource struct {
 	ID                        string   `json:"id" yaml:"id"`
 	Provider                  string   `json:"provider" yaml:"provider"`
@@ -203,14 +210,18 @@ type ApplicationOnboarding struct {
 }
 
 type ApplicationDeployment struct {
-	ID                 string     `json:"id"`
-	OnboardingID       string     `json:"onboardingId"`
-	ClusterID          string     `json:"clusterId"`
-	ClusterName        string     `json:"clusterName"`
-	Region             string     `json:"region"`
-	SourceID           string     `json:"sourceId"`
-	ProviderResourceID string     `json:"providerResourceId"`
-	ArgoApplication    string     `json:"argoApplication"`
+	ID                 string `json:"id"`
+	OnboardingID       string `json:"onboardingId"`
+	ClusterID          string `json:"clusterId"`
+	ClusterName        string `json:"clusterName"`
+	Region             string `json:"region"`
+	SourceID           string `json:"sourceId"`
+	ProviderResourceID string `json:"providerResourceId"`
+	ArgoApplication    string `json:"argoApplication"`
+	// ArgoApplicationURL and ArgoUsername are derived from the configured Argo CD
+	// target and stay empty when that target exposes no UI access.
+	ArgoApplicationURL string     `json:"argoApplicationUrl,omitempty"`
+	ArgoUsername       string     `json:"argoUsername,omitempty"`
 	Status             string     `json:"status"`
 	SyncStatus         string     `json:"syncStatus"`
 	HealthStatus       string     `json:"healthStatus"`
@@ -218,4 +229,18 @@ type ApplicationDeployment struct {
 	CreatedAt          time.Time  `json:"createdAt"`
 	UpdatedAt          time.Time  `json:"updatedAt"`
 	CompletedAt        *time.Time `json:"completedAt"`
+}
+
+type ApplicationOnboardingFilter struct {
+	Search   string
+	Status   string
+	Page     int
+	PageSize int
+}
+
+type ApplicationOnboardingPage struct {
+	Items    []ApplicationOnboarding `json:"items"`
+	Total    int                     `json:"total"`
+	Page     int                     `json:"page"`
+	PageSize int                     `json:"pageSize"`
 }

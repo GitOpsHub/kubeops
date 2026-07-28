@@ -12,6 +12,9 @@ export type ApplicationDeployment = {
   sourceId: string
   providerResourceId: string
   argoApplication: string
+  // Present only when the cluster's Argo CD target exposes UI access.
+  argoApplicationUrl?: string
+  argoUsername?: string
   status: DeploymentStatus
   syncStatus: string
   healthStatus: string
@@ -55,13 +58,49 @@ export type OnboardingDefaults = {
   valuesYaml: string
 }
 
+export type ApplicationOnboardingPage = {
+  items: ApplicationOnboarding[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export type ApplicationOnboardingFilter = {
+  search?: string
+  status?: OnboardingStatus | ''
+  page?: number
+  pageSize?: number
+}
+
+export const onboardingStatuses: OnboardingStatus[] = [
+  'progressing',
+  'healthy',
+  'partial',
+  'failed',
+]
+
+export const applicationsPageSize = 20
+
+export class ApiError extends Error {
+  readonly status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${path}`, init)
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as { error?: string }
-    throw new Error(body.error || `Request failed with status ${response.status}`)
+    throw new ApiError(
+      body.error || `Request failed with status ${response.status}`,
+      response.status,
+    )
   }
   return response.json() as Promise<T>
 }
@@ -78,12 +117,17 @@ export async function getOnboardingClusters(signal?: AbortSignal) {
   return clusters
 }
 
-export async function getApplicationOnboardings(signal?: AbortSignal) {
-  const response = await request<{ items: ApplicationOnboarding[] }>(
-    '/application-onboardings?limit=20',
-    { signal },
-  )
-  return response.items
+export function getApplicationOnboardings(
+  filter: ApplicationOnboardingFilter = {},
+  signal?: AbortSignal,
+) {
+  const params = new URLSearchParams({
+    page: String(filter.page ?? 1),
+    pageSize: String(filter.pageSize ?? applicationsPageSize),
+  })
+  if (filter.search) params.set('search', filter.search)
+  if (filter.status) params.set('status', filter.status)
+  return request<ApplicationOnboardingPage>(`/application-onboardings?${params}`, { signal })
 }
 
 export function getOnboardingDefaults(signal?: AbortSignal) {
