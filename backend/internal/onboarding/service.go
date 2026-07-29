@@ -39,6 +39,7 @@ type Repository interface {
 		model.ApplicationOnboardingFilter,
 	) (model.ApplicationOnboardingPage, error)
 	ListActiveApplicationDeployments(context.Context) ([]model.ApplicationDeployment, error)
+	UpdateApplicationOnboardingValues(context.Context, string, string, string) error
 	UpdateApplicationDeployment(context.Context, string, string, string, string, string) error
 	RestartApplicationDeploymentAttempts(context.Context, string) error
 	UpsertArgoAccess(context.Context, model.EncryptedArgoAccess) error
@@ -57,10 +58,12 @@ type CreateInput struct {
 }
 
 type Defaults struct {
-	ChartRepoURL  string `json:"chartRepoUrl"`
-	ChartName     string `json:"chartName"`
-	ChartRevision string `json:"chartRevision"`
-	ValuesYAML    string `json:"valuesYaml"`
+	ChartRepoURL            string `json:"chartRepoUrl"`
+	ChartName               string `json:"chartName"`
+	ChartRevision           string `json:"chartRevision"`
+	ValuesYAML              string `json:"valuesYaml"`
+	ValuesRepositoryBaseURL string `json:"valuesRepositoryBaseUrl"`
+	ValuesRevision          string `json:"valuesRevision"`
 }
 
 // ErrTargetNotFound reports that an onboarding has no deployment with the
@@ -405,6 +408,55 @@ func (s *Service) DeleteResource(
 	return nil
 }
 
+func (s *Service) Scale(
+	ctx context.Context,
+	id string,
+	replicas int32,
+) (model.ApplicationOnboarding, error) {
+	if replicas < 1 || replicas > 1000 {
+		return model.ApplicationOnboarding{}, ValidationError{
+			Message: "replicas must be between 1 and 1000",
+		}
+	}
+	record, err := s.store.GetApplicationOnboarding(ctx, id)
+	if err != nil {
+		return model.ApplicationOnboarding{}, err
+	}
+	if record.Status == model.OnboardingOffboarded {
+		return model.ApplicationOnboarding{}, ValidationError{
+			Message: "offboarded applications cannot be scaled",
+		}
+	}
+	if s.github == nil || record.ValuesRepositoryName == "" || record.ValuesRevision == "" {
+		return model.ApplicationOnboarding{}, ValidationError{
+			Message: "application values repository is not configured",
+		}
+	}
+	update, err := s.github.UpdateReplicas(
+		ctx,
+		record.ValuesRepositoryName,
+		record.ValuesRevision,
+		record.Environment,
+		record.Region,
+		replicas,
+	)
+	if err != nil {
+		return model.ApplicationOnboarding{}, ExternalError{
+			Err: fmt.Errorf("update application replicas in GitHub: %w", err),
+		}
+	}
+	digest := sha256.Sum256([]byte(update.ValuesYAML))
+	if err := s.store.UpdateApplicationOnboardingValues(
+		ctx,
+		record.ID,
+		"sha256:"+hex.EncodeToString(digest[:]),
+		update.CommitSHA,
+	); err != nil {
+		return model.ApplicationOnboarding{}, fmt.Errorf("store scaled application values: %w", err)
+	}
+	return s.Sync(ctx, id)
+}
+
 func (s *Service) Sync(ctx context.Context, id string) (model.ApplicationOnboarding, error) {
 	record, err := s.store.GetApplicationOnboarding(ctx, id)
 	if err != nil {
@@ -630,10 +682,12 @@ func (s *Service) enrichTargets(targets []model.ApplicationDeployment) {
 
 func (s *Service) Defaults() Defaults {
 	return Defaults{
-		ChartRepoURL:  s.config.HelmRepoURL,
-		ChartName:     s.config.HelmChart,
-		ChartRevision: s.config.HelmRevision,
-		ValuesYAML:    s.config.HelmDefaultsYAML,
+		ChartRepoURL:            s.config.HelmRepoURL,
+		ChartName:               s.config.HelmChart,
+		ChartRevision:           s.config.HelmRevision,
+		ValuesYAML:              s.config.HelmDefaultsYAML,
+		ValuesRepositoryBaseURL: s.config.GitHubWebURL + "/" + s.config.GitHubOrg,
+		ValuesRevision:          s.config.GitHubBranch,
 	}
 }
 

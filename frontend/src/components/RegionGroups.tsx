@@ -20,9 +20,16 @@ type Props = {
   environment: string
   /** Values commit the whole onboarding is pinned to; shown once per group. */
   revision?: string
+  /** The parent release card may already display the environment and region. */
+  showScopeName?: boolean
 }
 
-export function RegionGroups({ targets, environment, revision }: Props) {
+export function RegionGroups({
+  targets,
+  environment,
+  revision,
+  showScopeName = true,
+}: Props) {
   const groups = groupByRegion(targets)
 
   return (
@@ -34,7 +41,7 @@ export function RegionGroups({ targets, environment, revision }: Props) {
           aria-label={`Deployment scope ${environment}-${group.region}`}
         >
           <div className="region-group-heading">
-            <strong>{environment}-{group.region}</strong>
+            {showScopeName && <strong>{environment}-{group.region}</strong>}
             <span>
               {group.targets.length} {group.targets.length === 1 ? 'cluster' : 'clusters'}
             </span>

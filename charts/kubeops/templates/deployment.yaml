@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "kubeops.fullname" . }}
+  name: {{ include "kubeops.resourceName" (dict "root" . "suffix" "deployment") }}
   labels:
     {{- include "kubeops.labels" . | nindent 4 }}
 spec:

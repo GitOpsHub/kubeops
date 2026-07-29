@@ -13,5 +13,5 @@ Application URL:
 {{- end }}
 {{- else }}
 To access the application locally:
-  kubectl --namespace {{ .Release.Namespace }} port-forward service/{{ include "kubeops.fullname" . }} 8080:{{ .Values.service.port }}
+  kubectl --namespace {{ .Release.Namespace }} port-forward service/{{ include "kubeops.resourceName" (dict "root" . "suffix" "service") }} 8080:{{ .Values.service.port }}
 {{- end }}

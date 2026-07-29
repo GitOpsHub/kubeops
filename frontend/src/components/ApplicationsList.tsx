@@ -1,5 +1,5 @@
-import { Fragment, useCallback, useEffect, useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   applicationsPageSize,
   getApplicationOnboardings,
@@ -14,6 +14,8 @@ import { StatusBadge } from './StatusBadge'
 import { rollupState } from '../lib/status'
 
 const pollIntervalMs = 10_000
+const applicationFetchPageSize = 200
+const environmentOrder = ['dev', 'qa', 'prod']
 
 function isStatus(value: string): value is OnboardingStatus {
   return (onboardingStatuses as string[]).includes(value)
@@ -23,8 +25,86 @@ function targetCountLabel(count: number) {
   return `${count} ${count === 1 ? 'target' : 'targets'}`
 }
 
+function releaseCountLabel(count: number) {
+  return `${count} ${count === 1 ? 'release' : 'releases'}`
+}
+
+function groupStatus(records: ApplicationOnboarding[]): OnboardingStatus {
+  const statuses = new Set(records.map((record) => record.status))
+  if (statuses.size === 1) return records[0].status
+  if (statuses.has('failed') || statuses.has('partial')) return 'partial'
+  if (statuses.has('progressing')) return 'progressing'
+  if (statuses.has('healthy')) return 'partial'
+  return 'offboarded'
+}
+
+function uniqueSorted(values: string[]) {
+  return [...new Set(values.filter(Boolean))].sort((left, right) => left.localeCompare(right))
+}
+
+function compareEnvironments(left: string, right: string) {
+  const leftIndex = environmentOrder.indexOf(left)
+  const rightIndex = environmentOrder.indexOf(right)
+  if (leftIndex === -1 && rightIndex === -1) return left.localeCompare(right)
+  if (leftIndex === -1) return 1
+  if (rightIndex === -1) return -1
+  return leftIndex - rightIndex
+}
+
+function groupReleasesByEnvironment(records: ApplicationOnboarding[]) {
+  const groups = new Map<string, ApplicationOnboarding[]>()
+  for (const record of records) {
+    const current = groups.get(record.environment)
+    if (current) current.push(record)
+    else groups.set(record.environment, [record])
+  }
+  return [...groups.entries()]
+    .sort(([left], [right]) => compareEnvironments(left, right))
+    .map(([environment, releases]) => ({
+      environment,
+      releases: releases.sort((left, right) => left.region.localeCompare(right.region)),
+    }))
+}
+
+function groupApplications(records: ApplicationOnboarding[]) {
+  const groups = new Map<string, ApplicationOnboarding[]>()
+  for (const record of records) {
+    const key = record.name.trim().toLocaleLowerCase()
+    const current = groups.get(key)
+    if (current) current.push(record)
+    else groups.set(key, [record])
+  }
+
+  return [...groups.entries()].map(([key, groupedRecords]) => {
+    const recordsByScope = [...groupedRecords].sort(
+      (left, right) =>
+        compareEnvironments(left.environment, right.environment) ||
+        left.region.localeCompare(right.region),
+    )
+    const targets = recordsByScope.flatMap((record) => record.targets)
+    const identityRecord = [...recordsByScope].sort(
+      (left, right) =>
+        new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime() ||
+        left.id.localeCompare(right.id),
+    )[0]
+    return {
+      key,
+      name: recordsByScope[0].name,
+      // The first persisted onboarding ID anchors the logical group, so adding
+      // another regional release later does not renumber the application.
+      applicationId: identityRecord.id,
+      records: recordsByScope,
+      targets,
+      namespaces: uniqueSorted(recordsByScope.map((record) => record.namespace)),
+      environments: uniqueSorted(recordsByScope.map((record) => record.environment)),
+      regions: uniqueSorted(recordsByScope.map((record) => record.region)),
+      platformIds: uniqueSorted(targets.map((target) => target.sourceId)),
+      status: groupStatus(recordsByScope),
+    }
+  })
+}
+
 export function ApplicationsList() {
-  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const [items, setItems] = useState<ApplicationOnboarding[]>([])
   const [total, setTotal] = useState(0)
@@ -42,12 +122,20 @@ export function ApplicationsList() {
     async (signal?: AbortSignal, quiet = false) => {
       if (!quiet) setLoading(true)
       try {
-        const result = await getApplicationOnboardings(
-          { search, status, page, pageSize: applicationsPageSize },
-          signal,
-        )
-        setItems(result.items)
-        setTotal(result.total)
+        const loaded: ApplicationOnboarding[] = []
+        let apiPage = 1
+        let resultTotal = 0
+        do {
+          const result = await getApplicationOnboardings(
+            { search, status, page: apiPage, pageSize: applicationFetchPageSize },
+            signal,
+          )
+          loaded.push(...result.items)
+          resultTotal = result.total
+          apiPage += 1
+        } while (loaded.length < resultTotal)
+        setItems(loaded)
+        setTotal(resultTotal)
         setError('')
       } catch (loadError) {
         if (!(loadError instanceof DOMException && loadError.name === 'AbortError')) {
@@ -59,7 +147,7 @@ export function ApplicationsList() {
         if (!quiet) setLoading(false)
       }
     },
-    [page, search, status],
+    [search, status],
   )
 
   useEffect(() => {
@@ -88,7 +176,19 @@ export function ApplicationsList() {
     )
   }
 
-  const totalPages = Math.max(1, Math.ceil(total / applicationsPageSize))
+  const groups = useMemo(() => groupApplications(items), [items])
+  const totalPages = Math.max(1, Math.ceil(groups.length / applicationsPageSize))
+  const visibleGroups = groups.slice(
+    (page - 1) * applicationsPageSize,
+    page * applicationsPageSize,
+  )
+
+  useEffect(() => {
+    if (loading || page <= totalPages) return
+    const next = new URLSearchParams(searchParams)
+    next.set('page', String(totalPages))
+    setSearchParams(next, { replace: true })
+  }, [loading, page, searchParams, setSearchParams, totalPages])
 
   return (
     <section className="applications-page" aria-labelledby="applications-heading">
@@ -192,7 +292,7 @@ export function ApplicationsList() {
             <span className="loader" aria-hidden="true" />
             Loading applications…
           </div>
-        ) : items.length === 0 ? (
+        ) : groups.length === 0 ? (
           <div className="table-state">
             <KubernetesLogo className="empty-kubernetes-logo" />
             {search || status ? (
@@ -216,36 +316,34 @@ export function ApplicationsList() {
                   <tr>
                     <th className="expander-cell" aria-label="Expand row" />
                     <th>Application</th>
+                    <th>Platform ID</th>
                     <th>Namespace</th>
                     <th>Environment</th>
                     <th>Region</th>
-                    <th>Targets</th>
+                    <th>Releases / targets</th>
                     <th>Reconciliation</th>
                     <th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((item) => {
-                    const isExpanded = expanded.includes(item.id)
-                    const rollup = rollupState(item.targets)
+                  {visibleGroups.map((group) => {
+                    const isExpanded = expanded.includes(group.key)
+                    const rollup = rollupState(group.targets)
+                    const primaryRecord = group.records[0]
                     return (
-                      <Fragment key={item.id}>
-                        <tr
-                          className="row-clickable"
-                          onClick={() => void navigate(`/applications/${item.id}`)}
-                        >
+                      <Fragment key={group.key}>
+                        <tr>
                           <td className="expander-cell">
                             <button
                               type="button"
                               className="row-expander"
                               aria-expanded={isExpanded}
                               aria-label={`${isExpanded ? 'Hide' : 'Show'} deployment targets for ${
-                                item.name
+                                group.name
                               }`}
                               onClick={(event) => {
-                                // The row navigates; the expander must not.
                                 event.stopPropagation()
-                                toggleExpanded(item.id)
+                                toggleExpanded(group.key)
                               }}
                             >
                               <svg viewBox="0 0 12 12" aria-hidden="true">
@@ -261,14 +359,48 @@ export function ApplicationsList() {
                             </button>
                           </td>
                           <td>
-                            <Link className="application-name" to={`/applications/${item.id}`}>
-                              {item.name}
+                            <Link
+                              className="application-name"
+                              to={`/applications/${primaryRecord.id}`}
+                            >
+                              {group.name}
                             </Link>
+                            <span className="application-id" title={group.applicationId}>
+                              ID {group.applicationId}
+                            </span>
                           </td>
-                          <td className="mono">{item.namespace}</td>
-                          <td><span className="environment-tag">{item.environment}</span></td>
-                          <td className="mono">{item.region || '—'}</td>
-                          <td>{targetCountLabel(item.targets.length)}</td>
+                          <td>
+                            <div className="platform-id-list">
+                              {group.platformIds.length > 0
+                                ? group.platformIds.map((platformId) => (
+                                    <span className="platform-id" key={platformId}>
+                                      {platformId}
+                                    </span>
+                                  ))
+                                : '—'}
+                            </div>
+                          </td>
+                          <td className="mono">
+                            {group.namespaces.length === 1
+                              ? group.namespaces[0]
+                              : `${group.namespaces.length} namespaces`}
+                          </td>
+                          <td>
+                            <div className="environment-list">
+                              {group.environments.map((environment) => (
+                                <span className="environment-tag" key={environment}>
+                                  {environment}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="mono">{group.regions.join(', ') || '—'}</td>
+                          <td>
+                            <span className="release-target-count">
+                              {releaseCountLabel(group.records.length)}
+                              <small>{targetCountLabel(group.targets.length)}</small>
+                            </span>
+                          </td>
                           <td>
                             <StateDelta
                               syncStatus={rollup.syncStatus}
@@ -276,25 +408,82 @@ export function ApplicationsList() {
                             />
                           </td>
                           <td>
-                            <StatusBadge status={item.status} />
+                            <StatusBadge status={group.status} />
                           </td>
                         </tr>
                         {isExpanded && (
                           <tr className="expanded-row">
-                            <td colSpan={8}>
-                              {item.targets.length === 0 ? (
-                                <div className="region-groups">
-                                  <p className="quiet-note">
-                                    This application has no deployment targets.
-                                  </p>
-                                </div>
-                              ) : (
-                                <RegionGroups
-                                  targets={item.targets}
-                                  environment={item.environment}
-                                  revision={item.valuesCommitSha}
-                                />
-                              )}
+                            <td colSpan={9}>
+                              <div className="application-release-groups">
+                                {groupReleasesByEnvironment(group.records).map(
+                                  ({ environment, releases }) => (
+                                    <section
+                                      className={`application-environment-group application-environment-group--${environment}`}
+                                      key={environment}
+                                      aria-label={`${environment} releases`}
+                                    >
+                                      <header className="application-environment-heading">
+                                        <div>
+                                          <span
+                                            className="application-environment-marker"
+                                            aria-hidden="true"
+                                          />
+                                          <strong>{environment}</strong>
+                                          <span>environment</span>
+                                        </div>
+                                        <small>
+                                          {releases.length}{' '}
+                                          {releases.length === 1
+                                            ? 'regional release'
+                                            : 'regional releases'}
+                                        </small>
+                                      </header>
+                                      <div className="application-environment-releases">
+                                        {releases.map((record) => (
+                                          <section
+                                            className="application-release"
+                                            key={record.id}
+                                            aria-label={`Release ${record.environment}-${record.region}`}
+                                          >
+                                            <header className="application-release-heading">
+                                              <div className="application-release-identity">
+                                                <span>Region</span>
+                                                <strong>{record.region}</strong>
+                                                <code>{record.namespace}</code>
+                                              </div>
+                                              <div className="application-release-actions">
+                                                {record.targets.length > 1 && (
+                                                  <StatusBadge status={record.status} />
+                                                )}
+                                                <Link
+                                                  to={`/applications/${record.id}`}
+                                                  aria-label={`Open ${record.environment}-${record.region} application view`}
+                                                >
+                                                  <svg viewBox="0 0 16 16" aria-hidden="true">
+                                                    <path d="M3 8h9M8.5 3.5 13 8l-4.5 4.5" />
+                                                  </svg>
+                                                </Link>
+                                              </div>
+                                            </header>
+                                            {record.targets.length === 0 ? (
+                                              <p className="quiet-note">
+                                                This release has no deployment targets.
+                                              </p>
+                                            ) : (
+                                              <RegionGroups
+                                                targets={record.targets}
+                                                environment={record.environment}
+                                                revision={record.valuesCommitSha}
+                                                showScopeName={false}
+                                              />
+                                            )}
+                                          </section>
+                                        ))}
+                                      </div>
+                                    </section>
+                                  ),
+                                )}
+                              </div>
                             </td>
                           </tr>
                         )}
@@ -308,7 +497,9 @@ export function ApplicationsList() {
         )}
         <div className="pagination">
           <span>
-            Page {page} of {totalPages} · {total} applications
+            Page {page} of {totalPages} · {groups.length}{' '}
+            {groups.length === 1 ? 'application' : 'applications'} · {total}{' '}
+            {total === 1 ? 'release' : 'releases'}
           </span>
           <div className="pagination-controls">
             <button

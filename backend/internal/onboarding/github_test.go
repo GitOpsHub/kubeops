@@ -101,6 +101,68 @@ func TestGitHubClientProvisionsValuesRepository(t *testing.T) {
 	}
 }
 
+func TestGitHubClientUpdatesReleaseReplicaCount(t *testing.T) {
+	var updated map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			if r.URL.Query().Get("ref") != "main" {
+				t.Fatalf("unexpected revision: %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"sha":      "file-sha",
+				"encoding": "base64",
+				"content": base64.StdEncoding.EncodeToString(
+					[]byte("replicaCount: 2\nimage:\n  repository: nginx\n"),
+				),
+			})
+		case http.MethodPut:
+			var body struct {
+				Message string `json:"message"`
+				Content string `json:"content"`
+				Branch  string `json:"branch"`
+				SHA     string `json:"sha"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := base64.StdEncoding.DecodeString(body.Content)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := yaml.Unmarshal(decoded, &updated); err != nil {
+				t.Fatal(err)
+			}
+			if body.Branch != "main" || body.SHA != "file-sha" ||
+				!strings.Contains(body.Message, "5 replicas") {
+				t.Fatalf("unexpected update request: %#v", body)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"commit": map[string]string{"sha": "scaled-commit"},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := &GitHubClient{
+		apiURL: server.URL, organization: "GitOpsHub", staticToken: "token",
+		client: &http.Client{Timeout: time.Second},
+	}
+	update, err := client.UpdateReplicas(
+		context.Background(), "payments", "main", "prod", "us-east-2", 5,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated["replicaCount"] != 5 || update.CommitSHA != "scaled-commit" ||
+		!strings.Contains(update.ValuesYAML, "repository: nginx") {
+		t.Fatalf("unexpected replica update: values=%#v result=%#v", updated, update)
+	}
+}
+
 func TestGitHubClientReusesExistingRepositoryValues(t *testing.T) {
 	privateKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

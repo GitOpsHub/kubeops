@@ -22,6 +22,18 @@ Create a default fully qualified app name.
 {{- end }}
 
 {{/*
+Create a release-scoped name with a resource-kind suffix. Truncate the release
+portion first so the suffix is always preserved within Kubernetes' 63-character
+DNS label limit.
+*/}}
+{{- define "kubeops.resourceName" -}}
+{{- $suffix := .suffix -}}
+{{- $maxStemLength := sub 62 (len $suffix) | int -}}
+{{- $stem := default .root.Release.Name .root.Values.fullnameOverride -}}
+{{- printf "%s-%s" ($stem | trunc $maxStemLength | trimSuffix "-") $suffix -}}
+{{- end }}
+
+{{/*
 Create chart name and version as used by the chart label.
 */}}
 {{- define "kubeops.chart" -}}
@@ -53,7 +65,7 @@ Create the name of the service account to use.
 */}}
 {{- define "kubeops.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create }}
-{{- default (include "kubeops.fullname" .) .Values.serviceAccount.name }}
+{{- default (include "kubeops.resourceName" (dict "root" . "suffix" "serviceaccount")) .Values.serviceAccount.name }}
 {{- else }}
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}

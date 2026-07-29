@@ -64,7 +64,9 @@ type OnboardingConfig struct {
 	ArgoTargets       []ArgoTarget
 	ArgoCredentialKey []byte
 	GitHubAPIURL      string
+	GitHubWebURL      string
 	GitHubOrg         string
+	GitHubBranch      string
 	GitHubToken       string
 	GitHubAppID       int64
 	GitHubInstallID   int64
@@ -179,7 +181,9 @@ func loadOnboardingConfig() (OnboardingConfig, error) {
 		ArgoTargets:       targets,
 		ArgoCredentialKey: credentialKey,
 		GitHubAPIURL:      valueOrDefault("GITHUB_API_URL", "https://api.github.com"),
+		GitHubWebURL:      strings.TrimSuffix(valueOrDefault("GITHUB_WEB_URL", "https://github.com"), "/"),
 		GitHubOrg:         valueOrDefault("GITHUB_ORG", "GitOpsHub"),
+		GitHubBranch:      valueOrDefault("GITHUB_DEFAULT_BRANCH", "main"),
 		GitHubToken:       strings.TrimSpace(os.Getenv("GITHUB_TOKEN")),
 		GitHubAppID:       appID,
 		GitHubInstallID:   installationID,

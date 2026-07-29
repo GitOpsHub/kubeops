@@ -67,6 +67,8 @@ type fakeApplicationOnboarder struct {
 	record     model.ApplicationOnboarding
 	err        error
 	syncID     string
+	scaleID    string
+	replicas   int32
 	offboardID string
 	// Resource endpoints: what to return, and what the handler passed through.
 	resources       []onboarding.ResourceNode
@@ -120,6 +122,15 @@ func (f *fakeApplicationOnboarder) Sync(
 	id string,
 ) (model.ApplicationOnboarding, error) {
 	f.syncID = id
+	return f.record, f.err
+}
+func (f *fakeApplicationOnboarder) Scale(
+	_ context.Context,
+	id string,
+	replicas int32,
+) (model.ApplicationOnboarding, error) {
+	f.scaleID = id
+	f.replicas = replicas
 	return f.record, f.err
 }
 func (f *fakeApplicationOnboarder) Offboard(
@@ -396,6 +407,45 @@ func TestCreateApplicationOnboarding(t *testing.T) {
 	}
 	if onboarder.input.Name != "payments" || len(onboarder.input.ClusterIDs) != 1 {
 		t.Fatalf("unexpected input: %#v", onboarder.input)
+	}
+}
+
+func TestScaleApplicationOnboarding(t *testing.T) {
+	onboarder := &fakeApplicationOnboarder{record: model.ApplicationOnboarding{
+		ID: "onboarding-1", Name: "payments", Status: "progressing",
+	}}
+	handler := NewHandlerWithOnboarding(
+		config.Config{}, &fakeRepository{}, &fakeClusterManager{}, onboarder,
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(
+		http.MethodPost,
+		"/api/application-onboardings/onboarding-1/scale",
+		strings.NewReader(`{"replicas":5}`),
+	))
+
+	if response.Code != http.StatusOK || onboarder.scaleID != "onboarding-1" ||
+		onboarder.replicas != 5 {
+		t.Fatalf(
+			"unexpected scale response: status=%d id=%q replicas=%d body=%s",
+			response.Code, onboarder.scaleID, onboarder.replicas, response.Body.String(),
+		)
+	}
+}
+
+func TestScaleApplicationOnboardingRequiresReplicaCount(t *testing.T) {
+	handler := NewHandlerWithOnboarding(
+		config.Config{}, &fakeRepository{}, &fakeClusterManager{}, &fakeApplicationOnboarder{},
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(
+		http.MethodPost,
+		"/api/application-onboardings/onboarding-1/scale",
+		strings.NewReader(`{}`),
+	))
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("unexpected status: %d %s", response.Code, response.Body.String())
 	}
 }
 

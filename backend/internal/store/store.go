@@ -710,6 +710,27 @@ func (s *Store) GetApplicationOnboarding(ctx context.Context, id string) (model.
 	return onboarding, nil
 }
 
+func (s *Store) UpdateApplicationOnboardingValues(
+	ctx context.Context,
+	id string,
+	valuesDigest string,
+	valuesCommitSHA string,
+) error {
+	result, err := s.pool.Exec(ctx, `
+		UPDATE application_onboardings
+		SET values_digest = $2, values_commit_sha = $3, updated_at = NOW()
+		WHERE id::text = $1`,
+		id, valuesDigest, valuesCommitSHA,
+	)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
 func (s *Store) ListApplicationOnboardings(
 	ctx context.Context,
 	filter model.ApplicationOnboardingFilter,

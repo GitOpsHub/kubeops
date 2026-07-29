@@ -35,6 +35,7 @@ type ApplicationOnboarder interface {
 	Create(context.Context, onboarding.CreateInput) (model.ApplicationOnboarding, error)
 	Get(context.Context, string) (model.ApplicationOnboarding, error)
 	Sync(context.Context, string) (model.ApplicationOnboarding, error)
+	Scale(context.Context, string, int32) (model.ApplicationOnboarding, error)
 	Offboard(context.Context, string) (model.ApplicationOnboarding, error)
 	List(
 		context.Context,
@@ -95,6 +96,7 @@ func newHandler(
 	mux.HandleFunc("GET /api/application-onboardings/defaults", api.applicationOnboardingDefaults)
 	mux.HandleFunc("GET /api/application-onboardings/{id}", api.applicationOnboarding)
 	mux.HandleFunc("POST /api/application-onboardings/{id}/sync", api.syncApplicationOnboarding)
+	mux.HandleFunc("POST /api/application-onboardings/{id}/scale", api.scaleApplicationOnboarding)
 	mux.HandleFunc("POST /api/application-onboardings/{id}/offboard", api.offboardApplicationOnboarding)
 	mux.HandleFunc(
 		"GET /api/application-onboardings/{id}/targets/{targetId}/resources",
@@ -567,6 +569,42 @@ func (api *API) applicationOnboarding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, item)
+}
+
+func (api *API) scaleApplicationOnboarding(w http.ResponseWriter, r *http.Request) {
+	if api.onboarder == nil {
+		writeError(w, http.StatusServiceUnavailable, "application onboarding is not available")
+		return
+	}
+	var input struct {
+		Replicas *int32 `json:"replicas"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil || input.Replicas == nil {
+		writeError(w, http.StatusBadRequest, "request body must contain a replica count")
+		return
+	}
+	result, err := api.onboarder.Scale(r.Context(), r.PathValue("id"), *input.Replicas)
+	var validationError onboarding.ValidationError
+	var externalError onboarding.ExternalError
+	switch {
+	case errors.As(err, &validationError):
+		writeError(w, http.StatusUnprocessableEntity, validationError.Message)
+		return
+	case errors.As(err, &externalError):
+		slog.Error("scale application through GitHub", "error", externalError)
+		writeError(w, http.StatusBadGateway, "GitHub could not update application replicas")
+		return
+	case errors.Is(err, pgx.ErrNoRows):
+		writeError(w, http.StatusNotFound, "application onboarding not found")
+		return
+	case err != nil:
+		slog.Error("scale application onboarding", "error", err)
+		writeError(w, http.StatusInternalServerError, "unable to scale application")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (api *API) syncApplicationOnboarding(w http.ResponseWriter, r *http.Request) {
