@@ -198,6 +198,7 @@ type ApplicationOnboarding struct {
 	ChartRepoURL             string                  `json:"chartRepoUrl"`
 	ChartName                string                  `json:"chartName"`
 	ChartRevision            string                  `json:"chartRevision"`
+	Image                    string                  `json:"image"`
 	ValuesDigest             string                  `json:"valuesDigest"`
 	ValuesRepositoryURL      string                  `json:"valuesRepositoryUrl"`
 	ValuesRepositoryCloneURL string                  `json:"valuesRepositoryCloneUrl,omitempty"`

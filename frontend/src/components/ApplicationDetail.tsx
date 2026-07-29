@@ -7,7 +7,8 @@ import {
   syncApplicationOnboarding,
   type ApplicationOnboarding,
 } from '../api/onboarding'
-import { DeploymentTargetLogo, DeploymentTargetPanel } from './DeploymentTargetPanel'
+import { KubernetesLogo, ProviderLogo } from './BrandIcons'
+import { DeploymentTargetLogo } from './DeploymentTargetPanel'
 import { DeployStepper } from './DeployStepper'
 import { ResourceExplorer } from './ResourceExplorer'
 import { Tabs } from './Tabs'
@@ -40,7 +41,7 @@ export function ApplicationDetail() {
   const [actionMessage, setActionMessage] = useState('')
   const [actionError, setActionError] = useState('')
   const [confirmingOffboard, setConfirmingOffboard] = useState(false)
-  const [activeTab, setActiveTab] = useState('targets')
+  const [activeTab, setActiveTab] = useState('resources')
   const [resourceTargetId, setResourceTargetId] = useState('')
 
   const load = useCallback(
@@ -192,18 +193,18 @@ export function ApplicationDetail() {
 
       <header className="detail-header">
         <div className="detail-identity">
-          <div>
+          <div className="detail-identity-copy">
             <p className="kicker">GitOps delivery</p>
             <h1 id="application-heading">{record.name}</h1>
-            <div className="detail-meta">
-              <span className="mono">{record.namespace}</span>
-              <span className="detail-meta-divider">·</span>
-              <span className="environment-tag">{record.environment}</span>
-              <span className="detail-meta-divider">·</span>
-              <span className="mono">{record.region}</span>
+            <div className="detail-image-version">
+              <ProviderLogo provider="docker" className="detail-image-logo" />
+              <div>
+                <span>Container image</span>
+                <strong className="mono">{record.image || 'Image not reported'}</strong>
+              </div>
             </div>
           </div>
-          <div className="heading-actions">
+          <div className="detail-primary-actions" aria-label="Application actions">
             <button
               type="button"
               className="primary-button"
@@ -211,21 +212,66 @@ export function ApplicationDetail() {
               onClick={() => void syncResources()}
             >
               {action === 'sync'
-                ? 'Syncing…'
+                ? 'Deploying…'
                 : record.status === 'offboarded'
-                  ? 'Re-onboard from GitHub'
-                  : 'Sync resources'}
+                  ? 'Deploy again'
+                  : 'Deploy'}
             </button>
             <button
               type="button"
-              className="danger-button"
-              disabled={
-                action !== null || record.status === 'offboarded' || record.targets.length === 0
-              }
-              onClick={() => setConfirmingOffboard(true)}
+              className="ghost-button"
+              disabled={record.targets.length === 0}
+              onClick={() => setActiveTab('resources')}
             >
-              Offboard
+              Scale
             </button>
+          </div>
+          <div className="detail-target-summary" aria-label="Deployment clusters">
+            <p className="section-label">
+              {visibleTargets.length === 1 ? 'Deployment cluster' : 'Deployment clusters'}
+            </p>
+            <div className="detail-target-list">
+              {visibleTargets.length === 0 ? (
+                <span className="detail-target-empty">No clusters assigned</span>
+              ) : (
+                visibleTargets.map((target) => (
+                  <article
+                    className="detail-target-identity"
+                    key={target.id}
+                    aria-label={`Deployment target ${target.clusterName}`}
+                  >
+                    <div className="detail-target-row">
+                      <DeploymentTargetLogo target={target} />
+                      <div>
+                        <span>Cluster</span>
+                        <strong>{target.clusterName}</strong>
+                      </div>
+                    </div>
+                    <div className="detail-target-row">
+                      <span className="detail-namespace-logo" aria-hidden="true">
+                        <KubernetesLogo />
+                      </span>
+                      <div>
+                        <span>Namespace</span>
+                        <strong>{record.namespace}</strong>
+                      </div>
+                    </div>
+                    {target.argoApplicationUrl && (
+                      <a
+                        className="detail-target-argo-link"
+                        href={target.argoApplicationUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        aria-label={`Open ${target.clusterName} in Argo CD`}
+                        title="Open in Argo CD"
+                      >
+                        ↗
+                      </a>
+                    )}
+                  </article>
+                ))
+              )}
+            </div>
           </div>
         </div>
         <DeployStepper targets={record.targets} />
@@ -291,36 +337,6 @@ export function ApplicationDetail() {
             activeId={activeTab}
             onChange={setActiveTab}
             items={[
-              {
-                id: 'targets',
-                label: 'Deployment targets',
-                content:
-                  visibleTargets.length === 0 ? (
-                    <div className="empty-panel">
-                      This application has no deployment targets. Onboard it again with at least
-                      one region.
-                    </div>
-                  ) : (
-                    <>
-                      <div className="section-heading section-heading--compact">
-                        <div>
-                          <h2>
-                            {visibleTargets.length}{' '}
-                            {visibleTargets.length === 1
-                              ? 'Argo application'
-                              : 'Argo applications'}
-                          </h2>
-                        </div>
-                        <span className="quiet-note">Refreshes every 5 seconds</span>
-                      </div>
-                      <div className="target-grid">
-                        {visibleTargets.map((target) => (
-                          <DeploymentTargetPanel key={target.id} target={target} />
-                        ))}
-                      </div>
-                    </>
-                  ),
-              },
               {
                 id: 'resources',
                 label: 'Kubernetes resources',
@@ -439,6 +455,24 @@ export function ApplicationDetail() {
                         </div>
                       </div>
                     ))}
+                    <section className="application-danger-zone">
+                      <div>
+                        <strong>Offboard application</strong>
+                        <span>Remove managed resources while keeping the GitHub values.</span>
+                      </div>
+                      <button
+                        type="button"
+                        className="danger-button"
+                        disabled={
+                          action !== null ||
+                          record.status === 'offboarded' ||
+                          record.targets.length === 0
+                        }
+                        onClick={() => setConfirmingOffboard(true)}
+                      >
+                        Offboard
+                      </button>
+                    </section>
                   </div>
                 ),
               },

@@ -34,6 +34,7 @@ export type ApplicationOnboarding = {
   chartRepoUrl: string
   chartName: string
   chartRevision: string
+  image: string
   valuesDigest: string
   valuesRepositoryUrl: string
   valuesRepositoryCloneUrl?: string

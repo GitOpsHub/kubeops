@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/GitOpsHub/kubeops/backend/internal/config"
+	"gopkg.in/yaml.v3"
 )
 
 func TestNewGitHubClientUsesPATWithoutGitHubApp(t *testing.T) {
@@ -60,7 +61,7 @@ func TestGitHubClientProvisionsValuesRepository(t *testing.T) {
 				"clone_url":      "https://github.com/GitOpsHub/payments.git",
 				"default_branch": "main",
 			})
-		case r.URL.Path == "/repos/GitOpsHub/payments/contents/values.yaml":
+		case r.URL.Path == "/repos/GitOpsHub/payments/contents/dev/us-east-1/values.yaml":
 			var body struct {
 				Content string `json:"content"`
 				Branch  string `json:"branch"`
@@ -88,7 +89,8 @@ func TestGitHubClientProvisionsValuesRepository(t *testing.T) {
 		client: &http.Client{Timeout: time.Second},
 	}
 	repository, err := client.Ensure(
-		context.Background(), "payments", "replicaCount: 2\n", nil, nil,
+		context.Background(), "payments", "dev", "replicaCount: 2\n", nil,
+		[]string{"us-east-1"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -125,8 +127,16 @@ func TestGitHubClientReusesExistingRepositoryValues(t *testing.T) {
 			})
 		case r.URL.Path == "/repos/GitOpsHub/payments/commits/main":
 			_ = json.NewEncoder(w).Encode(map[string]string{"sha": "existing-commit"})
-		case r.URL.Path == "/repos/GitOpsHub/payments/contents/us-east-1/values.yaml":
-			_ = json.NewEncoder(w).Encode(map[string]string{})
+		case r.URL.Path == "/repos/GitOpsHub/payments/contents/dev/us-east-1/values.yaml":
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"encoding": "base64",
+				"content":  base64.StdEncoding.EncodeToString([]byte("replicaCount: 9\n")),
+			})
+		case r.Method == http.MethodPut &&
+			r.URL.Path == "/repos/GitOpsHub/payments/contents/dev/eu-west-1/values.yaml":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"commit": map[string]string{"sha": "scoped-commit"},
+			})
 		default:
 			http.NotFound(w, r)
 		}
@@ -138,15 +148,15 @@ func TestGitHubClientReusesExistingRepositoryValues(t *testing.T) {
 		client: &http.Client{Timeout: time.Second},
 	}
 	repository, err := client.Ensure(
-		context.Background(), "payments", "replicaCount: 2\n", nil,
+		context.Background(), "payments", "dev", "replicaCount: 2\n", nil,
 		[]string{"us-east-1", "eu-west-1"},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !repository.Existing || repository.ValuesYAML != "replicaCount: 9\n" ||
-		repository.CommitSHA != "existing-commit" || !repository.RegionValues["us-east-1"] ||
-		repository.RegionValues["eu-west-1"] {
+		repository.CommitSHA != "scoped-commit" || !repository.RegionValues["us-east-1"] ||
+		!repository.RegionValues["eu-west-1"] {
 		t.Fatalf("unexpected existing repository: %#v", repository)
 	}
 }
@@ -179,10 +189,31 @@ func TestGitHubClientPreservesRepositoryWhenValuesCommitFails(t *testing.T) {
 		appID: 1, installationID: 2, privateKey: privateKey,
 		client: &http.Client{Timeout: time.Second},
 	}
-	if _, err := client.Ensure(context.Background(), "payments", "{}\n", nil, nil); err == nil {
+	if _, err := client.Ensure(
+		context.Background(), "payments", "dev", "{}\n", nil, []string{"us-east-1"},
+	); err == nil {
 		t.Fatal("expected values commit failure")
 	}
 	if deleted {
 		t.Fatal("values repository must be preserved after a provisioning failure")
+	}
+}
+
+func TestMergeValuesYAMLBuildsOneScopedValuesFile(t *testing.T) {
+	merged, err := mergeValuesYAML(
+		"replicaCount: 2\nimage:\n  repository: nginx\n  tag: stable\n",
+		"replicaCount: 4\nimage:\n  tag: qa\n",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var values map[string]any
+	if err := yaml.Unmarshal([]byte(merged), &values); err != nil {
+		t.Fatal(err)
+	}
+	image, ok := values["image"].(map[string]any)
+	if !ok || values["replicaCount"] != 4 ||
+		image["repository"] != "nginx" || image["tag"] != "qa" {
+		t.Fatalf("unexpected merged values: %#v", values)
 	}
 }

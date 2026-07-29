@@ -94,6 +94,19 @@
   font-weight: 600;
 }
 
+.onboarding-fields .field-hint {
+  min-height: 18px;
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.onboarding-fields .field-hint .mono {
+  color: var(--text-muted);
+  font-size: inherit;
+}
+
 .onboarding-fields input,
 .onboarding-fields select {
   width: 100%;

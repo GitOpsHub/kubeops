@@ -57,6 +57,9 @@ export function ApplicationOnboardingForm() {
   }, [load])
 
   const selectedSet = useMemo(() => new Set(selectedClusterIds), [selectedClusterIds])
+  const deploymentScope = `${environment}-${region}`
+  const deploymentNamespace = namespace ? `${namespace}-${deploymentScope}` : deploymentScope
+  const scopedNameLength = 63 - deploymentScope.length - 1
 
   const sortedClusters = useMemo(
     () =>
@@ -93,8 +96,12 @@ export function ApplicationOnboardingForm() {
   }
 
   function validate() {
-    if (!dnsLabel.test(name) || name.length > 63) return 'Application name must be a lowercase DNS label.'
-    if (!dnsLabel.test(namespace) || namespace.length > 63) return 'Namespace must be a lowercase DNS label.'
+    if (!dnsLabel.test(name) || name.length > scopedNameLength) {
+      return `Application name must leave room for the ${deploymentScope} deployment suffix.`
+    }
+    if (!dnsLabel.test(namespace) || namespace.length > scopedNameLength) {
+      return `Namespace must leave room for the ${deploymentScope} deployment suffix.`
+    }
     if (selectedClusterIds.length === 0) return 'Select at least one target cluster.'
     if (!valuesYaml.trim()) {
       return 'Helm chart defaults could not be loaded. Reload the page and try again.'
@@ -174,7 +181,7 @@ export function ApplicationOnboardingForm() {
               required
               value={name}
               pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?"
-              maxLength={63}
+              maxLength={scopedNameLength}
               placeholder="payments-api"
               onChange={(event) => setName(event.target.value)}
             />
@@ -182,14 +189,18 @@ export function ApplicationOnboardingForm() {
           <label>
             <span>Namespace</span>
             <input
+              aria-label="Namespace"
               type="text"
               required
               value={namespace}
               pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?"
-              maxLength={63}
+              maxLength={scopedNameLength}
               placeholder="payments"
               onChange={(event) => setNamespace(event.target.value)}
             />
+            <small className="field-hint">
+              Deploys as <span className="mono">{deploymentNamespace}</span>
+            </small>
           </label>
           <label>
             <span>Environment</span>

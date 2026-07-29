@@ -291,6 +291,7 @@ export function ApplicationsList() {
                               ) : (
                                 <RegionGroups
                                   targets={item.targets}
+                                  environment={item.environment}
                                   revision={item.valuesCommitSha}
                                 />
                               )}

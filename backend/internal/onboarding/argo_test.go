@@ -50,7 +50,7 @@ func TestHTTPArgoClientCreatesHelmApplication(t *testing.T) {
 		}
 		helm := source["helm"].(map[string]any)
 		valueFiles := helm["valueFiles"].([]any)
-		if valueFiles[0] != "$values/values.yaml" {
+		if valueFiles[0] != "$values/dev/us-east-1/values.yaml" {
 			t.Fatalf("unexpected value files: %#v", valueFiles)
 		}
 		valuesSource := sources[1].(map[string]any)
@@ -77,7 +77,8 @@ func TestHTTPArgoClientCreatesHelmApplication(t *testing.T) {
 		Name: "payments", Namespace: "payments", Project: "default",
 		RepoURL: "https://charts.example.test", Chart: "global-app",
 		Revision: "1.2.3", ValuesRepoURL: "https://github.com/GitOpsHub/payments.git",
-		ValuesRevision: "main", ArgoNamespace: "argo-cd",
+		ValuesRevision: "main", Environment: "dev", Region: "us-east-1",
+		ArgoNamespace: "argo-cd",
 	})
 	if err != nil {
 		t.Fatal(err)

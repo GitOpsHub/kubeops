@@ -44,6 +44,7 @@ export function buildApplication(
     chartRepoUrl: 'https://charts.example.test',
     chartName: 'global-app',
     chartRevision: '1.2.3',
+    image: 'registry.example.test/payments-api:2.4.1',
     valuesDigest: 'sha256:test',
     valuesRepositoryUrl: 'https://github.com/GitOpsHub/payments-api',
     valuesRepositoryCloneUrl: 'https://github.com/GitOpsHub/payments-api.git',
@@ -132,10 +133,12 @@ export function mockAPI(initial: Partial<MockState> = {}) {
         region: string
         clusterIds: string[]
       }
+      const deploymentScope = `${submitted.environment}-${submitted.region}`
+      const deploymentName = `${submitted.name}-${deploymentScope}`
       const created = buildApplication({
         id: 'onboarding-created',
         name: submitted.name,
-        namespace: submitted.namespace,
+        namespace: `${submitted.namespace}-${deploymentScope}`,
         environment: submitted.environment,
         region: submitted.region,
         valuesRepositoryUrl: `https://github.com/GitOpsHub/${submitted.name}`,
@@ -144,8 +147,8 @@ export function mockAPI(initial: Partial<MockState> = {}) {
           buildTarget({
             onboardingId: 'onboarding-created',
             clusterId: submitted.clusterIds[0],
-            argoApplication: submitted.name,
-            argoApplicationUrl: `https://argo.example.test/applications/${submitted.name}`,
+            argoApplication: deploymentName,
+            argoApplicationUrl: `https://argo.example.test/applications/${deploymentName}`,
           }),
         ],
       })

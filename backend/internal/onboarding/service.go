@@ -160,12 +160,24 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 		return model.ApplicationOnboarding{}, err
 	}
 
-	// The Argo CD application is named after the onboarding, so a second record
-	// for the same name and namespace would claim the very same application on
-	// every shared cluster: both would report one application's status, and
-	// offboarding either would delete what the other still claims. The check
-	// runs before any GitHub or Argo CD work so a rejected request leaves
-	// nothing behind.
+	deploymentNamespace := scopedIdentity(input.Namespace, input.Environment, input.Region)
+	deploymentName := scopedIdentity(input.Name, input.Environment, input.Region)
+	if !validDNSLabel(deploymentNamespace) {
+		return model.ApplicationOnboarding{}, ValidationError{
+			Message: "namespace plus environment and region must fit in a 63-character DNS label",
+		}
+	}
+	if !validDNSLabel(deploymentName) {
+		return model.ApplicationOnboarding{}, ValidationError{
+			Message: "application name plus environment and region must fit in a 63-character DNS label",
+		}
+	}
+	input.Namespace = deploymentNamespace
+
+	// Environment and region are part of the deployment identity. The same
+	// logical application may therefore be onboarded into dev, qa, and prod
+	// without sharing a Kubernetes namespace, Argo CD application, or values
+	// repository with another release context.
 	existing, err := s.store.ActiveApplicationOnboardingID(ctx, input.Name, input.Namespace)
 	if err != nil {
 		return model.ApplicationOnboarding{}, fmt.Errorf("look up existing onboarding: %w", err)
@@ -217,7 +229,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 		targetRegionNames = append(targetRegionNames, region)
 	}
 	valuesRepository, err := s.github.Ensure(
-		ctx, input.Name, input.ValuesYAML, regionValues, targetRegionNames,
+		ctx, input.Name, input.Environment, input.ValuesYAML, regionValues, targetRegionNames,
 	)
 	if err != nil {
 		return model.ApplicationOnboarding{}, ExternalError{
@@ -226,6 +238,12 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 	}
 
 	digest := sha256.Sum256([]byte(valuesRepository.ValuesYAML))
+	scopedValues := input.ValuesYAML
+	if override := regionValues[input.Region]; override != "" {
+		if merged, mergeErr := mergeValuesYAML(scopedValues, override); mergeErr == nil {
+			scopedValues = merged
+		}
+	}
 	onboarding, err := s.store.CreateApplicationOnboarding(ctx, model.ApplicationOnboarding{
 		Name:                     input.Name,
 		Namespace:                input.Namespace,
@@ -234,6 +252,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 		ChartRepoURL:             s.config.HelmRepoURL,
 		ChartName:                s.config.HelmChart,
 		ChartRevision:            s.config.HelmRevision,
+		Image:                    imageFromValues(scopedValues),
 		ValuesDigest:             "sha256:" + hex.EncodeToString(digest[:]),
 		ValuesRepositoryURL:      valuesRepository.URL,
 		ValuesRepositoryCloneURL: valuesRepository.CloneURL,
@@ -520,16 +539,18 @@ func (s *Service) applicationSpec(
 	if cloneURL == "" {
 		cloneURL = strings.TrimSuffix(record.ValuesRepositoryURL, "/") + ".git"
 	}
+	environment := ""
 	region := ""
 	if target.HasRegionValues {
+		environment = record.Environment
 		region = target.Region
 	}
 	return ApplicationSpec{
-		Name: record.Name, Namespace: record.Namespace,
+		Name: target.ArgoApplication, Namespace: record.Namespace,
 		Project: s.config.ArgoProject, RepoURL: record.ChartRepoURL,
 		Chart: record.ChartName, Revision: record.ChartRevision,
 		ValuesRepoURL: cloneURL, ValuesRevision: record.ValuesRevision,
-		Region: region, ArgoNamespace: s.config.ArgoNamespace,
+		Environment: environment, Region: region, ArgoNamespace: s.config.ArgoNamespace,
 	}
 }
 
@@ -537,6 +558,9 @@ func (s *Service) Get(ctx context.Context, id string) (model.ApplicationOnboardi
 	record, err := s.store.GetApplicationOnboarding(ctx, id)
 	if err != nil {
 		return model.ApplicationOnboarding{}, err
+	}
+	if record.Image == "" {
+		record.Image = imageFromValues(s.config.HelmDefaultsYAML)
 	}
 	s.enrichTargets(record.Targets)
 	return record, nil
@@ -551,9 +575,37 @@ func (s *Service) List(
 		return model.ApplicationOnboardingPage{}, err
 	}
 	for i := range page.Items {
+		if page.Items[i].Image == "" {
+			page.Items[i].Image = imageFromValues(s.config.HelmDefaultsYAML)
+		}
 		s.enrichTargets(page.Items[i].Targets)
 	}
 	return page, nil
+}
+
+func imageFromValues(valuesYAML string) string {
+	var values struct {
+		Image struct {
+			Repository string `yaml:"repository"`
+			Tag        string `yaml:"tag"`
+			Digest     string `yaml:"digest"`
+		} `yaml:"image"`
+	}
+	if err := yaml.Unmarshal([]byte(valuesYAML), &values); err != nil {
+		return ""
+	}
+	repository := strings.TrimSpace(values.Image.Repository)
+	if repository == "" {
+		return ""
+	}
+	if digest := strings.TrimSpace(values.Image.Digest); digest != "" {
+		return repository + "@" + digest
+	}
+	tag := strings.TrimSpace(values.Image.Tag)
+	if tag == "" {
+		tag = "latest"
+	}
+	return repository + ":" + tag
 }
 
 // enrichTargets attaches the Argo CD deep link for every target whose cluster maps
@@ -734,6 +786,14 @@ func regionOverride(regionValues map[string]string, region string) string {
 
 func validDNSLabel(value string) bool {
 	return len(value) <= 63 && dnsLabel.MatchString(value)
+}
+
+func scopedIdentity(base, environment, region string) string {
+	scope := environment + "-" + region
+	if strings.HasSuffix(base, "-"+scope) {
+		return base
+	}
+	return base + "-" + scope
 }
 
 func uniqueStrings(values []string) []string {
