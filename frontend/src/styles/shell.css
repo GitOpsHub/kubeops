@@ -153,7 +153,8 @@
 }
 
 .dashboard-content {
-  max-width: 1400px;
+  width: 100%;
+  max-width: none;
   margin: 0 auto;
   padding: var(--space-6);
   display: grid;
