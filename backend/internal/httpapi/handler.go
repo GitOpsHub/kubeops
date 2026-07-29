@@ -13,7 +13,6 @@ import (
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
 	"github.com/GitOpsHub/kubeops/backend/internal/onboarding"
 	"github.com/GitOpsHub/kubeops/backend/internal/provider"
-	"github.com/GitOpsHub/kubeops/backend/internal/secure"
 	"github.com/GitOpsHub/kubeops/backend/internal/store"
 	"github.com/jackc/pgx/v5"
 )
@@ -23,7 +22,6 @@ type Repository interface {
 	ListSources(context.Context) ([]model.SourceSummary, error)
 	ListClusters(context.Context, model.ClusterFilter) (model.ClusterPage, error)
 	GetCluster(context.Context, string) (model.Cluster, error)
-	GetArgoAccessByClusterID(context.Context, string) (model.EncryptedArgoAccess, error)
 	ListSyncRuns(context.Context, int) ([]model.SyncRun, error)
 	QueueSync(context.Context, string, string) (model.SyncRun, error)
 }
@@ -188,32 +186,31 @@ func (api *API) clusterArgoAccess(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "cluster id is required")
 		return
 	}
-	encrypted, err := api.store.GetArgoAccessByClusterID(r.Context(), id)
+	cluster, err := api.store.GetCluster(r.Context(), id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "Argo CD access is not configured for this cluster")
+		writeError(w, http.StatusNotFound, "cluster not found")
 		return
 	}
 	if err != nil {
 		if aborted(r) {
 			return
 		}
-		slog.Error("get Argo CD access", "cluster", id, "error", err)
+		slog.Error("get cluster for Argo CD access", "cluster", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "unable to load Argo CD access")
 		return
 	}
-	password, err := secure.Decrypt(
-		api.config.Onboarding.ArgoCredentialKey,
-		encrypted.PasswordCiphertext,
-		encrypted.PasswordNonce,
-	)
-	if err != nil {
-		slog.Error("decrypt Argo CD access", "cluster", id, "error", err)
-		writeError(w, http.StatusInternalServerError, "unable to load Argo CD access")
+	for _, target := range api.config.Onboarding.ArgoTargets {
+		if target.SourceID != cluster.SourceID ||
+			target.ProviderResourceID != cluster.ProviderResourceID {
+			continue
+		}
+		writeJSON(w, http.StatusOK, model.ArgoAccess{
+			URL: api.config.Onboarding.PublicBaseURL + argoProxyPrefix +
+				target.ProxyID() + "/applications",
+		})
 		return
 	}
-	writeJSON(w, http.StatusOK, model.ArgoAccess{
-		URL: encrypted.URL, Username: encrypted.Username, Password: string(password),
-	})
+	writeError(w, http.StatusNotFound, "Argo CD access is not configured for this cluster")
 }
 
 func (api *API) scaleNodePool(w http.ResponseWriter, r *http.Request) {

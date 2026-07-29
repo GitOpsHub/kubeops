@@ -45,10 +45,12 @@ type Repository interface {
 }
 
 type CreateInput struct {
-	Name       string   `json:"name"`
-	Namespace  string   `json:"namespace"`
-	ClusterIDs []string `json:"clusterIds"`
-	ValuesYAML string   `json:"valuesYaml"`
+	Name        string   `json:"name"`
+	Namespace   string   `json:"namespace"`
+	Environment string   `json:"environment"`
+	Region      string   `json:"region"`
+	ClusterIDs  []string `json:"clusterIds"`
+	ValuesYAML  string   `json:"valuesYaml"`
 	// RegionValues holds per-region override files keyed by region, layered over
 	// ValuesYAML by Argo CD. Regions without an entry deploy the base values alone.
 	RegionValues map[string]string `json:"regionValues,omitempty"`
@@ -146,6 +148,14 @@ func NewService(repository Repository, cfg config.OnboardingConfig) (*Service, e
 func (s *Service) Create(ctx context.Context, input CreateInput) (model.ApplicationOnboarding, error) {
 	input.Name = strings.TrimSpace(input.Name)
 	input.Namespace = strings.TrimSpace(input.Namespace)
+	input.Environment = strings.ToLower(strings.TrimSpace(input.Environment))
+	if input.Environment == "" {
+		input.Environment = "dev"
+	}
+	input.Region = strings.ToLower(strings.TrimSpace(input.Region))
+	if input.Region == "" {
+		input.Region = "us-east-1"
+	}
 	if err := s.validateInput(input); err != nil {
 		return model.ApplicationOnboarding{}, err
 	}
@@ -188,14 +198,9 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 		}
 	}
 
-	// Only the regions actually covered by the selected clusters are committed, so a
-	// stale override left in the form never creates an orphaned directory.
-	targetRegions := make(map[string]struct{}, len(clusters))
-	for _, cluster := range clusters {
-		if cluster.Location != "" {
-			targetRegions[cluster.Location] = struct{}{}
-		}
-	}
+	// Every selected cluster receives the application release context chosen in
+	// the form. Inventory location remains available separately on the cluster.
+	targetRegions := map[string]struct{}{input.Region: {}}
 	regionValues := make(map[string]string, len(input.RegionValues))
 	for region, values := range input.RegionValues {
 		if _, ok := targetRegions[region]; !ok {
@@ -224,6 +229,8 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 	onboarding, err := s.store.CreateApplicationOnboarding(ctx, model.ApplicationOnboarding{
 		Name:                     input.Name,
 		Namespace:                input.Namespace,
+		Environment:              input.Environment,
+		Region:                   input.Region,
 		ChartRepoURL:             s.config.HelmRepoURL,
 		ChartName:                s.config.HelmChart,
 		ChartRevision:            s.config.HelmRevision,
@@ -661,6 +668,16 @@ func (s *Service) validateInput(input CreateInput) error {
 	}
 	if !validDNSLabel(input.Namespace) {
 		return ValidationError{Message: "namespace must be a lowercase DNS label"}
+	}
+	if input.Environment != "" && !validDNSLabel(input.Environment) {
+		return ValidationError{Message: "environment must be a lowercase DNS label"}
+	}
+	if input.Environment != "" &&
+		input.Environment != "dev" && input.Environment != "qa" && input.Environment != "prod" {
+		return ValidationError{Message: "environment must be dev, qa, or prod"}
+	}
+	if input.Region != "" && input.Region != "us-east-1" && input.Region != "us-east-2" {
+		return ValidationError{Message: "region must be us-east-1 or us-east-2"}
 	}
 	if len(input.ClusterIDs) == 0 {
 		return ValidationError{Message: "at least one target cluster is required"}

@@ -154,9 +154,7 @@ type ClusterDetails struct {
 }
 
 type ArgoAccess struct {
-	URL      string `json:"url"`
-	Username string `json:"username"`
-	Password string `json:"password"`
+	URL string `json:"url"`
 }
 
 type EncryptedArgoAccess struct {
@@ -195,6 +193,8 @@ type ApplicationOnboarding struct {
 	ID                       string                  `json:"id"`
 	Name                     string                  `json:"name"`
 	Namespace                string                  `json:"namespace"`
+	Environment              string                  `json:"environment"`
+	Region                   string                  `json:"region"`
 	ChartRepoURL             string                  `json:"chartRepoUrl"`
 	ChartName                string                  `json:"chartName"`
 	ChartRevision            string                  `json:"chartRevision"`

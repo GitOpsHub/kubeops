@@ -41,8 +41,9 @@ describe('applications list', () => {
 
     const row = await screen.findByRole('row', { name: /payments-api/ })
     expect(within(row).getByText('payments')).toBeInTheDocument()
-    expect(within(row).getByText('eu-west-1, us-east-1')).toBeInTheDocument()
+    expect(within(row).getByText('us-east-1')).toBeInTheDocument()
     expect(within(row).getByText('2 targets')).toBeInTheDocument()
+    expect(within(row).getByText('prod')).toBeInTheDocument()
     expect(within(row).getByText('partial')).toBeInTheDocument()
   })
 
@@ -191,8 +192,8 @@ describe('application detail', () => {
       'href',
       'https://argo.example.test/applications/payments-api',
     )
-    expect(screen.getByText('Some targets are healthy while others failed.', { exact: false }))
-      .toBeInTheDocument()
+    expect(screen.getByLabelText('Application state: partial')).toBeInTheDocument()
+    expect(screen.getByText('1 of 2 targets ready · 1 failed')).toBeInTheDocument()
 
     // Credentials must stay untouched until the operator asks for them.
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('argo-access'))).toBe(false)
@@ -400,7 +401,7 @@ describe('application detail', () => {
     ).toBeInTheDocument()
   })
 
-  it('filters deployment targets with the region rail', async () => {
+  it('scopes deployment targets by application environment and region', async () => {
     mockAPI({
       applications: [
         buildApplication({
@@ -412,33 +413,27 @@ describe('application detail', () => {
       ],
     })
     renderApp('/applications/onboarding-1')
-    const user = userEvent.setup()
-
     expect(
       await screen.findByRole('article', { name: 'Deployment target prod-eu' }),
     ).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: /^eu-west-1/ }))
-
+    expect(screen.getByText('prod-us-east-1')).toHaveAttribute('aria-current', 'true')
+    expect(screen.queryByText('All targets')).not.toBeInTheDocument()
     expect(screen.getByRole('article', { name: 'Deployment target prod-eu' })).toBeInTheDocument()
     expect(
-      screen.queryByRole('article', { name: 'Deployment target prod-us-east' }),
-    ).not.toBeInTheDocument()
+      screen.getByRole('article', { name: 'Deployment target prod-us-east' }),
+    ).toBeInTheDocument()
   })
 
   // The proxy authenticates the deep link, so this panel has no reason to hold Argo
   // CD credentials or to offer them to the operator.
   it('exposes no Argo credentials on the deployment targets', async () => {
-    const { fetchMock } = mockAPI({
-      applications: [buildApplication()],
-      argoPassword: 'super-secret',
-    })
+    const { fetchMock } = mockAPI({ applications: [buildApplication()] })
     renderApp('/applications/onboarding-1')
 
     expect(await screen.findByRole('link', { name: 'Open in Argo CD' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Copy password' })).not.toBeInTheDocument()
     expect(screen.queryByText(/Username/)).not.toBeInTheDocument()
-    expect(screen.queryByText('super-secret')).not.toBeInTheDocument()
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('argo-access'))).toBe(false)
   })
 
@@ -560,8 +555,8 @@ describe('application detail', () => {
     await waitFor(() => {
       expect(fetchMock.mock.calls.length).toBeGreaterThan(initialCalls)
     })
-    expect(await screen.findByText(/Every target is synced and healthy./)).toBeInTheDocument()
-    expect(screen.getAllByText('healthy').length).toBeGreaterThan(0)
+    expect(await screen.findByLabelText('Application state: healthy')).toBeInTheDocument()
+    expect(screen.queryByText(/Every target is synced and healthy./)).not.toBeInTheDocument()
   })
 
   it('reports a missing application', async () => {
@@ -593,6 +588,8 @@ describe('application onboarding form', () => {
     ).toBeInTheDocument()
     await user.type(screen.getByLabelText('Application name'), 'payments-api')
     await user.type(screen.getByLabelText('Namespace'), 'payments')
+    await user.selectOptions(screen.getByLabelText('Environment'), 'prod')
+    await user.selectOptions(screen.getByLabelText('Region'), 'us-east-1')
     await user.click(await screen.findByRole('checkbox'))
     await user.click(screen.getByRole('button', { name: 'Onboard application' }))
 
@@ -604,6 +601,8 @@ describe('application onboarding form', () => {
           body: JSON.stringify({
             name: 'payments-api',
             namespace: 'payments',
+            environment: 'prod',
+            region: 'us-east-1',
             clusterIds: ['cluster-1'],
             valuesYaml: 'replicaCount: 2\nimage:\n  repository: nginx\n',
             regionValues: {},
@@ -617,6 +616,7 @@ describe('application onboarding form', () => {
       await screen.findByRole('heading', { name: 'payments-api', level: 1 }),
     ).toBeInTheDocument()
     expect(screen.getAllByText('progressing').length).toBeGreaterThan(0)
+    expect(screen.getByText('prod')).toBeInTheDocument()
   })
 
   it('submits the chart defaults without rendering a base values editor', async () => {
@@ -672,7 +672,7 @@ describe('application onboarding form', () => {
     await user.click(screen.getByRole('button', { name: 'Onboard application' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Select at least one target region.',
+      'Select at least one target cluster.',
     )
     expect(screen.getByRole('heading', { name: 'Onboard an application' })).toBeInTheDocument()
   })

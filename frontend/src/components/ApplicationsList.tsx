@@ -92,17 +92,14 @@ export function ApplicationsList() {
 
   return (
     <section className="applications-page" aria-labelledby="applications-heading">
-      <header className="page-heading">
-        <div>
-          <p className="kicker">GitOps delivery</p>
+      <header className="page-heading applications-heading">
+        <div className="applications-heading-copy">
           <h1 id="applications-heading">Onboarded applications</h1>
-          <p>Search every Argo CD-managed release and open one to inspect its targets.</p>
+          <p>Inspect releases, target health, and reconciliation across the fleet.</p>
         </div>
-        <div className="heading-actions">
-          <Link className="primary-button" to="/applications/new">
-            Onboard application
-          </Link>
-        </div>
+        <Link className="primary-button" to="/applications/new">
+          Onboard application
+        </Link>
       </header>
 
       {error && (
@@ -117,74 +114,77 @@ export function ApplicationsList() {
         </div>
       )}
 
-      <div className="page-topline">
-        <label className="global-search">
-          <span className="search-icon" aria-hidden="true">⌕</span>
-          <span className="sr-only">Search applications by name or namespace</span>
-          <input
-            aria-label="Search applications by name or namespace"
-            type="search"
-            placeholder="Search by application name or namespace"
-            value={search}
-            onChange={(event) => updateParams({ search: event.target.value })}
-          />
-        </label>
-      </div>
-
-      <div className="filter-bar">
-        <label>
-          <span>Status</span>
-          <select
-            value={status}
-            onChange={(event) => updateParams({ status: event.target.value })}
-          >
-            <option value="">All statuses</option>
-            {onboardingStatuses.map((item) => (
-              <option value={item} key={item}>
-                {item}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="filter-chips">
-          {search && (
-            <span className="chip">
-              Name <strong>{search}</strong>
-              <button
-                type="button"
-                className="chip-remove"
-                aria-label={`Remove name filter ${search}`}
-                onClick={() => updateParams({ search: '' })}
-              >
-                ×
-              </button>
+      <section className="application-filter-deck" aria-label="Filter applications">
+        <div className="application-filter-grid">
+          <label className="application-filter-control application-search-control">
+            <span>Application or namespace</span>
+            <span className="application-search-field">
+              <span className="search-icon" aria-hidden="true">⌕</span>
+              <input
+                aria-label="Search applications by name or namespace"
+                type="search"
+                placeholder="Search applications"
+                value={search}
+                onChange={(event) => updateParams({ search: event.target.value })}
+              />
             </span>
-          )}
-          {status && (
-            <span className="chip">
-              Status <strong>{status}</strong>
-              <button
-                type="button"
-                className="chip-remove"
-                aria-label={`Remove status filter ${status}`}
-                onClick={() => updateParams({ status: '' })}
-              >
-                ×
-              </button>
-            </span>
-          )}
+          </label>
+          <label className="application-filter-control">
+            <span>Status</span>
+            <select
+              value={status}
+              onChange={(event) => updateParams({ status: event.target.value })}
+            >
+              <option value="">All statuses</option>
+              {onboardingStatuses.map((item) => (
+                <option value={item} key={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
 
         {(search || status) && (
-          <button
-            type="button"
-            className="clear-filters"
-            onClick={() => updateParams({ search: '', status: '' })}
-          >
-            Clear filters
-          </button>
+          <div className="application-active-filters">
+            <div className="filter-chips">
+              {search && (
+                <span className="chip">
+                  Name <strong>{search}</strong>
+                  <button
+                    type="button"
+                    className="chip-remove"
+                    aria-label={`Remove name filter ${search}`}
+                    onClick={() => updateParams({ search: '' })}
+                  >
+                    ×
+                  </button>
+                </span>
+              )}
+              {status && (
+                <span className="chip">
+                  Status <strong>{status}</strong>
+                  <button
+                    type="button"
+                    className="chip-remove"
+                    aria-label={`Remove status filter ${status}`}
+                    onClick={() => updateParams({ status: '' })}
+                  >
+                    ×
+                  </button>
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              className="clear-filters"
+              onClick={() => updateParams({ search: '', status: '' })}
+            >
+              Clear filters
+            </button>
+          </div>
         )}
-      </div>
+      </section>
 
       <div className="table-frame">
         {loading ? (
@@ -217,7 +217,8 @@ export function ApplicationsList() {
                     <th className="expander-cell" aria-label="Expand row" />
                     <th>Application</th>
                     <th>Namespace</th>
-                    <th>Regions</th>
+                    <th>Environment</th>
+                    <th>Region</th>
                     <th>Targets</th>
                     <th>Reconciliation</th>
                     <th>Status</th>
@@ -225,9 +226,6 @@ export function ApplicationsList() {
                 </thead>
                 <tbody>
                   {items.map((item) => {
-                    const regions = [
-                      ...new Set(item.targets.map((target) => target.region).filter(Boolean)),
-                    ].sort()
                     const isExpanded = expanded.includes(item.id)
                     const rollup = rollupState(item.targets)
                     return (
@@ -268,7 +266,8 @@ export function ApplicationsList() {
                             </Link>
                           </td>
                           <td className="mono">{item.namespace}</td>
-                          <td className="mono">{regions.length > 0 ? regions.join(', ') : '—'}</td>
+                          <td><span className="environment-tag">{item.environment}</span></td>
+                          <td className="mono">{item.region || '—'}</td>
                           <td>{targetCountLabel(item.targets.length)}</td>
                           <td>
                             <StateDelta
@@ -282,7 +281,7 @@ export function ApplicationsList() {
                         </tr>
                         {isExpanded && (
                           <tr className="expanded-row">
-                            <td colSpan={7}>
+                            <td colSpan={8}>
                               {item.targets.length === 0 ? (
                                 <div className="region-groups">
                                   <p className="quiet-note">

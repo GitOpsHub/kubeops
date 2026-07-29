@@ -273,6 +273,12 @@ func TestCreateApplicationOnboarding(t *testing.T) {
 	if record.ValuesDigest == "" || record.Targets[0].Status != "progressing" {
 		t.Fatalf("unexpected record: %#v", record)
 	}
+	if record.Environment != "dev" {
+		t.Fatalf("expected default environment, got %q", record.Environment)
+	}
+	if record.Region != "us-east-1" {
+		t.Fatalf("expected default application region, got %#v", record)
+	}
 	if client.created.ValuesRepoURL != valuesManager.repository.CloneURL ||
 		record.ValuesRepositoryURL != valuesManager.repository.URL {
 		t.Fatalf("unexpected values repository: %#v, %#v", client.created, record)
@@ -553,6 +559,9 @@ func TestCreateApplicationOnboardingValidation(t *testing.T) {
 	}, github: &fakeValuesRepositoryManager{}}
 	tests := []CreateInput{
 		{Name: "Bad_Name", Namespace: "apps", ClusterIDs: []string{"one"}, ValuesYAML: "{}"},
+		{Name: "app", Namespace: "apps", Environment: "Bad Env", ClusterIDs: []string{"one"}, ValuesYAML: "{}"},
+		{Name: "app", Namespace: "apps", Environment: "stage", ClusterIDs: []string{"one"}, ValuesYAML: "{}"},
+		{Name: "app", Namespace: "apps", Region: "us-west-1", ClusterIDs: []string{"one"}, ValuesYAML: "{}"},
 		{Name: "app", Namespace: "apps", ClusterIDs: nil, ValuesYAML: "{}"},
 		{Name: "app", Namespace: "apps", ClusterIDs: []string{"one"}, ValuesYAML: "- item"},
 		{Name: "app", Namespace: "apps", ClusterIDs: []string{"one"}, ValuesYAML: "broken: ["},

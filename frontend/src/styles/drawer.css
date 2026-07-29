@@ -325,6 +325,11 @@
   gap: var(--space-3);
 }
 
+.argo-access > p {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
 .argo-access-actions {
   display: flex;
   gap: var(--space-2);

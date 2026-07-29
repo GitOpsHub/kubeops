@@ -20,6 +20,14 @@ type Props = {
   label: string
 }
 
+function healthTone(status: string) {
+  const normalized = status.toLowerCase()
+  if (normalized === 'healthy') return 'healthy'
+  if (normalized === 'degraded' || normalized === 'missing') return 'failed'
+  if (normalized === 'progressing' || normalized === 'suspended') return 'progressing'
+  return 'unknown'
+}
+
 /**
  * The resource tree drawn the way Argo CD draws it: columns by ownership depth,
  * joined by connectors.
@@ -36,9 +44,12 @@ export function ResourceGraph({ nodes, selectedUid, onSelect, label }: Props) {
   return (
     <div className="graph-shell">
       <div className="graph-toolbar">
-        <span className="quiet-note">
-          {layout.nodes.length} {layout.nodes.length === 1 ? 'resource' : 'resources'}
-        </span>
+        <div className="graph-toolbar-title">
+          <strong>Application resource tree</strong>
+          <span className="quiet-note">
+            {layout.nodes.length} {layout.nodes.length === 1 ? 'resource' : 'resources'}
+          </span>
+        </div>
         <div className="graph-zoom" role="group" aria-label="Zoom">
           <button
             type="button"
@@ -97,12 +108,19 @@ export function ResourceGraph({ nodes, selectedUid, onSelect, label }: Props) {
               >
                 <button
                   type="button"
-                  className={`graph-card ${selectedUid === node.uid ? 'is-selected' : ''}`}
+                  className={`graph-card graph-card--${healthTone(node.healthStatus)} ${
+                    selectedUid === node.uid ? 'is-selected' : ''
+                  }`}
                   aria-pressed={selectedUid === node.uid}
                   onClick={() => onSelect(node)}
                 >
                   <span className="graph-card-top">
-                    <span className="resource-kind">{node.kind}</span>
+                    <span className="graph-card-kind">
+                      <span className="resource-kind-mark" aria-hidden="true">
+                        {node.kind.slice(0, 2).toUpperCase()}
+                      </span>
+                      <span className="resource-kind">{node.kind}</span>
+                    </span>
                     <span className="resource-age">{age(node.createdAt)}</span>
                   </span>
                   <span className="graph-card-name" title={node.name}>
@@ -112,7 +130,11 @@ export function ResourceGraph({ nodes, selectedUid, onSelect, label }: Props) {
                     {node.healthStatus && node.healthStatus !== 'Unknown' && (
                       <StatusBadge status={node.healthStatus} />
                     )}
-                    {node.syncStatus && <span className="resource-sync">{node.syncStatus}</span>}
+                    {node.syncStatus && (
+                      <span className={`resource-sync resource-sync--${node.syncStatus.toLowerCase()}`}>
+                        {node.syncStatus}
+                      </span>
+                    )}
                   </span>
                 </button>
               </li>

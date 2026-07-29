@@ -29,6 +29,8 @@ export type ApplicationOnboarding = {
   id: string
   name: string
   namespace: string
+  environment: string
+  region: string
   chartRepoUrl: string
   chartName: string
   chartRevision: string
@@ -48,6 +50,8 @@ export type ApplicationOnboarding = {
 export type CreateOnboardingInput = {
   name: string
   namespace: string
+  environment: string
+  region: string
   clusterIds: string[]
   valuesYaml: string
   regionValues?: Record<string, string>

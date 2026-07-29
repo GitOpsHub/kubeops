@@ -39,6 +39,8 @@ export function buildApplication(
     id: 'onboarding-1',
     name: 'payments-api',
     namespace: 'payments',
+    environment: 'prod',
+    region: 'us-east-1',
     chartRepoUrl: 'https://charts.example.test',
     chartName: 'global-app',
     chartRevision: '1.2.3',
@@ -59,7 +61,6 @@ export function buildApplication(
 
 export type MockState = {
   applications: ApplicationOnboarding[]
-  argoPassword: string
   argoAccessStatus: number
   resources: ResourceNode[]
   manifest: string
@@ -90,7 +91,6 @@ export function buildResource(overrides: Partial<ResourceNode> = {}): ResourceNo
 export function mockAPI(initial: Partial<MockState> = {}) {
   const state: MockState = {
     applications: initial.applications ?? [],
-    argoPassword: initial.argoPassword ?? 'argo-password',
     argoAccessStatus: initial.argoAccessStatus ?? 200,
     resources: initial.resources ?? [],
     manifest: initial.manifest ?? '{"kind":"Deployment"}',
@@ -128,12 +128,16 @@ export function mockAPI(initial: Partial<MockState> = {}) {
       const submitted = JSON.parse(String(init.body)) as {
         name: string
         namespace: string
+        environment: string
+        region: string
         clusterIds: string[]
       }
       const created = buildApplication({
         id: 'onboarding-created',
         name: submitted.name,
         namespace: submitted.namespace,
+        environment: submitted.environment,
+        region: submitted.region,
         valuesRepositoryUrl: `https://github.com/GitOpsHub/${submitted.name}`,
         valuesRepositoryName: submitted.name,
         targets: [
@@ -233,9 +237,7 @@ export function mockAPI(initial: Partial<MockState> = {}) {
         )
       }
       return Response.json({
-        url: 'https://argo.example.test',
-        username: 'kubeops',
-        password: state.argoPassword,
+        url: 'http://localhost:8080/argo/target-id/applications',
       })
     }
 

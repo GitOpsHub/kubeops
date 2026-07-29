@@ -1,9 +1,39 @@
 import type { ApplicationDeployment } from '../api/onboarding'
+import type { Provider } from '../api/inventory'
+import { KubernetesLogo, ProviderLogo } from './BrandIcons'
 import { StateDelta } from './StateDelta'
 import { StatusBadge } from './StatusBadge'
 
 type Props = {
   target: ApplicationDeployment
+}
+
+function targetProvider(target: ApplicationDeployment): Provider | null {
+  const fingerprint =
+    `${target.sourceId} ${target.providerResourceId} ${target.clusterName}`.toLowerCase()
+  if (fingerprint.includes('minikube')) return 'minikube'
+  if (fingerprint.includes('docker')) return 'docker'
+  if (fingerprint.includes('azure') || fingerprint.includes('aks')) return 'azure'
+  if (fingerprint.includes('google') || fingerprint.includes('gke') || fingerprint.includes('gcp')) {
+    return 'gcp'
+  }
+  if (fingerprint.includes('amazon') || fingerprint.includes('eks') || fingerprint.includes('aws')) {
+    return 'aws'
+  }
+  return null
+}
+
+export function DeploymentTargetLogo({ target }: Props) {
+  const provider = targetProvider(target)
+  return (
+    <span className="deployment-target-logo" aria-hidden="true">
+      {provider ? (
+        <ProviderLogo provider={provider} className="provider-logo" />
+      ) : (
+        <KubernetesLogo className="provider-logo" />
+      )}
+    </span>
+  )
 }
 
 /**
@@ -15,9 +45,12 @@ export function DeploymentTargetPanel({ target }: Props) {
   return (
     <article className="target-panel" aria-label={`Deployment target ${target.clusterName}`}>
       <header>
-        <div>
-          <strong>{target.clusterName}</strong>
-          <span>{target.region || 'no region'}</span>
+        <div className="target-cluster-identity">
+          <DeploymentTargetLogo target={target} />
+          <div>
+            <strong>{target.clusterName}</strong>
+            <span>{target.region || 'no region'}</span>
+          </div>
         </div>
         <StatusBadge status={target.status} />
       </header>

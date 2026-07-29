@@ -590,12 +590,12 @@ func (s *Store) CreateApplicationOnboarding(
 
 	err = tx.QueryRow(ctx, `
 		INSERT INTO application_onboardings (
-			name, namespace, chart_repo_url, chart_name, chart_revision, values_digest,
+			name, namespace, environment, region, chart_repo_url, chart_name, chart_revision, values_digest,
 			values_repository_url, values_repository_clone_url, values_repository_name,
 			values_revision, values_commit_sha
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		RETURNING id::text, status, created_at, updated_at`,
-		onboarding.Name, onboarding.Namespace, onboarding.ChartRepoURL,
+		onboarding.Name, onboarding.Namespace, onboarding.Environment, onboarding.Region, onboarding.ChartRepoURL,
 		onboarding.ChartName, onboarding.ChartRevision, onboarding.ValuesDigest,
 		onboarding.ValuesRepositoryURL, onboarding.ValuesRepositoryCloneURL,
 		onboarding.ValuesRepositoryName, onboarding.ValuesRevision, onboarding.ValuesCommitSHA,
@@ -612,6 +612,10 @@ func (s *Store) CreateApplicationOnboarding(
 	onboarding.Targets = make([]model.ApplicationDeployment, 0, len(clusters))
 	for _, cluster := range clusters {
 		var target model.ApplicationDeployment
+		deploymentRegion := onboarding.Region
+		if deploymentRegion == "" {
+			deploymentRegion = cluster.Location
+		}
 		err := tx.QueryRow(ctx, `
 			INSERT INTO application_deployments (
 				onboarding_id, cluster_id, cluster_name, region, source_id,
@@ -622,8 +626,8 @@ func (s *Store) CreateApplicationOnboarding(
 				has_region_values, status,
 				sync_status, health_status, message, created_at, updated_at, completed_at,
 				attempt_started_at`,
-			onboarding.ID, cluster.ID, cluster.Name, cluster.Location, cluster.SourceID,
-			cluster.ProviderResourceID, onboarding.Name, regionValues[cluster.Location],
+			onboarding.ID, cluster.ID, cluster.Name, deploymentRegion, cluster.SourceID,
+			cluster.ProviderResourceID, onboarding.Name, regionValues[deploymentRegion],
 		).Scan(
 			&target.ID, &target.OnboardingID, &target.ClusterID, &target.ClusterName,
 			&target.Region, &target.SourceID, &target.ProviderResourceID, &target.ArgoApplication,
@@ -670,12 +674,12 @@ func (s *Store) ActiveApplicationOnboardingID(
 func (s *Store) GetApplicationOnboarding(ctx context.Context, id string) (model.ApplicationOnboarding, error) {
 	var onboarding model.ApplicationOnboarding
 	err := s.pool.QueryRow(ctx, `
-		SELECT id::text, name, namespace, chart_repo_url, chart_name, chart_revision,
+		SELECT id::text, name, namespace, environment, region, chart_repo_url, chart_name, chart_revision,
 			values_digest, values_repository_url, values_repository_clone_url, values_repository_name,
 			values_revision, values_commit_sha, status, created_at, updated_at, completed_at
 		FROM application_onboardings
 		WHERE id::text = $1`, id).Scan(
-		&onboarding.ID, &onboarding.Name, &onboarding.Namespace,
+		&onboarding.ID, &onboarding.Name, &onboarding.Namespace, &onboarding.Environment, &onboarding.Region,
 		&onboarding.ChartRepoURL, &onboarding.ChartName, &onboarding.ChartRevision,
 		&onboarding.ValuesDigest, &onboarding.ValuesRepositoryURL,
 		&onboarding.ValuesRepositoryCloneURL, &onboarding.ValuesRepositoryName, &onboarding.ValuesRevision,
@@ -738,7 +742,7 @@ func (s *Store) ListApplicationOnboardings(
 
 	args = append(args, filter.PageSize, (filter.Page-1)*filter.PageSize)
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
-		SELECT id::text, name, namespace, chart_repo_url, chart_name, chart_revision,
+		SELECT id::text, name, namespace, environment, region, chart_repo_url, chart_name, chart_revision,
 			values_digest, values_repository_url, values_repository_clone_url, values_repository_name,
 			values_revision, values_commit_sha, status, created_at, updated_at, completed_at
 		FROM application_onboardings
@@ -753,7 +757,7 @@ func (s *Store) ListApplicationOnboardings(
 	for rows.Next() {
 		var onboarding model.ApplicationOnboarding
 		if err := rows.Scan(
-			&onboarding.ID, &onboarding.Name, &onboarding.Namespace,
+			&onboarding.ID, &onboarding.Name, &onboarding.Namespace, &onboarding.Environment, &onboarding.Region,
 			&onboarding.ChartRepoURL, &onboarding.ChartName, &onboarding.ChartRevision,
 			&onboarding.ValuesDigest, &onboarding.ValuesRepositoryURL,
 			&onboarding.ValuesRepositoryCloneURL, &onboarding.ValuesRepositoryName,

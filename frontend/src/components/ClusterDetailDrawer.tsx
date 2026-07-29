@@ -101,7 +101,6 @@ export function ClusterDetailDrawer({
   const [detailError, setDetailError] = useState('')
   const [argoAccess, setArgoAccess] = useState<ArgoAccess | null>(null)
   const [argoError, setArgoError] = useState('')
-  const [argoMessage, setArgoMessage] = useState('')
   const [desiredCounts, setDesiredCounts] = useState<Record<string, string>>({})
   const [pending, setPending] = useState<PendingScale | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -160,16 +159,6 @@ export function ClusterDetailDrawer({
       window.removeEventListener('keydown', handleKeyDown)
     }
   }, [cluster.id, loadDetails, onClose])
-
-  async function copyArgoPassword() {
-    if (!argoAccess) return
-    try {
-      await navigator.clipboard.writeText(argoAccess.password)
-      setArgoMessage('Password copied.')
-    } catch {
-      setArgoMessage('Password could not be copied.')
-    }
-  }
 
   useEffect(() => {
     if (!pollTarget) return
@@ -376,20 +365,12 @@ export function ClusterDetailDrawer({
           </div>
           {argoAccess ? (
             <div className="argo-access">
-              <dl className="network-grid">
-                <div><dt>URL</dt><dd>{argoAccess.url}</dd></div>
-                <div><dt>Username</dt><dd>{argoAccess.username}</dd></div>
-                <div><dt>Password</dt><dd aria-label="Stored password">••••••••••••</dd></div>
-              </dl>
+              <p>Open this cluster in Argo CD through KubeOps.</p>
               <div className="argo-access-actions">
                 <a href={argoAccess.url} target="_blank" rel="noreferrer">
-                  Open Argo CD
+                  Open in Argo CD
                 </a>
-                <button type="button" onClick={() => void copyArgoPassword()}>
-                  Copy password
-                </button>
               </div>
-              {argoMessage && <p className="scale-message" role="status">{argoMessage}</p>}
             </div>
           ) : (
             <div className="drawer-state">{argoError || 'Loading Argo CD access…'}</div>
