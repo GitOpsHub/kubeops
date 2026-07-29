@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useOutletContext } from 'react-router-dom'
 import {
   type CloudSource,
   type Cluster,
@@ -44,15 +45,16 @@ function clusterCountLabel(count: number) {
 }
 
 export function FleetDashboard() {
+  const { onLatestRunChange } = useOutletContext<{
+    onLatestRunChange: (run: SyncRun | null) => void
+  }>()
   const [sources, setSources] = useState<CloudSource[]>([])
   const [clusters, setClusters] = useState<Cluster[]>([])
   const [runs, setRuns] = useState<SyncRun[]>([])
   const [total, setTotal] = useState(0)
   const [provider, setProvider] = useState<Provider | ''>('')
-  const [source, setSource] = useState('')
   const [globalSearch, setGlobalSearch] = useState('')
   const [providerSearch, setProviderSearch] = useState('')
-  const [includeRemoved, setIncludeRemoved] = useState(false)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(25)
   const [loading, setLoading] = useState(true)
@@ -67,7 +69,7 @@ export function FleetDashboard() {
       if (!quiet) setLoading(true)
       try {
         const [clusterPage, nextSources, nextRuns] = await Promise.all([
-          getClusters({ provider, source, search, includeRemoved, page, pageSize }, signal),
+          getClusters({ provider, search, page, pageSize }, signal),
           getSources(signal),
           getSyncRuns(signal),
         ])
@@ -75,6 +77,7 @@ export function FleetDashboard() {
         setTotal(clusterPage.total)
         setSources(nextSources)
         setRuns(nextRuns)
+        onLatestRunChange(nextRuns[0] ?? null)
         setError('')
       } catch (loadError) {
         if (!(loadError instanceof DOMException && loadError.name === 'AbortError')) {
@@ -84,7 +87,7 @@ export function FleetDashboard() {
         if (!quiet) setLoading(false)
       }
     },
-    [includeRemoved, page, pageSize, provider, search, source],
+    [onLatestRunChange, page, pageSize, provider, search],
   )
 
   useEffect(() => {
@@ -113,18 +116,12 @@ export function FleetDashboard() {
 
   const fleetTotal = providers.reduce((sum, item) => sum + counts[item], 0)
   const activeSources = sources.filter((item) => item.enabled).length
-  const availableSources = provider
-    ? sources.filter((item) => item.provider === provider)
-    : sources
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
-  const latestRun = runs[0]
   // Sources that failed outright, or whose last success is old enough that the
   // inventory can no longer be trusted.
   const staleSources = sources.filter(
     (item) => item.enabled && (item.lastSyncStatus === 'failed' || isStale(item.lastSyncAt)),
   ).length
-  const selectedSourceName = sources.find((item) => item.id === source)?.name
-
   async function refreshSource(item: CloudSource) {
     setRefreshing(item.id)
     try {
@@ -142,10 +139,10 @@ export function FleetDashboard() {
     setPage(1)
   }
 
-  function selectProvider(nextProvider: Provider | '') {
+  function selectProvider(nextProvider: Provider) {
     updateFilter(() => {
-      setProvider(nextProvider)
-      setSource('')
+      setProvider(nextProvider === provider ? '' : nextProvider)
+      setProviderSearch('')
     })
   }
 
@@ -153,39 +150,14 @@ export function FleetDashboard() {
     updateFilter(() => {
       setGlobalSearch(value)
       setProvider('')
-      setSource('')
     })
   }
 
   return (
     <>
-      <div className="page-topline">
-        <label className="global-search">
-          <span className="search-icon" aria-hidden="true">⌕</span>
-          <span className="sr-only">Search all clusters across providers</span>
-          <input
-            aria-label="Search all clusters across providers"
-            type="search"
-            placeholder="Search cluster names across all providers"
-            value={globalSearch}
-            onChange={(event) => updateGlobalSearch(event.target.value)}
-          />
-          <kbd>Global</kbd>
-        </label>
-        <div className="sync-readout">
-          <span className={`sync-dot sync-dot--${latestRun?.status || 'idle'}`} />
-          <div>
-            <strong>{latestRun ? `Sync ${latestRun.status}` : 'Awaiting sync'}</strong>
-            <span>{latestRun ? relativeTime(latestRun.queuedAt) : 'No activity yet'}</span>
-          </div>
-        </div>
-      </div>
-
       <header className="page-heading">
         <div>
-          <p className="kicker">Kubernetes estate</p>
           <h1>Fleet control center</h1>
-          <p>Search, filter, and reconcile every managed and local cluster from one view.</p>
         </div>
         <div className="fleet-stats">
           <div
@@ -225,21 +197,6 @@ export function FleetDashboard() {
         <h2 id="provider-filter-heading" className="sr-only">Filter by provider</h2>
 
         <div className="provider-selector" role="group" aria-label="Filter by cloud provider">
-          <button
-            type="button"
-            className={`provider-button provider-button--all ${!provider ? 'is-selected' : ''}`}
-            onClick={() => selectProvider('')}
-            aria-pressed={!provider}
-            aria-label={`All clouds, ${clusterCountLabel(fleetTotal)}`}
-          >
-            <span className="all-clouds-icon" aria-hidden="true">
-              <i />
-              <i />
-              <i />
-            </span>
-            <strong>All clouds</strong>
-            <small>{fleetTotal}</small>
-          </button>
           {providers.map((item) => (
             <button
               type="button"
@@ -293,97 +250,57 @@ export function FleetDashboard() {
           <span className="quiet-note">Refreshes every 30 seconds</span>
         </div>
 
-        <div className="filter-bar">
-          <label>
-            <span>Source</span>
-            <select
-              value={source}
-              onChange={(event) => updateFilter(() => setSource(event.target.value))}
-            >
-              <option value="">All {provider ? providerLabels[provider] : ''} sources</option>
-              {availableSources.map((item) => (
-                <option value={item.id} key={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
+        <div className="filter-bar inventory-filter-bar">
+          <label className="filter-control inventory-search-control">
+            <span>Cluster name</span>
+            <span className="inventory-search">
+              <span className="search-icon" aria-hidden="true">⌕</span>
+              <input
+                aria-label="Search all clusters across providers"
+                type="search"
+                placeholder="Search clusters"
+                value={globalSearch}
+                onChange={(event) => updateGlobalSearch(event.target.value)}
+              />
+            </span>
           </label>
-          <label className="toggle">
-            <input
-              type="checkbox"
-              checked={includeRemoved}
-              onChange={(event) =>
-                updateFilter(() => setIncludeRemoved(event.target.checked))
-              }
-            />
-            <span aria-hidden="true" />
-            Include removed clusters
-          </label>
-
-          {/* Active filters are restated as chips so each one can be dropped
-              on its own, rather than only all at once. */}
-          <div className="filter-chips">
-            {search && (
-              <span className="chip">
-                Name <strong>{search}</strong>
-                <button
-                  type="button"
-                  className="chip-remove"
-                  aria-label={`Remove name filter ${search}`}
-                  onClick={() =>
-                    updateFilter(() => {
-                      setGlobalSearch('')
-                      setProviderSearch('')
-                    })
-                  }
-                >
-                  ×
-                </button>
-              </span>
-            )}
-            {selectedSourceName && (
-              <span className="chip">
-                Source <strong>{selectedSourceName}</strong>
-                <button
-                  type="button"
-                  className="chip-remove"
-                  aria-label={`Remove source filter ${selectedSourceName}`}
-                  onClick={() => updateFilter(() => setSource(''))}
-                >
-                  ×
-                </button>
-              </span>
-            )}
-            {includeRemoved && (
-              <span className="chip">
-                <strong>Removed included</strong>
-                <button
-                  type="button"
-                  className="chip-remove"
-                  aria-label="Stop including removed clusters"
-                  onClick={() => updateFilter(() => setIncludeRemoved(false))}
-                >
-                  ×
-                </button>
-              </span>
-            )}
-          </div>
-
-          {(search || source || includeRemoved) && (
-            <button
-              type="button"
-              className="clear-filters"
-              onClick={() =>
-                updateFilter(() => {
-                  setGlobalSearch('')
-                  setProviderSearch('')
-                  setSource('')
-                  setIncludeRemoved(false)
-                })
-              }
-            >
-              Clear filters
-            </button>
+          {search && (
+            <div className="active-filter-row">
+              {/* Active filters are restated as chips so each one can be dropped
+                  on its own, rather than only all at once. */}
+              <div className="filter-chips">
+                {search && (
+                  <span className="chip">
+                    Name <strong>{search}</strong>
+                    <button
+                      type="button"
+                      className="chip-remove"
+                      aria-label={`Remove name filter ${search}`}
+                      onClick={() =>
+                        updateFilter(() => {
+                          setGlobalSearch('')
+                          setProviderSearch('')
+                        })
+                      }
+                    >
+                      ×
+                    </button>
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                className="clear-filters"
+                onClick={() =>
+                  updateFilter(() => {
+                    setGlobalSearch('')
+                    setProviderSearch('')
+                  })
+                }
+              >
+                Clear filters
+              </button>
+            </div>
           )}
         </div>
 
@@ -396,7 +313,7 @@ export function FleetDashboard() {
           ) : clusters.length === 0 ? (
             <div className="table-state">
               <KubernetesLogo className="empty-kubernetes-logo" />
-              {search || source || provider ? (
+              {search || provider ? (
                 <>
                   <strong>Nothing matches those filters</strong>
                   <span>Try a different search, or clear the filters to see every cluster.</span>

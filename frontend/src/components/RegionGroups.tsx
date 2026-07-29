@@ -4,9 +4,8 @@ import { StateDelta } from './StateDelta'
 import { StatusBadge } from './StatusBadge'
 
 /**
- * Deployment targets grouped by region. Region is the axis operators reason
- * about when something is broken in one place and fine everywhere else, so it
- * is the grouping even though a target is really per cluster.
+ * Deployment targets grouped by release scope. Environment and region stay
+ * together because the pair is the deployment identity shown throughout the UI.
  */
 
 const toneClass: Record<string, string> = {
@@ -18,19 +17,24 @@ const toneClass: Record<string, string> = {
 
 type Props = {
   targets: ApplicationDeployment[]
+  environment: string
   /** Values commit the whole onboarding is pinned to; shown once per group. */
   revision?: string
 }
 
-export function RegionGroups({ targets, revision }: Props) {
+export function RegionGroups({ targets, environment, revision }: Props) {
   const groups = groupByRegion(targets)
 
   return (
     <div className="region-groups">
       {groups.map((group) => (
-        <section className="region-group" key={group.region} aria-label={`Region ${group.region}`}>
+        <section
+          className="region-group"
+          key={group.region}
+          aria-label={`Deployment scope ${environment}-${group.region}`}
+        >
           <div className="region-group-heading">
-            <strong>{group.region}</strong>
+            <strong>{environment}-{group.region}</strong>
             <span>
               {group.targets.length} {group.targets.length === 1 ? 'cluster' : 'clusters'}
             </span>

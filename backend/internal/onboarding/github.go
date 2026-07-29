@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/GitOpsHub/kubeops/backend/internal/config"
+	"gopkg.in/yaml.v3"
 )
 
 type ValuesRepository struct {
@@ -41,7 +42,7 @@ type ValuesRepositoryManager interface {
 	// Existing repositories are read without overwriting their values.
 	Ensure(
 		ctx context.Context,
-		name, baseValues string,
+		name, environment, baseValues string,
 		regionValues map[string]string,
 		targetRegions []string,
 	) (ValuesRepository, error)
@@ -117,7 +118,7 @@ func parsePrivateKey(keyPEM []byte) (*rsa.PrivateKey, error) {
 
 func (c *GitHubClient) Ensure(
 	ctx context.Context,
-	name, valuesYAML string,
+	name, environment, valuesYAML string,
 	regionValues map[string]string,
 	targetRegions []string,
 ) (ValuesRepository, error) {
@@ -143,7 +144,9 @@ func (c *GitHubClient) Ensure(
 		&repository,
 	)
 	if status == http.StatusUnprocessableEntity {
-		return c.loadExisting(ctx, token, name, targetRegions)
+		return c.loadExisting(
+			ctx, token, name, environment, valuesYAML, regionValues, targetRegions,
+		)
 	}
 	if err != nil {
 		return ValuesRepository{}, err
@@ -152,32 +155,14 @@ func (c *GitHubClient) Ensure(
 		repository.DefaultBranch = "main"
 	}
 
-	var commit struct {
-		Commit struct {
-			SHA string `json:"sha"`
-		} `json:"commit"`
-	}
-	_, err = c.request(ctx, token, http.MethodPut,
-		"/repos/"+url.PathEscape(c.organization)+"/"+url.PathEscape(name)+"/contents/values.yaml",
-		map[string]any{
-			"message": "Add initial Helm values",
-			"content": base64.StdEncoding.EncodeToString([]byte(valuesYAML)),
-			"branch":  repository.DefaultBranch,
-		},
-		&commit,
-	)
-	if err != nil {
-		return ValuesRepository{}, fmt.Errorf("create values.yaml: %w", err)
-	}
-
-	// Region overrides are layered on top of the base file by Argo CD, so they are
-	// committed in a stable order to keep the resulting history deterministic.
-	regions := make([]string, 0, len(regionValues))
-	for region := range regionValues {
-		regions = append(regions, region)
-	}
+	var commitSHA string
+	regions := uniqueStrings(targetRegions)
 	sort.Strings(regions)
 	for _, region := range regions {
+		scopedValues, mergeErr := mergeValuesYAML(valuesYAML, regionValues[region])
+		if mergeErr != nil {
+			return ValuesRepository{}, fmt.Errorf("merge %s/%s values: %w", environment, region, mergeErr)
+		}
 		var regionCommit struct {
 			Commit struct {
 				SHA string `json:"sha"`
@@ -185,29 +170,33 @@ func (c *GitHubClient) Ensure(
 		}
 		_, err = c.request(ctx, token, http.MethodPut,
 			"/repos/"+url.PathEscape(c.organization)+"/"+url.PathEscape(name)+
-				"/contents/"+url.PathEscape(region)+"/values.yaml",
+				"/contents/"+url.PathEscape(environment)+"/"+url.PathEscape(region)+"/values.yaml",
 			map[string]any{
-				"message": "Add " + region + " Helm values",
-				"content": base64.StdEncoding.EncodeToString([]byte(regionValues[region])),
+				"message": "Add " + environment + "/" + region + " Helm values",
+				"content": base64.StdEncoding.EncodeToString([]byte(scopedValues)),
 				"branch":  repository.DefaultBranch,
 			},
 			&regionCommit,
 		)
 		if err != nil {
-			return ValuesRepository{}, fmt.Errorf("create %s/values.yaml: %w", region, err)
+			return ValuesRepository{}, fmt.Errorf(
+				"create %s/%s/values.yaml: %w", environment, region, err,
+			)
 		}
-		commit.Commit.SHA = regionCommit.Commit.SHA
+		commitSHA = regionCommit.Commit.SHA
 	}
 	return ValuesRepository{
 		Name: repository.Name, URL: repository.HTMLURL, CloneURL: repository.CloneURL,
-		Revision: repository.DefaultBranch, CommitSHA: commit.Commit.SHA,
-		ValuesYAML: valuesYAML, RegionValues: regionKeys(regionValues),
+		Revision: repository.DefaultBranch, CommitSHA: commitSHA,
+		ValuesYAML: valuesYAML, RegionValues: regionSet(regions),
 	}, nil
 }
 
 func (c *GitHubClient) loadExisting(
 	ctx context.Context,
-	token, name string,
+	token, name, environment string,
+	baseValues string,
+	regionValues map[string]string,
 	targetRegions []string,
 ) (ValuesRepository, error) {
 	var repository struct {
@@ -228,19 +217,6 @@ func (c *GitHubClient) loadExisting(
 		Content  string `json:"content"`
 		Encoding string `json:"encoding"`
 	}
-	valuesPath := repositoryPath + "/contents/values.yaml?ref=" +
-		url.QueryEscape(repository.DefaultBranch)
-	if _, err := c.request(ctx, token, http.MethodGet, valuesPath, nil, &valuesFile); err != nil {
-		return ValuesRepository{}, fmt.Errorf("load existing values.yaml: %w", err)
-	}
-	if valuesFile.Encoding != "base64" {
-		return ValuesRepository{}, errors.New("existing values.yaml uses an unsupported encoding")
-	}
-	valuesYAML, err := base64.StdEncoding.DecodeString(valuesFile.Content)
-	if err != nil {
-		return ValuesRepository{}, errors.New("existing values.yaml is not valid base64")
-	}
-
 	var commit struct {
 		SHA string `json:"sha"`
 	}
@@ -250,17 +226,81 @@ func (c *GitHubClient) loadExisting(
 	}
 
 	regions := make(map[string]bool)
+	var valuesYAML []byte
 	for _, region := range uniqueStrings(targetRegions) {
-		path := repositoryPath + "/contents/" + url.PathEscape(region) +
+		path := repositoryPath + "/contents/" + url.PathEscape(environment) + "/" +
+			url.PathEscape(region) +
 			"/values.yaml?ref=" + url.QueryEscape(repository.DefaultBranch)
-		status, requestErr := c.request(ctx, token, http.MethodGet, path, nil, &struct{}{})
+		var scopedFile struct {
+			Encoding string `json:"encoding"`
+			Content  string `json:"content"`
+		}
+		status, requestErr := c.request(ctx, token, http.MethodGet, path, nil, &scopedFile)
 		if status == http.StatusNotFound {
+			scopedValues, mergeErr := mergeValuesYAML(baseValues, regionValues[region])
+			if mergeErr != nil {
+				return ValuesRepository{}, fmt.Errorf(
+					"merge %s/%s values: %w", environment, region, mergeErr,
+				)
+			}
+			var regionCommit struct {
+				Commit struct {
+					SHA string `json:"sha"`
+				} `json:"commit"`
+			}
+			_, createErr := c.request(
+				ctx, token, http.MethodPut,
+				strings.Split(path, "?")[0],
+				map[string]any{
+					"message": "Add " + environment + "/" + region + " Helm values",
+					"content": base64.StdEncoding.EncodeToString([]byte(scopedValues)),
+					"branch":  repository.DefaultBranch,
+				},
+				&regionCommit,
+			)
+			if createErr != nil {
+				return ValuesRepository{}, fmt.Errorf(
+					"create %s/%s/values.yaml: %w", environment, region, createErr,
+				)
+			}
+			commit.SHA = regionCommit.Commit.SHA
+			if valuesYAML == nil {
+				valuesYAML = []byte(scopedValues)
+			}
+			regions[region] = true
 			continue
 		}
 		if requestErr != nil {
-			return ValuesRepository{}, fmt.Errorf("check existing %s values: %w", region, requestErr)
+			return ValuesRepository{}, fmt.Errorf(
+				"check existing %s/%s values: %w", environment, region, requestErr,
+			)
+		}
+		if scopedFile.Encoding != "base64" {
+			return ValuesRepository{}, errors.New("existing scoped values file uses an unsupported encoding")
+		}
+		decoded, decodeErr := base64.StdEncoding.DecodeString(scopedFile.Content)
+		if decodeErr != nil {
+			return ValuesRepository{}, errors.New("existing scoped values file is not valid base64")
+		}
+		if valuesYAML == nil {
+			valuesYAML = decoded
 		}
 		regions[region] = true
+	}
+	if valuesYAML == nil {
+		valuesPath := repositoryPath + "/contents/values.yaml?ref=" +
+			url.QueryEscape(repository.DefaultBranch)
+		if _, err := c.request(ctx, token, http.MethodGet, valuesPath, nil, &valuesFile); err != nil {
+			return ValuesRepository{}, fmt.Errorf("load existing values.yaml: %w", err)
+		}
+		if valuesFile.Encoding != "base64" {
+			return ValuesRepository{}, errors.New("existing values.yaml uses an unsupported encoding")
+		}
+		decoded, decodeErr := base64.StdEncoding.DecodeString(valuesFile.Content)
+		if decodeErr != nil {
+			return ValuesRepository{}, errors.New("existing values.yaml is not valid base64")
+		}
+		valuesYAML = decoded
 	}
 
 	return ValuesRepository{
@@ -268,6 +308,43 @@ func (c *GitHubClient) loadExisting(
 		Revision: repository.DefaultBranch, CommitSHA: commit.SHA,
 		ValuesYAML: string(valuesYAML), RegionValues: regions, Existing: true,
 	}, nil
+}
+
+func mergeValuesYAML(baseValues, overrideValues string) (string, error) {
+	if strings.TrimSpace(overrideValues) == "" {
+		return baseValues, nil
+	}
+	var base map[string]any
+	var override map[string]any
+	if err := yaml.Unmarshal([]byte(baseValues), &base); err != nil {
+		return "", err
+	}
+	if err := yaml.Unmarshal([]byte(overrideValues), &override); err != nil {
+		return "", err
+	}
+	mergeValueMaps(base, override)
+	merged, err := yaml.Marshal(base)
+	return string(merged), err
+}
+
+func mergeValueMaps(base, override map[string]any) {
+	for key, value := range override {
+		overrideMap, overrideIsMap := value.(map[string]any)
+		baseMap, baseIsMap := base[key].(map[string]any)
+		if overrideIsMap && baseIsMap {
+			mergeValueMaps(baseMap, overrideMap)
+			continue
+		}
+		base[key] = value
+	}
+}
+
+func regionSet(regions []string) map[string]bool {
+	result := make(map[string]bool, len(regions))
+	for _, region := range regions {
+		result[region] = true
+	}
+	return result
 }
 
 func regionKeys(values map[string]string) map[string]bool {

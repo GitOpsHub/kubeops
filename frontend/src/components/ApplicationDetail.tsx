@@ -6,12 +6,11 @@ import {
   offboardApplicationOnboarding,
   syncApplicationOnboarding,
   type ApplicationOnboarding,
-  type OnboardingStatus,
 } from '../api/onboarding'
-import { DeploymentTargetPanel } from './DeploymentTargetPanel'
+import { KubernetesLogo, ProviderLogo } from './BrandIcons'
+import { DeploymentTargetLogo } from './DeploymentTargetPanel'
 import { DeployStepper } from './DeployStepper'
 import { ResourceExplorer } from './ResourceExplorer'
-import { StatusBadge } from './StatusBadge'
 import { Tabs } from './Tabs'
 
 const pollIntervalMs = 5_000
@@ -20,12 +19,15 @@ function formatTimestamp(value: string | null) {
   return value ? new Date(value).toLocaleString() : 'Not yet'
 }
 
-const statusSummaries: Record<OnboardingStatus, string> = {
-  progressing: 'Argo CD is still reconciling one or more targets.',
-  healthy: 'Every target is synced and healthy.',
-  partial: 'Some targets are healthy while others failed.',
-  failed: 'Every target failed to reach a healthy state.',
-  offboarded: 'Cluster resources were removed; GitHub values are preserved.',
+function BackToApplications() {
+  return (
+    <Link className="detail-back-button" to="/applications">
+      <svg viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M10.5 3.5 6 8l4.5 4.5M6.5 8H14" />
+      </svg>
+      <span>Back to applications</span>
+    </Link>
+  )
 }
 
 export function ApplicationDetail() {
@@ -39,8 +41,7 @@ export function ApplicationDetail() {
   const [actionMessage, setActionMessage] = useState('')
   const [actionError, setActionError] = useState('')
   const [confirmingOffboard, setConfirmingOffboard] = useState(false)
-  const [activeTab, setActiveTab] = useState('targets')
-  const [activeRegion, setActiveRegion] = useState('')
+  const [activeTab, setActiveTab] = useState('resources')
   const [resourceTargetId, setResourceTargetId] = useState('')
 
   const load = useCallback(
@@ -130,9 +131,7 @@ export function ApplicationDetail() {
   if (missing) {
     return (
       <section className="application-detail" aria-labelledby="application-heading">
-        <Link className="text-button detail-back" to="/applications">
-          ← Applications
-        </Link>
+        <BackToApplications />
         <div className="empty-panel" role="status">
           <strong id="application-heading">Application not found</strong>
           <span>This onboarding no longer exists or the link is incorrect.</span>
@@ -155,9 +154,7 @@ export function ApplicationDetail() {
   if (!record) {
     return (
       <section className="application-detail">
-        <Link className="text-button detail-back" to="/applications">
-          ← Applications
-        </Link>
+        <BackToApplications />
         <div className="error-banner" role="alert">
           <div>
             <strong>Application could not be loaded</strong>
@@ -171,22 +168,16 @@ export function ApplicationDetail() {
     )
   }
 
-  const regions = [...new Set(record.targets.map((target) => target.region).filter(Boolean))].sort()
-  // An unknown region means the filter would hide everything, so it falls back
-  // to showing all targets rather than an empty grid.
-  const visibleTargets = regions.includes(activeRegion)
-    ? record.targets.filter((target) => target.region === activeRegion)
-    : record.targets
-  // Falls back to the first visible target so changing region never leaves the
-  // resource tab pointed at a cluster that is no longer on screen.
+  const applicationScope = `${record.environment}-${record.region}`
+  const visibleTargets = record.targets
+  // Falls back to the first target if the previously selected cluster is no
+  // longer part of this application.
   const resourceTarget =
     visibleTargets.find((target) => target.id === resourceTargetId) ?? visibleTargets[0]
 
   return (
     <section className="application-detail" aria-labelledby="application-heading">
-      <Link className="text-button detail-back" to="/applications">
-        ← Applications
-      </Link>
+      <BackToApplications />
 
       {error && (
         <div className="error-banner" role="alert">
@@ -202,20 +193,18 @@ export function ApplicationDetail() {
 
       <header className="detail-header">
         <div className="detail-identity">
-          <div>
+          <div className="detail-identity-copy">
             <p className="kicker">GitOps delivery</p>
             <h1 id="application-heading">{record.name}</h1>
-            <div className="detail-meta">
-              <span className="mono">{record.namespace}</span>
-              <span className="detail-meta-divider">·</span>
-              <span className="mono">
-                {regions.length > 0 ? regions.join(', ') : 'no region'}
-              </span>
+            <div className="detail-image-version">
+              <ProviderLogo provider="docker" className="detail-image-logo" />
+              <div>
+                <span>Container image</span>
+                <strong className="mono">{record.image || 'Image not reported'}</strong>
+              </div>
             </div>
-            <p className="detail-summary">{statusSummaries[record.status]}</p>
           </div>
-          <div className="heading-actions">
-            <StatusBadge status={record.status} />
+          <div className="detail-primary-actions" aria-label="Application actions">
             <button
               type="button"
               className="primary-button"
@@ -223,21 +212,66 @@ export function ApplicationDetail() {
               onClick={() => void syncResources()}
             >
               {action === 'sync'
-                ? 'Syncing…'
+                ? 'Deploying…'
                 : record.status === 'offboarded'
-                  ? 'Re-onboard from GitHub'
-                  : 'Sync resources'}
+                  ? 'Deploy again'
+                  : 'Deploy'}
             </button>
             <button
               type="button"
-              className="danger-button"
-              disabled={
-                action !== null || record.status === 'offboarded' || record.targets.length === 0
-              }
-              onClick={() => setConfirmingOffboard(true)}
+              className="ghost-button"
+              disabled={record.targets.length === 0}
+              onClick={() => setActiveTab('resources')}
             >
-              Offboard
+              Scale
             </button>
+          </div>
+          <div className="detail-target-summary" aria-label="Deployment clusters">
+            <p className="section-label">
+              {visibleTargets.length === 1 ? 'Deployment cluster' : 'Deployment clusters'}
+            </p>
+            <div className="detail-target-list">
+              {visibleTargets.length === 0 ? (
+                <span className="detail-target-empty">No clusters assigned</span>
+              ) : (
+                visibleTargets.map((target) => (
+                  <article
+                    className="detail-target-identity"
+                    key={target.id}
+                    aria-label={`Deployment target ${target.clusterName}`}
+                  >
+                    <div className="detail-target-row">
+                      <DeploymentTargetLogo target={target} />
+                      <div>
+                        <span>Cluster</span>
+                        <strong>{target.clusterName}</strong>
+                      </div>
+                    </div>
+                    <div className="detail-target-row">
+                      <span className="detail-namespace-logo" aria-hidden="true">
+                        <KubernetesLogo />
+                      </span>
+                      <div>
+                        <span>Namespace</span>
+                        <strong>{record.namespace}</strong>
+                      </div>
+                    </div>
+                    {target.argoApplicationUrl && (
+                      <a
+                        className="detail-target-argo-link"
+                        href={target.argoApplicationUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        aria-label={`Open ${target.clusterName} in Argo CD`}
+                        title="Open in Argo CD"
+                      >
+                        ↗
+                      </a>
+                    )}
+                  </article>
+                ))
+              )}
+            </div>
           </div>
         </div>
         <DeployStepper targets={record.targets} />
@@ -287,32 +321,13 @@ export function ApplicationDetail() {
       )}
 
       <div className="detail-body">
-        {regions.length > 0 && (
-          <nav className="region-rail" aria-label="Filter targets by region">
-            <p className="section-label">Regions</p>
-            <button
-              type="button"
-              className={`region-rail-item ${activeRegion === '' ? 'is-active' : ''}`}
-              aria-current={activeRegion === ''}
-              onClick={() => setActiveRegion('')}
-            >
-              All regions
+        {record.region && (
+          <nav className="region-rail" aria-label="Filter targets by environment and region">
+            <p className="section-label">Deployment scope</p>
+            <span className="region-rail-item is-active" aria-current="true">
+              {applicationScope}
               <small>{record.targets.length}</small>
-            </button>
-            {regions.map((region) => (
-              <button
-                key={region}
-                type="button"
-                className={`region-rail-item ${activeRegion === region ? 'is-active' : ''}`}
-                aria-current={activeRegion === region}
-                onClick={() => setActiveRegion(region)}
-              >
-                {region}
-                <small>
-                  {record.targets.filter((target) => target.region === region).length}
-                </small>
-              </button>
-            ))}
+            </span>
           </nav>
         )}
 
@@ -322,36 +337,6 @@ export function ApplicationDetail() {
             activeId={activeTab}
             onChange={setActiveTab}
             items={[
-              {
-                id: 'targets',
-                label: 'Deployment targets',
-                content:
-                  visibleTargets.length === 0 ? (
-                    <div className="empty-panel">
-                      This application has no deployment targets. Onboard it again with at least
-                      one region.
-                    </div>
-                  ) : (
-                    <>
-                      <div className="section-heading section-heading--compact">
-                        <div>
-                          <h2>
-                            {visibleTargets.length}{' '}
-                            {visibleTargets.length === 1
-                              ? 'Argo application'
-                              : 'Argo applications'}
-                          </h2>
-                        </div>
-                        <span className="quiet-note">Refreshes every 5 seconds</span>
-                      </div>
-                      <div className="target-grid">
-                        {visibleTargets.map((target) => (
-                          <DeploymentTargetPanel key={target.id} target={target} />
-                        ))}
-                      </div>
-                    </>
-                  ),
-              },
               {
                 id: 'resources',
                 label: 'Kubernetes resources',
@@ -377,6 +362,7 @@ export function ApplicationDetail() {
                               aria-pressed={resourceTargetId === target.id}
                               onClick={() => setResourceTargetId(target.id)}
                             >
+                              <DeploymentTargetLogo target={target} />
                               {target.clusterName}
                             </button>
                           ))}
@@ -469,6 +455,24 @@ export function ApplicationDetail() {
                         </div>
                       </div>
                     ))}
+                    <section className="application-danger-zone">
+                      <div>
+                        <strong>Offboard application</strong>
+                        <span>Remove managed resources while keeping the GitHub values.</span>
+                      </div>
+                      <button
+                        type="button"
+                        className="danger-button"
+                        disabled={
+                          action !== null ||
+                          record.status === 'offboarded' ||
+                          record.targets.length === 0
+                        }
+                        onClick={() => setConfirmingOffboard(true)}
+                      >
+                        Offboard
+                      </button>
+                    </section>
                   </div>
                 ),
               },

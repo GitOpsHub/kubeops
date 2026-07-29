@@ -41,8 +41,9 @@ describe('applications list', () => {
 
     const row = await screen.findByRole('row', { name: /payments-api/ })
     expect(within(row).getByText('payments')).toBeInTheDocument()
-    expect(within(row).getByText('eu-west-1, us-east-1')).toBeInTheDocument()
+    expect(within(row).getByText('us-east-1')).toBeInTheDocument()
     expect(within(row).getByText('2 targets')).toBeInTheDocument()
+    expect(within(row).getByText('prod')).toBeInTheDocument()
     expect(within(row).getByText('partial')).toBeInTheDocument()
   })
 
@@ -60,21 +61,29 @@ describe('applications list', () => {
     renderApp('/applications')
     const user = userEvent.setup()
 
-    expect(screen.queryByRole('region', { name: 'Region eu-west-1' })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('region', { name: 'Deployment scope prod-eu-west-1' }),
+    ).not.toBeInTheDocument()
 
     const expander = await screen.findByRole('button', {
       name: 'Show deployment targets for payments-api',
     })
     await user.click(expander)
 
-    const group = await screen.findByRole('region', { name: 'Region eu-west-1' })
+    const group = await screen.findByRole('region', {
+      name: 'Deployment scope prod-eu-west-1',
+    })
     expect(within(group).getByRole('article', { name: 'Target prod-eu' })).toBeInTheDocument()
-    expect(screen.getByRole('region', { name: 'Region us-east-1' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('region', { name: 'Deployment scope prod-us-east-1' }),
+    ).toBeInTheDocument()
 
     await user.click(
       screen.getByRole('button', { name: 'Hide deployment targets for payments-api' }),
     )
-    expect(screen.queryByRole('region', { name: 'Region eu-west-1' })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('region', { name: 'Deployment scope prod-eu-west-1' }),
+    ).not.toBeInTheDocument()
   })
 
   it('applies bookmarked filters from the URL', async () => {
@@ -142,7 +151,10 @@ describe('applications list', () => {
     expect(
       await screen.findByRole('heading', { name: 'payments-api', level: 1 }),
     ).toBeInTheDocument()
-    expect(screen.getByText('Deployment targets')).toBeInTheDocument()
+    expect(
+      screen.getByRole('article', { name: 'Deployment target prod-us-east' }),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'Deployment targets' })).not.toBeInTheDocument()
   })
 
   it('reports an unreachable applications API', async () => {
@@ -156,7 +168,7 @@ describe('applications list', () => {
 })
 
 describe('application detail', () => {
-  it('renders each target with sync, health, failure message, and an Argo deep link', async () => {
+  it('renders compact deployment identities with namespaces and Argo deep links', async () => {
     const { fetchMock } = mockAPI({
       applications: [
         buildApplication({
@@ -185,14 +197,16 @@ describe('application detail', () => {
     renderApp('/applications/onboarding-1')
 
     const failing = await screen.findByRole('article', { name: 'Deployment target prod-eu' })
-    expect(within(failing).getByText('image pull backoff')).toBeInTheDocument()
-    expect(within(failing).getByText('Degraded')).toBeInTheDocument()
-    expect(within(failing).getByRole('link', { name: 'Open in Argo CD' })).toHaveAttribute(
+    expect(within(failing).getByText('payments')).toBeInTheDocument()
+    expect(screen.getByText('registry.example.test/payments-api:2.4.1')).toBeInTheDocument()
+    expect(
+      within(failing).getByRole('link', { name: 'Open prod-eu in Argo CD' }),
+    ).toHaveAttribute(
       'href',
       'https://argo.example.test/applications/payments-api',
     )
-    expect(screen.getByText('Some targets are healthy while others failed.', { exact: false }))
-      .toBeInTheDocument()
+    expect(screen.getByLabelText('Application state: partial')).toBeInTheDocument()
+    expect(screen.getByText('1 of 2 targets ready · 1 failed')).toBeInTheDocument()
 
     // Credentials must stay untouched until the operator asks for them.
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('argo-access'))).toBe(false)
@@ -369,7 +383,7 @@ describe('application detail', () => {
     ).toBeInTheDocument()
   })
 
-  it('switches between the target, chart, and timeline tabs', async () => {
+  it('switches between resource, chart, and timeline tabs', async () => {
     mockAPI({
       applications: [
         buildApplication({
@@ -380,27 +394,27 @@ describe('application detail', () => {
     renderApp('/applications/onboarding-1')
     const user = userEvent.setup()
 
-    // Targets are what an operator came for, so they are the default panel.
+    // Target identity stays in the header while operational panels change.
     expect(
       await screen.findByRole('article', { name: 'Deployment target prod-us-east' }),
     ).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Kubernetes resources' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
 
     await user.click(screen.getByRole('tab', { name: 'Chart & values' }))
     expect(screen.getByText('global-app 1.2.3')).toBeInTheDocument()
     expect(
-      screen.queryByRole('article', { name: 'Deployment target prod-us-east' }),
-    ).not.toBeInTheDocument()
+      screen.getByRole('article', { name: 'Deployment target prod-us-east' }),
+    ).toBeInTheDocument()
 
     await user.click(screen.getByRole('tab', { name: 'Timeline' }))
     expect(screen.getByText('Onboarded')).toBeInTheDocument()
-
-    await user.click(screen.getByRole('tab', { name: 'Deployment targets' }))
-    expect(
-      screen.getByRole('article', { name: 'Deployment target prod-us-east' }),
-    ).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'Deployment targets' })).not.toBeInTheDocument()
   })
 
-  it('filters deployment targets with the region rail', async () => {
+  it('scopes deployment targets by application environment and region', async () => {
     mockAPI({
       applications: [
         buildApplication({
@@ -412,33 +426,29 @@ describe('application detail', () => {
       ],
     })
     renderApp('/applications/onboarding-1')
-    const user = userEvent.setup()
-
     expect(
       await screen.findByRole('article', { name: 'Deployment target prod-eu' }),
     ).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: /^eu-west-1/ }))
-
+    expect(screen.getByText('prod-us-east-1')).toHaveAttribute('aria-current', 'true')
+    expect(screen.queryByText('All targets')).not.toBeInTheDocument()
     expect(screen.getByRole('article', { name: 'Deployment target prod-eu' })).toBeInTheDocument()
     expect(
-      screen.queryByRole('article', { name: 'Deployment target prod-us-east' }),
-    ).not.toBeInTheDocument()
+      screen.getByRole('article', { name: 'Deployment target prod-us-east' }),
+    ).toBeInTheDocument()
   })
 
   // The proxy authenticates the deep link, so this panel has no reason to hold Argo
   // CD credentials or to offer them to the operator.
   it('exposes no Argo credentials on the deployment targets', async () => {
-    const { fetchMock } = mockAPI({
-      applications: [buildApplication()],
-      argoPassword: 'super-secret',
-    })
+    const { fetchMock } = mockAPI({ applications: [buildApplication()] })
     renderApp('/applications/onboarding-1')
 
-    expect(await screen.findByRole('link', { name: 'Open in Argo CD' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('link', { name: 'Open prod-us-east in Argo CD' }),
+    ).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Copy password' })).not.toBeInTheDocument()
     expect(screen.queryByText(/Username/)).not.toBeInTheDocument()
-    expect(screen.queryByText('super-secret')).not.toBeInTheDocument()
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('argo-access'))).toBe(false)
   })
 
@@ -453,16 +463,17 @@ describe('application detail', () => {
     renderApp('/applications/onboarding-1')
 
     expect(
-      await screen.findByText('Argo CD UI access is not configured for this cluster.'),
+      await screen.findByRole('article', { name: 'Deployment target prod-us-east' }),
     ).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: 'Open in Argo CD' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /in Argo CD/ })).not.toBeInTheDocument()
   })
 
   it('shows an empty state when the application has no targets', async () => {
     mockAPI({ applications: [buildApplication({ targets: [] })] })
     renderApp('/applications/onboarding-1')
 
-    expect(await screen.findByText(/has no deployment targets/)).toBeInTheDocument()
+    expect(await screen.findByText('No clusters assigned')).toBeInTheDocument()
+    expect(screen.getByText('No deployment targets')).toBeInTheDocument()
   })
 
   it('syncs every deployment target from the application detail', async () => {
@@ -472,7 +483,7 @@ describe('application detail', () => {
     renderApp('/applications/onboarding-1')
     const user = userEvent.setup()
 
-    await user.click(await screen.findByRole('button', { name: 'Sync resources' }))
+    await user.click(await screen.findByRole('button', { name: 'Deploy' }))
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -492,6 +503,7 @@ describe('application detail', () => {
     renderApp('/applications/onboarding-1')
     const user = userEvent.setup()
 
+    await user.click(await screen.findByRole('tab', { name: 'Timeline' }))
     await user.click(await screen.findByRole('button', { name: 'Offboard' }))
     expect(
       screen.getByText(/The GitHub repository and its values will remain available/),
@@ -560,8 +572,8 @@ describe('application detail', () => {
     await waitFor(() => {
       expect(fetchMock.mock.calls.length).toBeGreaterThan(initialCalls)
     })
-    expect(await screen.findByText(/Every target is synced and healthy./)).toBeInTheDocument()
-    expect(screen.getAllByText('healthy').length).toBeGreaterThan(0)
+    expect(await screen.findByLabelText('Application state: healthy')).toBeInTheDocument()
+    expect(screen.queryByText(/Every target is synced and healthy./)).not.toBeInTheDocument()
   })
 
   it('reports a missing application', async () => {
@@ -593,6 +605,9 @@ describe('application onboarding form', () => {
     ).toBeInTheDocument()
     await user.type(screen.getByLabelText('Application name'), 'payments-api')
     await user.type(screen.getByLabelText('Namespace'), 'payments')
+    await user.selectOptions(screen.getByLabelText('Environment'), 'prod')
+    await user.selectOptions(screen.getByLabelText('Region'), 'us-east-1')
+    expect(screen.getByText('payments-prod-us-east-1')).toBeInTheDocument()
     await user.click(await screen.findByRole('checkbox'))
     await user.click(screen.getByRole('button', { name: 'Onboard application' }))
 
@@ -604,6 +619,8 @@ describe('application onboarding form', () => {
           body: JSON.stringify({
             name: 'payments-api',
             namespace: 'payments',
+            environment: 'prod',
+            region: 'us-east-1',
             clusterIds: ['cluster-1'],
             valuesYaml: 'replicaCount: 2\nimage:\n  repository: nginx\n',
             regionValues: {},
@@ -617,6 +634,8 @@ describe('application onboarding form', () => {
       await screen.findByRole('heading', { name: 'payments-api', level: 1 }),
     ).toBeInTheDocument()
     expect(screen.getAllByText('progressing').length).toBeGreaterThan(0)
+    expect(screen.getByText('registry.example.test/payments-api:2.4.1')).toBeInTheDocument()
+    expect(screen.getByText('payments-prod-us-east-1')).toBeInTheDocument()
   })
 
   it('submits the chart defaults without rendering a base values editor', async () => {
@@ -672,7 +691,7 @@ describe('application onboarding form', () => {
     await user.click(screen.getByRole('button', { name: 'Onboard application' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Select at least one target region.',
+      'Select at least one target cluster.',
     )
     expect(screen.getByRole('heading', { name: 'Onboard an application' })).toBeInTheDocument()
   })

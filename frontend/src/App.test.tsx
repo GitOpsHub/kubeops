@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -24,14 +24,22 @@ describe('App', () => {
 
     expect(await screen.findByRole('heading', { name: 'Fleet control center' })).toBeInTheDocument()
     expect(await screen.findByText('prod-us-east')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /All clouds/ })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    )
+    expect(screen.queryByRole('button', { name: /All clouds/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('Kubernetes estate')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText(/Search, filter, and reconcile every managed/),
+    ).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'EKS, 1 cluster' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'AKS, 3 clusters' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'GKE, 2 clusters' })).toBeInTheDocument()
     expect(screen.getByLabelText('6 clusters across 3 sources')).toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: 'Source' })).not.toBeInTheDocument()
+
+    const topbarActions = screen
+      .getByRole('button', { name: 'Switch to dark theme' })
+      .closest('.topbar-actions')
+    expect(topbarActions).not.toBeNull()
+    expect(within(topbarActions as HTMLElement).getByText('Synced')).toBeInTheDocument()
   })
 
   it('filters and searches within a selected cloud provider', async () => {
@@ -52,6 +60,26 @@ describe('App', () => {
     })
   })
 
+  it('returns to all clusters when the selected provider is clicked again', async () => {
+    const { fetchMock } = mockAPI()
+    renderApp()
+    const user = userEvent.setup()
+    const aks = await screen.findByRole('button', { name: 'AKS, 3 clusters' })
+
+    await user.click(aks)
+    expect(aks).toHaveAttribute('aria-pressed', 'true')
+    await user.click(aks)
+
+    await waitFor(() => {
+      const clusterRequests = fetchMock.mock.calls
+        .map(([request]) => String(request))
+        .filter((url) => url.includes('/clusters?'))
+      expect(clusterRequests.some((url) => !url.includes('provider='))).toBe(true)
+    })
+    expect(aks).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('heading', { name: /All providers/ })).toBeInTheDocument()
+  })
+
   it('uses the global search across all providers', async () => {
     const { fetchMock } = mockAPI()
     renderApp()
@@ -69,9 +97,9 @@ describe('App', () => {
         .filter((url) => url.includes('/clusters?') && url.includes('search=production'))
       expect(clusterRequests.some((url) => !url.includes('provider='))).toBe(true)
     })
-    expect(screen.getByRole('button', { name: /All clouds/ })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: 'EKS, 1 cluster' })).toHaveAttribute(
       'aria-pressed',
-      'true',
+      'false',
     )
   })
 
@@ -101,10 +129,12 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: 'Node pools' })).toBeInTheDocument()
     expect(await screen.findByText('vpc-123')).toBeInTheDocument()
     expect(screen.getByText('subnet-a, subnet-b')).toBeInTheDocument()
-    expect(await screen.findByRole('link', { name: 'Open Argo CD' })).toHaveAttribute(
+    expect(await screen.findByRole('link', { name: 'Open in Argo CD' })).toHaveAttribute(
       'href',
-      'https://argo.example.test',
+      'http://localhost:8080/argo/target-id/applications',
     )
+    expect(screen.queryByText(/Username/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Password/)).not.toBeInTheDocument()
 
     const desiredInput = screen.getByRole('spinbutton', { name: 'Desired nodes' })
     await user.clear(desiredInput)

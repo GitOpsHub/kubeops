@@ -6,31 +6,23 @@ import {
   getOnboardingDefaults,
   getOnboardingClusters,
 } from '../api/onboarding'
-import type { Cluster, Provider } from '../api/inventory'
+import type { Cluster } from '../api/inventory'
 import { ProviderLogo } from './BrandIcons'
+import { StatusBadge } from './StatusBadge'
 
 const dnsLabel = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
-
-// Regions are keyed per source because the same region name can appear under more
-// than one cloud source.
-const regionKey = (sourceId: string, region: string) => `${sourceId} ${region}`
-
-type SourceRegions = {
-  sourceId: string
-  sourceName: string
-  provider: Provider
-  regions: { region: string; clusters: Cluster[] }[]
-}
 
 export function ApplicationOnboardingForm() {
   const navigate = useNavigate()
   const [clusters, setClusters] = useState<Cluster[]>([])
   const [name, setName] = useState('')
   const [namespace, setNamespace] = useState('')
+  const [environment, setEnvironment] = useState('dev')
+  const [region, setRegion] = useState('us-east-1')
   // The base values are not editable during onboarding; the chart defaults are
   // submitted as-is, so an empty string means they have not loaded yet.
   const [valuesYaml, setValuesYaml] = useState('')
-  const [selectedRegions, setSelectedRegions] = useState<string[]>([])
+  const [selectedClusterIds, setSelectedClusterIds] = useState<string[]>([])
   const [regionValues, setRegionValues] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -64,60 +56,27 @@ export function ApplicationOnboardingForm() {
     return () => controller.abort()
   }, [load])
 
-  const selectedSet = useMemo(() => new Set(selectedRegions), [selectedRegions])
+  const selectedSet = useMemo(() => new Set(selectedClusterIds), [selectedClusterIds])
+  const deploymentScope = `${environment}-${region}`
+  const deploymentNamespace = namespace ? `${namespace}-${deploymentScope}` : deploymentScope
+  const scopedNameLength = 63 - deploymentScope.length - 1
 
-  // Clusters are grouped into source → region so a single region choice fans out to
-  // every cluster the source reports in that region.
-  const sourceRegions = useMemo<SourceRegions[]>(() => {
-    const sources = new Map<string, SourceRegions>()
-    for (const cluster of clusters) {
-      let source = sources.get(cluster.sourceId)
-      if (!source) {
-        source = {
-          sourceId: cluster.sourceId,
-          sourceName: cluster.sourceName,
-          provider: cluster.provider,
-          regions: [],
-        }
-        sources.set(cluster.sourceId, source)
-      }
-      let region = source.regions.find((item) => item.region === cluster.location)
-      if (!region) {
-        region = { region: cluster.location, clusters: [] }
-        source.regions.push(region)
-      }
-      region.clusters.push(cluster)
-    }
-    for (const source of sources.values()) {
-      source.regions.sort((a, b) => a.region.localeCompare(b.region))
-    }
-    return [...sources.values()].sort((a, b) => a.sourceName.localeCompare(b.sourceName))
-  }, [clusters])
+  const sortedClusters = useMemo(
+    () =>
+      [...clusters].sort(
+        (a, b) =>
+          a.sourceName.localeCompare(b.sourceName) ||
+          a.location.localeCompare(b.location) ||
+          a.name.localeCompare(b.name),
+      ),
+    [clusters],
+  )
 
-  const activeRegions = useMemo(() => {
-    const names = new Set<string>()
-    for (const source of sourceRegions) {
-      for (const region of source.regions) {
-        if (selectedSet.has(regionKey(source.sourceId, region.region))) names.add(region.region)
-      }
-    }
-    return [...names].sort()
-  }, [sourceRegions, selectedSet])
+  const activeRegions = selectedClusterIds.length > 0 ? [region] : []
 
-  const selectedClusterIds = useMemo(() => {
-    const ids: string[] = []
-    for (const source of sourceRegions) {
-      for (const region of source.regions) {
-        if (!selectedSet.has(regionKey(source.sourceId, region.region))) continue
-        ids.push(...region.clusters.map((cluster) => cluster.id))
-      }
-    }
-    return ids
-  }, [sourceRegions, selectedSet])
-
-  function toggleRegion(key: string) {
-    setSelectedRegions((current) =>
-      current.includes(key) ? current.filter((item) => item !== key) : [...current, key],
+  function toggleCluster(id: string) {
+    setSelectedClusterIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
     )
   }
 
@@ -137,9 +96,13 @@ export function ApplicationOnboardingForm() {
   }
 
   function validate() {
-    if (!dnsLabel.test(name) || name.length > 63) return 'Application name must be a lowercase DNS label.'
-    if (!dnsLabel.test(namespace) || namespace.length > 63) return 'Namespace must be a lowercase DNS label.'
-    if (selectedClusterIds.length === 0) return 'Select at least one target region.'
+    if (!dnsLabel.test(name) || name.length > scopedNameLength) {
+      return `Application name must leave room for the ${deploymentScope} deployment suffix.`
+    }
+    if (!dnsLabel.test(namespace) || namespace.length > scopedNameLength) {
+      return `Namespace must leave room for the ${deploymentScope} deployment suffix.`
+    }
+    if (selectedClusterIds.length === 0) return 'Select at least one target cluster.'
     if (!valuesYaml.trim()) {
       return 'Helm chart defaults could not be loaded. Reload the page and try again.'
     }
@@ -169,6 +132,8 @@ export function ApplicationOnboardingForm() {
       const record = await createApplicationOnboarding({
         name,
         namespace,
+        environment,
+        region,
         clusterIds: selectedClusterIds,
         valuesYaml,
         regionValues: overrides,
@@ -187,12 +152,14 @@ export function ApplicationOnboardingForm() {
     <section className="onboarding-workspace" aria-labelledby="onboarding-heading">
       <div className="onboarding-heading">
         <div>
-          <Link className="text-button detail-back" to="/applications">
-            ← Applications
+          <Link className="onboarding-back" to="/applications">
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M10.5 3.5 6 8l4.5 4.5M6.5 8H14" />
+            </svg>
+            <span>Back to applications</span>
           </Link>
-          <p className="kicker">GitOps delivery</p>
           <h1 id="onboarding-heading">Onboard an application</h1>
-          <p>Create the same Argo CD-managed Helm release across one or more clusters.</p>
+          <p>Define the release context, then choose exactly where it should run.</p>
         </div>
       </div>
 
@@ -202,7 +169,7 @@ export function ApplicationOnboardingForm() {
         <div className="section-heading section-heading--compact">
           <div>
             <p className="section-label">Application definition</p>
-            <h2>Minimal deployment details</h2>
+            <h2>Release context</h2>
           </div>
         </div>
 
@@ -210,10 +177,11 @@ export function ApplicationOnboardingForm() {
           <label>
             <span>Application name</span>
             <input
+              type="text"
               required
               value={name}
               pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?"
-              maxLength={63}
+              maxLength={scopedNameLength}
               placeholder="payments-api"
               onChange={(event) => setName(event.target.value)}
             />
@@ -221,60 +189,99 @@ export function ApplicationOnboardingForm() {
           <label>
             <span>Namespace</span>
             <input
+              aria-label="Namespace"
+              type="text"
               required
               value={namespace}
               pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?"
-              maxLength={63}
+              maxLength={scopedNameLength}
               placeholder="payments"
               onChange={(event) => setNamespace(event.target.value)}
             />
+            <small className="field-hint">
+              Deploys as <span className="mono">{deploymentNamespace}</span>
+            </small>
+          </label>
+          <label>
+            <span>Environment</span>
+            <select
+              aria-label="Environment"
+              value={environment}
+              onChange={(event) => setEnvironment(event.target.value)}
+            >
+              <option value="dev">dev</option>
+              <option value="qa">qa</option>
+              <option value="prod">prod</option>
+            </select>
+          </label>
+          <label>
+            <span>Region</span>
+            <select
+              aria-label="Region"
+              value={region}
+              onChange={(event) => setRegion(event.target.value)}
+            >
+              <option value="us-east-1">us-east-1</option>
+              <option value="us-east-2">us-east-2</option>
+            </select>
           </label>
         </div>
 
-        <fieldset className="cluster-picker">
-          <legend>
-            Target regions{' '}
-            <span>
-              {selectedRegions.length} selected · {selectedClusterIds.length} clusters
-            </span>
-          </legend>
+        <section className="target-cluster-picker" aria-labelledby="target-clusters-heading">
+          <header className="target-cluster-heading">
+            <h3 id="target-clusters-heading">Target clusters</h3>
+            <span>{selectedClusterIds.length} selected</span>
+          </header>
           {loading ? (
-            <div className="compact-state">Loading regions…</div>
-          ) : sourceRegions.length === 0 ? (
+            <div className="compact-state">Loading clusters…</div>
+          ) : sortedClusters.length === 0 ? (
             <div className="compact-state">No active clusters are available.</div>
           ) : (
-            sourceRegions.map((source) => (
-              <div className="region-source" key={source.sourceId}>
-                <p className="region-source-name">
-                  <span className="source-logo">
-                    <ProviderLogo provider={source.provider} className="provider-logo" />
-                  </span>
-                  {source.sourceName}
-                </p>
-                {source.regions.map((region) => {
-                  const key = regionKey(source.sourceId, region.region)
-                  return (
-                    <label className="cluster-option" key={key}>
-                      <input
-                        type="checkbox"
-                        checked={selectedSet.has(key)}
-                        onChange={() => toggleRegion(key)}
-                      />
-                      <span>
-                        <strong>{region.region}</strong>
-                        <small>
-                          {region.clusters.length}{' '}
-                          {region.clusters.length === 1 ? 'cluster' : 'clusters'} ·{' '}
-                          {region.clusters.map((cluster) => cluster.name).join(', ')}
-                        </small>
-                      </span>
-                    </label>
-                  )
-                })}
-              </div>
-            ))
+            <div className="target-cluster-table-wrap">
+              <table className="target-cluster-table">
+                <thead>
+                  <tr>
+                    <th scope="col" className="target-select-column">Select</th>
+                    <th scope="col">Cluster</th>
+                    <th scope="col">Provider</th>
+                    <th scope="col">Location</th>
+                    <th scope="col">Kubernetes</th>
+                    <th scope="col">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedClusters.map((cluster) => (
+                    <tr
+                      className={selectedSet.has(cluster.id) ? 'is-selected' : undefined}
+                      key={cluster.id}
+                    >
+                      <td className="target-select-column">
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${cluster.name}`}
+                          checked={selectedSet.has(cluster.id)}
+                          onChange={() => toggleCluster(cluster.id)}
+                        />
+                      </td>
+                      <td>
+                        <strong className="target-cluster-name">{cluster.name}</strong>
+                      </td>
+                      <td>
+                        <span className="target-provider">
+                          <ProviderLogo provider={cluster.provider} className="provider-logo" />
+                          <span>{cluster.sourceName}</span>
+                        </span>
+                      </td>
+                      <td className="mono">{cluster.location || 'Unknown'}</td>
+                      <td className="mono">{cluster.kubernetesVersion || 'Unknown'}</td>
+                      <td><StatusBadge status={cluster.status} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
-        </fieldset>
+        </section>
 
         {activeRegions.length > 0 && (
           <div className="region-values">

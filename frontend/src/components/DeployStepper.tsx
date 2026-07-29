@@ -1,58 +1,48 @@
-import { Fragment } from 'react'
 import type { ApplicationDeployment } from '../api/onboarding'
+import { StatusBadge } from './StatusBadge'
 
 /**
- * Where the rollout stands, derived entirely from target counts — no stage is
- * ever shown as reached unless the targets say so.
- *
- * The stages mirror what actually happens: Argo applications are created, they
- * reconcile, they report synced, and their workloads come up healthy.
+ * One application-level state derived from every deployment target. Operators
+ * need the outcome and its coverage, not a synthetic sequence of lifecycle steps.
  */
-
-const stages = ['Created', 'Reconciling', 'Synced', 'Healthy'] as const
 
 type Props = {
   targets: ApplicationDeployment[]
 }
 
-function stageIndex(targets: ApplicationDeployment[]) {
-  if (targets.length === 0) return 0
-  if (targets.every((target) => target.status === 'healthy')) return 3
-  if (targets.every((target) => target.syncStatus.toLowerCase() === 'synced')) return 2
-  if (targets.some((target) => target.status === 'progressing' || target.status === 'creating')) {
-    return 1
-  }
-  return 0
-}
-
 export function DeployStepper({ targets }: Props) {
-  const current = stageIndex(targets)
   const failed = targets.filter((target) => target.status === 'failed').length
   const healthy = targets.filter((target) => target.status === 'healthy').length
+  const state =
+    targets.length === 0
+      ? 'pending'
+      : failed === targets.length
+        ? 'failed'
+        : failed > 0
+          ? 'partial'
+          : healthy === targets.length
+            ? 'healthy'
+            : 'progressing'
+  const progress = targets.length === 0 ? 0 : Math.round((healthy / targets.length) * 100)
 
   return (
-    <div className="deploy-stepper">
-      {stages.map((stage, index) => {
-        // A failure stops the run where it stands: later stages stay untouched
-        // rather than being painted as reached.
-        const isFailed = failed > 0 && index === current
-        // Reaching the last stage means the rollout landed, so it settles as
-        // done rather than pulsing as though work were still in flight.
-        const settled = index < current || (index === current && current === stages.length - 1)
-        const state = isFailed ? 'failed' : settled ? 'done' : index === current ? 'current' : 'ahead'
-
-        return (
-          <Fragment key={stage}>
-            {index > 0 && <span className="deploy-step-line" aria-hidden="true" />}
-            <span className={`deploy-step deploy-step--${state}`}>
-              <span className="deploy-step-dot" aria-hidden="true" />
-              {stage}
-            </span>
-          </Fragment>
-        )
-      })}
-      <span className="quiet-note deploy-step-tally">
-        {healthy}/{targets.length} healthy
+    <div className="application-state" aria-label={`Application state: ${state}`}>
+      <div className="application-state-heading">
+        <p className="section-label">Application state</p>
+        <StatusBadge status={state} />
+      </div>
+      <div
+        className="application-state-progress"
+        role="progressbar"
+        aria-label="Healthy deployment targets"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={progress}
+      >
+        <span style={{ width: `${progress}%` }} />
+      </div>
+      <span className="quiet-note">
+        {healthy} of {targets.length} targets ready
         {failed > 0 && ` · ${failed} failed`}
       </span>
     </div>

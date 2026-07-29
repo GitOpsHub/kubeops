@@ -208,12 +208,13 @@ func TestInventoryLifecycle(t *testing.T) {
 	}
 
 	onboarding, err := repository.CreateApplicationOnboarding(ctx, model.ApplicationOnboarding{
-		Name: "payments", Namespace: "payments", ChartRepoURL: "https://charts.example.test",
-		ChartName: "global-app", ChartRevision: "1.2.3", ValuesDigest: "sha256:test",
+		Name: "payments", Namespace: "payments", Environment: "prod", Region: "us-east-2",
+		ChartRepoURL: "https://charts.example.test",
+		ChartName:    "global-app", ChartRevision: "1.2.3", ValuesDigest: "sha256:test",
 		ValuesRepositoryURL:      "https://github.com/GitOpsHub/payments",
 		ValuesRepositoryCloneURL: "https://github.com/GitOpsHub/payments.git",
 		ValuesRepositoryName:     "payments", ValuesRevision: "main", ValuesCommitSHA: "commit-1",
-	}, []model.Cluster{page.Items[0]}, map[string]bool{page.Items[0].Location: true})
+	}, []model.Cluster{page.Items[0]}, map[string]bool{"us-east-2": true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,6 +228,8 @@ func TestInventoryLifecycle(t *testing.T) {
 	}
 	storedOnboarding, err := repository.GetApplicationOnboarding(ctx, onboarding.ID)
 	if err != nil || storedOnboarding.Status != "healthy" ||
+		storedOnboarding.Environment != "prod" || storedOnboarding.Region != "us-east-2" ||
+		storedOnboarding.Targets[0].Region != "us-east-2" ||
 		storedOnboarding.Targets[0].HealthStatus != "Healthy" ||
 		!storedOnboarding.Targets[0].HasRegionValues ||
 		storedOnboarding.ValuesCommitSHA != "commit-1" ||

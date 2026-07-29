@@ -133,8 +133,6 @@ export type ClusterDetails = {
 
 export type ArgoAccess = {
   url: string
-  username: string
-  password: string
 }
 
 export type ScaleResult = {

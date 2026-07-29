@@ -11,9 +11,9 @@ import { buildResourceForest, type ResourceTreeNode } from './resource-tree'
  * parent centres on the block of children it owns.
  */
 
-export const cardWidth = 232
-export const cardHeight = 88
-export const columnGap = 72
+export const cardWidth = 216
+export const cardHeight = 104
+export const columnGap = 56
 export const rowGap = 16
 
 export type PositionedNode = ResourceTreeNode & {

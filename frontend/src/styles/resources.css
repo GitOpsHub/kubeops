@@ -10,13 +10,28 @@
 }
 
 .target-switch-item {
-  padding: var(--space-2) var(--space-3);
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  min-height: 36px;
+  padding: 0 var(--space-3);
   color: var(--text-muted);
   background: var(--surface);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
+}
+
+.target-switch-item .deployment-target-logo {
+  width: 24px;
+  height: 24px;
+  background: var(--surface-sunken);
+}
+
+.target-switch-item .deployment-target-logo .provider-logo {
+  width: 14px;
+  height: 14px;
 }
 
 .target-switch-item:hover {
@@ -44,15 +59,16 @@
   padding: 3px;
   background: var(--surface-sunken);
   border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
 }
 
 .view-toggle button {
-  padding: var(--space-1) var(--space-4);
+  min-height: 32px;
+  padding: 0 var(--space-4);
   color: var(--text-muted);
   background: none;
   border: 0;
-  border-radius: var(--radius-pill);
+  border-radius: calc(var(--radius-sm) - 2px);
   font-size: var(--text-xs);
   font-weight: 600;
 }
@@ -83,8 +99,20 @@
   gap: var(--space-3);
   align-items: center;
   justify-content: space-between;
+  min-height: 52px;
   padding: var(--space-2) var(--space-4);
+  background: var(--surface);
   border-bottom: 1px solid var(--border);
+}
+
+.graph-toolbar-title {
+  display: grid;
+  gap: 1px;
+}
+
+.graph-toolbar-title strong {
+  font-size: var(--text-xs);
+  font-weight: 600;
 }
 
 .graph-zoom {
@@ -113,9 +141,16 @@
 /* The canvas scrolls inside its own box, so a wide graph never pushes the
    page sideways. */
 .graph-scroll {
-  padding: var(--space-5);
+  min-height: 440px;
+  padding: var(--space-6);
   overflow: auto;
   max-height: 620px;
+  background-color: var(--surface-sunken);
+  background-image: radial-gradient(
+    color-mix(in srgb, var(--border-strong) 55%, transparent) 0.7px,
+    transparent 0.7px
+  );
+  background-size: 16px 16px;
 }
 
 .graph-canvas {
@@ -133,8 +168,8 @@
 
 .graph-edges path {
   fill: none;
-  stroke: var(--border-strong);
-  stroke-width: 1.5;
+  stroke: color-mix(in srgb, var(--accent) 30%, var(--border-strong));
+  stroke-width: 1.6;
 }
 
 .graph-nodes {
@@ -149,6 +184,7 @@
 }
 
 .graph-card {
+  --resource-tone: var(--idle);
   display: grid;
   gap: var(--space-1);
   /* Not `center`: an auto row whose content is `overflow: hidden` contributes
@@ -161,9 +197,22 @@
   text-align: left;
   background: var(--surface);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
+  border-top: 3px solid var(--resource-tone);
+  border-radius: var(--radius-sm);
   box-shadow: var(--shadow-sm);
   transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+}
+
+.graph-card--healthy {
+  --resource-tone: var(--ok);
+}
+
+.graph-card--progressing {
+  --resource-tone: var(--warn);
+}
+
+.graph-card--failed {
+  --resource-tone: var(--err);
 }
 
 .graph-card:hover {
@@ -182,6 +231,29 @@
   gap: var(--space-2);
   align-items: center;
   justify-content: space-between;
+}
+
+.graph-card-kind {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  min-width: 0;
+}
+
+.resource-kind-mark {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
 }
 
 .graph-card-state {
@@ -252,18 +324,37 @@
   flex: 0 0 auto;
   padding: 2px var(--space-2);
   color: var(--text-muted);
-  background: var(--surface-sunken);
-  border-radius: var(--radius-sm);
+  background: none;
+  border-radius: 0;
   font-size: var(--text-2xs);
   font-weight: 600;
   white-space: nowrap;
 }
 
-.resource-sync,
 .resource-age {
   color: var(--text-subtle);
   font-size: var(--text-2xs);
   white-space: nowrap;
+}
+
+.resource-sync {
+  padding: 2px var(--space-2);
+  color: var(--text-subtle);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.resource-sync--synced {
+  color: var(--ok);
+  background: var(--ok-soft);
+}
+
+.resource-sync--outofsync {
+  color: var(--warn);
+  background: var(--warn-soft);
 }
 
 .resource-delete {

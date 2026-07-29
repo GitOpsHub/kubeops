@@ -45,10 +45,12 @@ type Repository interface {
 }
 
 type CreateInput struct {
-	Name       string   `json:"name"`
-	Namespace  string   `json:"namespace"`
-	ClusterIDs []string `json:"clusterIds"`
-	ValuesYAML string   `json:"valuesYaml"`
+	Name        string   `json:"name"`
+	Namespace   string   `json:"namespace"`
+	Environment string   `json:"environment"`
+	Region      string   `json:"region"`
+	ClusterIDs  []string `json:"clusterIds"`
+	ValuesYAML  string   `json:"valuesYaml"`
 	// RegionValues holds per-region override files keyed by region, layered over
 	// ValuesYAML by Argo CD. Regions without an entry deploy the base values alone.
 	RegionValues map[string]string `json:"regionValues,omitempty"`
@@ -146,16 +148,36 @@ func NewService(repository Repository, cfg config.OnboardingConfig) (*Service, e
 func (s *Service) Create(ctx context.Context, input CreateInput) (model.ApplicationOnboarding, error) {
 	input.Name = strings.TrimSpace(input.Name)
 	input.Namespace = strings.TrimSpace(input.Namespace)
+	input.Environment = strings.ToLower(strings.TrimSpace(input.Environment))
+	if input.Environment == "" {
+		input.Environment = "dev"
+	}
+	input.Region = strings.ToLower(strings.TrimSpace(input.Region))
+	if input.Region == "" {
+		input.Region = "us-east-1"
+	}
 	if err := s.validateInput(input); err != nil {
 		return model.ApplicationOnboarding{}, err
 	}
 
-	// The Argo CD application is named after the onboarding, so a second record
-	// for the same name and namespace would claim the very same application on
-	// every shared cluster: both would report one application's status, and
-	// offboarding either would delete what the other still claims. The check
-	// runs before any GitHub or Argo CD work so a rejected request leaves
-	// nothing behind.
+	deploymentNamespace := scopedIdentity(input.Namespace, input.Environment, input.Region)
+	deploymentName := scopedIdentity(input.Name, input.Environment, input.Region)
+	if !validDNSLabel(deploymentNamespace) {
+		return model.ApplicationOnboarding{}, ValidationError{
+			Message: "namespace plus environment and region must fit in a 63-character DNS label",
+		}
+	}
+	if !validDNSLabel(deploymentName) {
+		return model.ApplicationOnboarding{}, ValidationError{
+			Message: "application name plus environment and region must fit in a 63-character DNS label",
+		}
+	}
+	input.Namespace = deploymentNamespace
+
+	// Environment and region are part of the deployment identity. The same
+	// logical application may therefore be onboarded into dev, qa, and prod
+	// without sharing a Kubernetes namespace, Argo CD application, or values
+	// repository with another release context.
 	existing, err := s.store.ActiveApplicationOnboardingID(ctx, input.Name, input.Namespace)
 	if err != nil {
 		return model.ApplicationOnboarding{}, fmt.Errorf("look up existing onboarding: %w", err)
@@ -188,14 +210,9 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 		}
 	}
 
-	// Only the regions actually covered by the selected clusters are committed, so a
-	// stale override left in the form never creates an orphaned directory.
-	targetRegions := make(map[string]struct{}, len(clusters))
-	for _, cluster := range clusters {
-		if cluster.Location != "" {
-			targetRegions[cluster.Location] = struct{}{}
-		}
-	}
+	// Every selected cluster receives the application release context chosen in
+	// the form. Inventory location remains available separately on the cluster.
+	targetRegions := map[string]struct{}{input.Region: {}}
 	regionValues := make(map[string]string, len(input.RegionValues))
 	for region, values := range input.RegionValues {
 		if _, ok := targetRegions[region]; !ok {
@@ -212,7 +229,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 		targetRegionNames = append(targetRegionNames, region)
 	}
 	valuesRepository, err := s.github.Ensure(
-		ctx, input.Name, input.ValuesYAML, regionValues, targetRegionNames,
+		ctx, input.Name, input.Environment, input.ValuesYAML, regionValues, targetRegionNames,
 	)
 	if err != nil {
 		return model.ApplicationOnboarding{}, ExternalError{
@@ -221,12 +238,21 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 	}
 
 	digest := sha256.Sum256([]byte(valuesRepository.ValuesYAML))
+	scopedValues := input.ValuesYAML
+	if override := regionValues[input.Region]; override != "" {
+		if merged, mergeErr := mergeValuesYAML(scopedValues, override); mergeErr == nil {
+			scopedValues = merged
+		}
+	}
 	onboarding, err := s.store.CreateApplicationOnboarding(ctx, model.ApplicationOnboarding{
 		Name:                     input.Name,
 		Namespace:                input.Namespace,
+		Environment:              input.Environment,
+		Region:                   input.Region,
 		ChartRepoURL:             s.config.HelmRepoURL,
 		ChartName:                s.config.HelmChart,
 		ChartRevision:            s.config.HelmRevision,
+		Image:                    imageFromValues(scopedValues),
 		ValuesDigest:             "sha256:" + hex.EncodeToString(digest[:]),
 		ValuesRepositoryURL:      valuesRepository.URL,
 		ValuesRepositoryCloneURL: valuesRepository.CloneURL,
@@ -513,16 +539,18 @@ func (s *Service) applicationSpec(
 	if cloneURL == "" {
 		cloneURL = strings.TrimSuffix(record.ValuesRepositoryURL, "/") + ".git"
 	}
+	environment := ""
 	region := ""
 	if target.HasRegionValues {
+		environment = record.Environment
 		region = target.Region
 	}
 	return ApplicationSpec{
-		Name: record.Name, Namespace: record.Namespace,
+		Name: target.ArgoApplication, Namespace: record.Namespace,
 		Project: s.config.ArgoProject, RepoURL: record.ChartRepoURL,
 		Chart: record.ChartName, Revision: record.ChartRevision,
 		ValuesRepoURL: cloneURL, ValuesRevision: record.ValuesRevision,
-		Region: region, ArgoNamespace: s.config.ArgoNamespace,
+		Environment: environment, Region: region, ArgoNamespace: s.config.ArgoNamespace,
 	}
 }
 
@@ -530,6 +558,9 @@ func (s *Service) Get(ctx context.Context, id string) (model.ApplicationOnboardi
 	record, err := s.store.GetApplicationOnboarding(ctx, id)
 	if err != nil {
 		return model.ApplicationOnboarding{}, err
+	}
+	if record.Image == "" {
+		record.Image = imageFromValues(s.config.HelmDefaultsYAML)
 	}
 	s.enrichTargets(record.Targets)
 	return record, nil
@@ -544,9 +575,37 @@ func (s *Service) List(
 		return model.ApplicationOnboardingPage{}, err
 	}
 	for i := range page.Items {
+		if page.Items[i].Image == "" {
+			page.Items[i].Image = imageFromValues(s.config.HelmDefaultsYAML)
+		}
 		s.enrichTargets(page.Items[i].Targets)
 	}
 	return page, nil
+}
+
+func imageFromValues(valuesYAML string) string {
+	var values struct {
+		Image struct {
+			Repository string `yaml:"repository"`
+			Tag        string `yaml:"tag"`
+			Digest     string `yaml:"digest"`
+		} `yaml:"image"`
+	}
+	if err := yaml.Unmarshal([]byte(valuesYAML), &values); err != nil {
+		return ""
+	}
+	repository := strings.TrimSpace(values.Image.Repository)
+	if repository == "" {
+		return ""
+	}
+	if digest := strings.TrimSpace(values.Image.Digest); digest != "" {
+		return repository + "@" + digest
+	}
+	tag := strings.TrimSpace(values.Image.Tag)
+	if tag == "" {
+		tag = "latest"
+	}
+	return repository + ":" + tag
 }
 
 // enrichTargets attaches the Argo CD deep link for every target whose cluster maps
@@ -662,6 +721,16 @@ func (s *Service) validateInput(input CreateInput) error {
 	if !validDNSLabel(input.Namespace) {
 		return ValidationError{Message: "namespace must be a lowercase DNS label"}
 	}
+	if input.Environment != "" && !validDNSLabel(input.Environment) {
+		return ValidationError{Message: "environment must be a lowercase DNS label"}
+	}
+	if input.Environment != "" &&
+		input.Environment != "dev" && input.Environment != "qa" && input.Environment != "prod" {
+		return ValidationError{Message: "environment must be dev, qa, or prod"}
+	}
+	if input.Region != "" && input.Region != "us-east-1" && input.Region != "us-east-2" {
+		return ValidationError{Message: "region must be us-east-1 or us-east-2"}
+	}
 	if len(input.ClusterIDs) == 0 {
 		return ValidationError{Message: "at least one target cluster is required"}
 	}
@@ -717,6 +786,14 @@ func regionOverride(regionValues map[string]string, region string) string {
 
 func validDNSLabel(value string) bool {
 	return len(value) <= 63 && dnsLabel.MatchString(value)
+}
+
+func scopedIdentity(base, environment, region string) string {
+	scope := environment + "-" + region
+	if strings.HasSuffix(base, "-"+scope) {
+		return base
+	}
+	return base + "-" + scope
 }
 
 func uniqueStrings(values []string) []string {

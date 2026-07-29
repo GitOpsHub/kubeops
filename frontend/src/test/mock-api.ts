@@ -39,9 +39,12 @@ export function buildApplication(
     id: 'onboarding-1',
     name: 'payments-api',
     namespace: 'payments',
+    environment: 'prod',
+    region: 'us-east-1',
     chartRepoUrl: 'https://charts.example.test',
     chartName: 'global-app',
     chartRevision: '1.2.3',
+    image: 'registry.example.test/payments-api:2.4.1',
     valuesDigest: 'sha256:test',
     valuesRepositoryUrl: 'https://github.com/GitOpsHub/payments-api',
     valuesRepositoryCloneUrl: 'https://github.com/GitOpsHub/payments-api.git',
@@ -59,7 +62,6 @@ export function buildApplication(
 
 export type MockState = {
   applications: ApplicationOnboarding[]
-  argoPassword: string
   argoAccessStatus: number
   resources: ResourceNode[]
   manifest: string
@@ -90,7 +92,6 @@ export function buildResource(overrides: Partial<ResourceNode> = {}): ResourceNo
 export function mockAPI(initial: Partial<MockState> = {}) {
   const state: MockState = {
     applications: initial.applications ?? [],
-    argoPassword: initial.argoPassword ?? 'argo-password',
     argoAccessStatus: initial.argoAccessStatus ?? 200,
     resources: initial.resources ?? [],
     manifest: initial.manifest ?? '{"kind":"Deployment"}',
@@ -128,20 +129,26 @@ export function mockAPI(initial: Partial<MockState> = {}) {
       const submitted = JSON.parse(String(init.body)) as {
         name: string
         namespace: string
+        environment: string
+        region: string
         clusterIds: string[]
       }
+      const deploymentScope = `${submitted.environment}-${submitted.region}`
+      const deploymentName = `${submitted.name}-${deploymentScope}`
       const created = buildApplication({
         id: 'onboarding-created',
         name: submitted.name,
-        namespace: submitted.namespace,
+        namespace: `${submitted.namespace}-${deploymentScope}`,
+        environment: submitted.environment,
+        region: submitted.region,
         valuesRepositoryUrl: `https://github.com/GitOpsHub/${submitted.name}`,
         valuesRepositoryName: submitted.name,
         targets: [
           buildTarget({
             onboardingId: 'onboarding-created',
             clusterId: submitted.clusterIds[0],
-            argoApplication: submitted.name,
-            argoApplicationUrl: `https://argo.example.test/applications/${submitted.name}`,
+            argoApplication: deploymentName,
+            argoApplicationUrl: `https://argo.example.test/applications/${deploymentName}`,
           }),
         ],
       })
@@ -233,9 +240,7 @@ export function mockAPI(initial: Partial<MockState> = {}) {
         )
       }
       return Response.json({
-        url: 'https://argo.example.test',
-        username: 'kubeops',
-        password: state.argoPassword,
+        url: 'http://localhost:8080/argo/target-id/applications',
       })
     }
 

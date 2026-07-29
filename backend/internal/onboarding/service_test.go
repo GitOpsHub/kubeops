@@ -28,6 +28,9 @@ type fakeRepository struct {
 	restarted []string
 	// existingID is the onboarding already holding the requested name, if any.
 	existingID string
+	// activeByNamespace lets duplicate behavior vary by deployment scope.
+	activeByNamespace map[string]string
+	lookedUpNamespace string
 	// createErr overrides the result of CreateApplicationOnboarding.
 	createErr error
 }
@@ -36,10 +39,14 @@ func (f *fakeRepository) GetClustersByIDs(context.Context, []string) ([]model.Cl
 	return f.clusters, nil
 }
 func (f *fakeRepository) ActiveApplicationOnboardingID(
-	context.Context,
-	string,
-	string,
+	_ context.Context,
+	_ string,
+	namespace string,
 ) (string, error) {
+	f.lookedUpNamespace = namespace
+	if f.activeByNamespace != nil {
+		return f.activeByNamespace[namespace], nil
+	}
 	return f.existingID, nil
 }
 func (f *fakeRepository) CreateApplicationOnboarding(
@@ -59,9 +66,10 @@ func (f *fakeRepository) CreateApplicationOnboarding(
 			ID: "target-" + string(rune('1'+index)), OnboardingID: record.ID,
 			ClusterID: cluster.ID, ClusterName: cluster.Name, Region: cluster.Location,
 			SourceID:           cluster.SourceID,
-			ProviderResourceID: cluster.ProviderResourceID, ArgoApplication: record.Name,
-			HasRegionValues: regionValues[cluster.Location],
-			Status:          "creating", SyncStatus: "Unknown", HealthStatus: "Unknown",
+			ProviderResourceID: cluster.ProviderResourceID,
+			ArgoApplication:    scopedIdentity(record.Name, record.Environment, record.Region),
+			HasRegionValues:    regionValues[cluster.Location],
+			Status:             "creating", SyncStatus: "Unknown", HealthStatus: "Unknown",
 			CreatedAt: time.Now(),
 		})
 	}
@@ -102,6 +110,14 @@ func (f *fakeRepository) UpdateApplicationDeployment(
 		f.updates = make(map[string]model.ApplicationDeployment)
 	}
 	target := f.updates[id]
+	if target.ID == "" {
+		for _, existing := range f.record.Targets {
+			if existing.ID == id {
+				target = existing
+				break
+			}
+		}
+	}
 	target.ID = id
 	target.Status = status
 	target.SyncStatus = syncStatus
@@ -150,6 +166,7 @@ type fakeValuesRepositoryManager struct {
 	err        error
 	deleted    string
 	regions    map[string]string
+	name       string
 	// calls counts Ensure invocations, so a refused onboarding can be shown to
 	// have left no repository behind.
 	calls int
@@ -157,18 +174,20 @@ type fakeValuesRepositoryManager struct {
 
 func (f *fakeValuesRepositoryManager) Ensure(
 	_ context.Context,
+	name string,
 	_ string,
 	baseValues string,
 	regionValues map[string]string,
-	_ []string,
+	targetRegions []string,
 ) (ValuesRepository, error) {
 	f.calls++
+	f.name = name
 	f.regions = regionValues
 	if f.repository.ValuesYAML == "" {
 		f.repository.ValuesYAML = baseValues
 	}
 	if f.repository.RegionValues == nil {
-		f.repository.RegionValues = regionKeys(regionValues)
+		f.repository.RegionValues = regionSet(targetRegions)
 	}
 	return f.repository, f.err
 }
@@ -273,6 +292,18 @@ func TestCreateApplicationOnboarding(t *testing.T) {
 	if record.ValuesDigest == "" || record.Targets[0].Status != "progressing" {
 		t.Fatalf("unexpected record: %#v", record)
 	}
+	if record.Environment != "dev" {
+		t.Fatalf("expected default environment, got %q", record.Environment)
+	}
+	if record.Region != "us-east-1" {
+		t.Fatalf("expected default application region, got %#v", record)
+	}
+	if record.Namespace != "payments-dev-us-east-1" ||
+		record.Targets[0].ArgoApplication != "payments-dev-us-east-1" ||
+		client.created.Name != "payments-dev-us-east-1" ||
+		valuesManager.name != "payments" {
+		t.Fatalf("deployment identity was not scoped: %#v, %#v", record, client.created)
+	}
 	if client.created.ValuesRepoURL != valuesManager.repository.CloneURL ||
 		record.ValuesRepositoryURL != valuesManager.repository.URL {
 		t.Fatalf("unexpected values repository: %#v, %#v", client.created, record)
@@ -317,6 +348,45 @@ func TestCreateApplicationOnboardingRejectsDuplicateName(t *testing.T) {
 	}
 	if client.created.Name != "" {
 		t.Fatalf("Argo CD was asked to create %q for a refused onboarding", client.created.Name)
+	}
+	if repository.lookedUpNamespace != "payments-dev-us-east-1" {
+		t.Fatalf("duplicate lookup used %q", repository.lookedUpNamespace)
+	}
+}
+
+func TestCreateApplicationOnboardingAllowsDifferentEnvironment(t *testing.T) {
+	cluster := model.Cluster{
+		ID: "cluster-1", Name: "prod", SourceID: "aws",
+		ProviderResourceID: "arn:cluster/prod",
+	}
+	repository := &fakeRepository{
+		clusters: []model.Cluster{cluster},
+		activeByNamespace: map[string]string{
+			"payments-dev-us-east-1": "existing-dev-onboarding",
+		},
+	}
+	client := &fakeArgoClient{}
+	service := &Service{
+		store: repository,
+		config: config.OnboardingConfig{
+			HelmRepoURL: "https://charts.example.test", HelmChart: "global-app",
+			HelmRevision: "1.2.3", ArgoProject: "platform", ArgoNamespace: "argo-cd",
+			RequestTimeout: time.Second, HelmDefaultsYAML: "replicaCount: 2\n",
+		},
+		clients: map[string]ArgoClient{targetKey("aws", "arn:cluster/prod"): client},
+		github:  &fakeValuesRepositoryManager{},
+	}
+
+	record, err := service.Create(context.Background(), CreateInput{
+		Name: "payments", Namespace: "payments", Environment: "qa", Region: "us-east-1",
+		ClusterIDs: []string{"cluster-1"}, ValuesYAML: "replicaCount: 2\n",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Namespace != "payments-qa-us-east-1" ||
+		client.created.Name != "payments-qa-us-east-1" {
+		t.Fatalf("qa onboarding did not get an isolated identity: %#v, %#v", record, client.created)
 	}
 }
 
@@ -408,6 +478,39 @@ func TestCreateApplicationOnboardingLayersRegionValues(t *testing.T) {
 	}
 	if westClient.created.Region != "" {
 		t.Fatalf("expected no override for eu-west-1, got %q", westClient.created.Region)
+	}
+}
+
+func TestImageFromValues(t *testing.T) {
+	tests := []struct {
+		name   string
+		values string
+		want   string
+	}{
+		{
+			name:   "tagged image",
+			values: "image:\n  repository: nginxinc/nginx-unprivileged\n  tag: 1.27-alpine\n",
+			want:   "nginxinc/nginx-unprivileged:1.27-alpine",
+		},
+		{
+			name:   "digest takes precedence",
+			values: "image:\n  repository: ghcr.io/example/api\n  tag: latest\n  digest: sha256:abc123\n",
+			want:   "ghcr.io/example/api@sha256:abc123",
+		},
+		{
+			name:   "missing tag uses latest",
+			values: "image:\n  repository: nginx\n",
+			want:   "nginx:latest",
+		},
+		{name: "missing image", values: "replicaCount: 2\n", want: ""},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := imageFromValues(test.values); got != test.want {
+				t.Fatalf("imageFromValues() = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 
@@ -553,6 +656,9 @@ func TestCreateApplicationOnboardingValidation(t *testing.T) {
 	}, github: &fakeValuesRepositoryManager{}}
 	tests := []CreateInput{
 		{Name: "Bad_Name", Namespace: "apps", ClusterIDs: []string{"one"}, ValuesYAML: "{}"},
+		{Name: "app", Namespace: "apps", Environment: "Bad Env", ClusterIDs: []string{"one"}, ValuesYAML: "{}"},
+		{Name: "app", Namespace: "apps", Environment: "stage", ClusterIDs: []string{"one"}, ValuesYAML: "{}"},
+		{Name: "app", Namespace: "apps", Region: "us-west-1", ClusterIDs: []string{"one"}, ValuesYAML: "{}"},
 		{Name: "app", Namespace: "apps", ClusterIDs: nil, ValuesYAML: "{}"},
 		{Name: "app", Namespace: "apps", ClusterIDs: []string{"one"}, ValuesYAML: "- item"},
 		{Name: "app", Namespace: "apps", ClusterIDs: []string{"one"}, ValuesYAML: "broken: ["},
