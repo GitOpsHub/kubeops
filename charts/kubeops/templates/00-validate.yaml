@@ -1,0 +1,5 @@
+{{/*
+Value combinations that cannot work on a real cluster are rejected here, before
+anything is rendered. This file intentionally produces no manifest.
+*/}}
+{{- include "kubeops.validate" . -}}

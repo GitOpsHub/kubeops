@@ -1,0 +1,16 @@
+# expect: a single-writer volume cannot back more than one Deployment replica
+# One ReadWriteOnce volume cannot be attached to three pods across three nodes.
+workload:
+  kind: Deployment
+
+replicaCount: 3
+
+deploymentStrategy:
+  type: Recreate
+
+persistence:
+  enabled: true
+  storageClassName: gp3
+  accessModes:
+    - ReadWriteOnce
+  size: 10Gi

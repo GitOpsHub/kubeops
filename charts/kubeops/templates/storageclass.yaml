@@ -1,0 +1,74 @@
+{{- if .Values.storage.classes.create }}
+{{- range $index, $class := .Values.storage.classes.items }}
+{{- if $index }}
+---
+{{- end }}
+# StorageClasses are cluster-scoped. Creating one per application release will
+# collide across releases; name them for the cluster, not for the app.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ $class.name }}
+  labels:
+    {{- include "kubeops.labels" $ | nindent 4 }}
+    {{- with $class.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    # A StorageClass outliving its release is almost always what an operator
+    # wants: deleting it orphans nothing, but recreating it is disruptive.
+    helm.sh/resource-policy: keep
+    {{- if $class.default }}
+    storageclass.kubernetes.io/is-default-class: "true"
+    {{- end }}
+    {{- with $class.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+provisioner: {{ $class.provisioner }}
+reclaimPolicy: {{ default "Delete" $class.reclaimPolicy }}
+# WaitForFirstConsumer keeps the volume in the same zone as the pod that will
+# use it. Immediate binding strands pods on multi-zone clusters.
+volumeBindingMode: {{ default "WaitForFirstConsumer" $class.volumeBindingMode }}
+allowVolumeExpansion: {{ ne $class.allowVolumeExpansion false }}
+{{- with $class.parameters }}
+parameters:
+  {{- range $key, $value := . }}
+  {{ $key }}: {{ toString $value | quote }}
+  {{- end }}
+{{- end }}
+{{- with $class.mountOptions }}
+mountOptions:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with $class.allowedTopologies }}
+allowedTopologies:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if .Values.storage.snapshotClasses.create }}
+{{- range .Values.storage.snapshotClasses.items }}
+---
+# Requires the external-snapshotter CRDs. EKS and AKS install them with the CSI
+# driver add-ons; GKE installs them by default.
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: {{ .name }}
+  labels:
+    {{- include "kubeops.labels" $ | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+    {{- with .annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+driver: {{ .driver }}
+deletionPolicy: {{ default "Delete" .deletionPolicy }}
+{{- with .parameters }}
+parameters:
+  {{- range $key, $value := . }}
+  {{ $key }}: {{ toString $value | quote }}
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

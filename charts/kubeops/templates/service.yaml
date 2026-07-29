@@ -1,16 +1,33 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "kubeops.resourceName" (dict "root" . "suffix" "service") }}
+  name: {{ include "kubeops.serviceName" . }}
   labels:
     {{- include "kubeops.labels" . | nindent 4 }}
-  {{- with .Values.service.annotations }}
-  annotations:
+    {{- with .Values.service.labels }}
     {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with (include "kubeops.serviceAnnotations" . | trim) }}
+  annotations:
+    {{- . | nindent 4 }}
   {{- end }}
 spec:
   type: {{ .Values.service.type }}
   sessionAffinity: {{ .Values.service.sessionAffinity }}
+  {{- with .Values.service.sessionAffinityConfig }}
+  sessionAffinityConfig:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.service.ipFamilyPolicy }}
+  ipFamilyPolicy: {{ . }}
+  {{- end }}
+  {{- with .Values.service.ipFamilies }}
+  ipFamilies:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.service.internalTrafficPolicy }}
+  internalTrafficPolicy: {{ . }}
+  {{- end }}
   {{- if and (or (eq .Values.service.type "NodePort") (eq .Values.service.type "LoadBalancer")) .Values.service.externalTrafficPolicy }}
   externalTrafficPolicy: {{ .Values.service.externalTrafficPolicy }}
   {{- end }}
@@ -18,6 +35,9 @@ spec:
   allocateLoadBalancerNodePorts: {{ .Values.service.allocateLoadBalancerNodePorts }}
   {{- with .Values.service.loadBalancerClass }}
   loadBalancerClass: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.service.loadBalancerIP }}
+  loadBalancerIP: {{ . | quote }}
   {{- end }}
   {{- with .Values.service.loadBalancerSourceRanges }}
   loadBalancerSourceRanges:
@@ -29,8 +49,52 @@ spec:
       targetPort: {{ .Values.service.targetPort }}
       protocol: TCP
       name: http
+      {{- with .Values.service.appProtocol }}
+      appProtocol: {{ . }}
+      {{- end }}
       {{- if and (or (eq .Values.service.type "NodePort") (eq .Values.service.type "LoadBalancer")) .Values.service.nodePort }}
       nodePort: {{ .Values.service.nodePort }}
       {{- end }}
+    {{- if .Values.metrics.enabled }}
+    - port: {{ .Values.metrics.port }}
+      targetPort: {{ .Values.metrics.portName }}
+      protocol: TCP
+      name: {{ .Values.metrics.portName }}
+    {{- end }}
+    {{- with .Values.service.extraPorts }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
   selector:
     {{- include "kubeops.selectorLabels" . | nindent 4 }}
+{{- if or (eq .Values.workload.kind "StatefulSet") .Values.service.headless.enabled }}
+---
+# A StatefulSet needs a governing headless Service to give every replica a
+# stable DNS name of the form <pod>.<service>.<namespace>.svc.cluster.local.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kubeops.headlessServiceName" . }}
+  labels:
+    {{- include "kubeops.labels" . | nindent 4 }}
+  {{- with .Values.service.headless.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  publishNotReadyAddresses: {{ .Values.service.headless.publishNotReadyAddresses }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.targetPort }}
+      protocol: TCP
+      name: http
+    {{- if .Values.metrics.enabled }}
+    - port: {{ .Values.metrics.port }}
+      targetPort: {{ .Values.metrics.portName }}
+      protocol: TCP
+      name: {{ .Values.metrics.portName }}
+    {{- end }}
+  selector:
+    {{- include "kubeops.selectorLabels" . | nindent 4 }}
+{{- end }}

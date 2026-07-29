@@ -1,0 +1,250 @@
+# Google Kubernetes Engine: every integration this chart offers, exercised
+# together.
+#
+# Cluster prerequisites:
+#   - VPC-native (alias IP) cluster      (container-native load balancing / NEGs)
+#   - Compute Engine PD CSI driver       (per-replica block storage, on by default)
+#   - Filestore CSI driver add-on        (shared ReadWriteMany storage)
+#   - Cloud Storage FUSE CSI driver      (storage.csiVolumes + storage.gcsFuse)
+#   - Workload Identity Federation       (serviceAccount.gcp)
+#   - Secret Manager CSI provider        (secretsStore provider `gcp`)
+#   - External Secrets Operator          (externalSecret)
+#   - Google Managed Prometheus          (metrics.podMonitor)
+#
+# Project IDs and resource names below are placeholders.
+
+workload:
+  kind: StatefulSet
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+
+replicaCount: 3
+
+image:
+  repository: nginxinc/nginx-unprivileged
+  tag: "1.27-alpine"
+
+serviceAccount:
+  create: true
+  gcp:
+    # Workload Identity: the IAM binding between this KSA and the Google service
+    # account is created outside the chart.
+    serviceAccount: kubeops-app@my-project.iam.gserviceaccount.com
+
+podSecurityContext:
+  runAsNonRoot: true
+  fsGroup: 1000
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# GKE Ingress cannot reach a plain ClusterIP Service. NEGs give the load
+# balancer pod IPs directly, which is faster and preserves the client IP.
+service:
+  type: ClusterIP
+  port: 80
+  gcp:
+    neg:
+      enabled: true
+      ingress: true
+    backendConfig:
+      enabled: true
+
+ingress:
+  enabled: true
+  # gce is the external Application Load Balancer; gce-internal is the regional
+  # internal one.
+  className: gce
+  gke:
+    enabled: true
+    globalStaticIpName: kubeops-app-ip
+    managedCertificate:
+      enabled: true
+      domains:
+        - app.example.com
+    frontendConfig:
+      enabled: true
+      redirectToHttps: true
+      redirectResponseCode: MOVED_PERMANENTLY_DEFAULT
+      sslPolicy: kubeops-tls12-modern
+    backendConfig:
+      enabled: true
+      timeoutSec: 60
+      connectionDraining:
+        drainingTimeoutSec: 30
+      # The load balancer health-checks the pod directly, so this must match a
+      # path the application actually serves.
+      healthCheck:
+        enabled: true
+        type: HTTP
+        requestPath: /
+        checkIntervalSec: 15
+        timeoutSec: 5
+        healthyThreshold: 1
+        unhealthyThreshold: 3
+      cdn:
+        enabled: true
+        cacheMode: CACHE_ALL_STATIC
+      securityPolicy:
+        name: kubeops-cloud-armor
+      logging:
+        enable: true
+        sampleRate: 1.0
+  hosts:
+    - host: app.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+# hyperdisk-balanced is the current generation; pd-balanced remains valid on
+# older node pools.
+persistence:
+  enabled: true
+  name: data
+  mountPath: /var/lib/app
+  storageClassName: kubeops-pd-balanced
+  accessModes:
+    - ReadWriteOnce
+  size: 20Gi
+
+# Filestore is the ReadWriteMany option on GKE.
+extraPersistentVolumeClaims:
+  - name: shared
+    mountPath: /var/shared
+    storageClassName: kubeops-filestore
+    accessModes:
+      - ReadWriteMany
+    # Filestore BASIC_HDD instances start at 1Ti; a smaller request is rejected.
+    size: 1Ti
+
+storage:
+  emptyDirs:
+    - name: tmp
+      mountPath: /tmp
+      medium: Memory
+      sizeLimit: 64Mi
+  # Cloud Storage FUSE mounts a bucket as a file system. The sidecar is injected
+  # by the annotation that storage.gcsFuse adds.
+  gcsFuse:
+    enabled: true
+    cpuLimit: 500m
+    memoryLimit: 256Mi
+    ephemeralStorageLimit: 5Gi
+  csiVolumes:
+    - name: assets
+      mountPath: /var/assets
+      driver: gcsfuse.csi.storage.gke.io
+      readOnly: true
+      volumeAttributes:
+        bucketName: kubeops-app-assets
+        mountOptions: implicit-dirs
+  classes:
+    create: true
+    items:
+      - name: kubeops-pd-balanced
+        provisioner: pd.csi.storage.gke.io
+        reclaimPolicy: Delete
+        allowVolumeExpansion: true
+        volumeBindingMode: WaitForFirstConsumer
+        parameters:
+          type: hyperdisk-balanced
+          provisioned-throughput-on-create: "250Mi"
+          csi.storage.k8s.io/fstype: ext4
+      - name: kubeops-filestore
+        provisioner: filestore.csi.storage.gke.io
+        reclaimPolicy: Delete
+        allowVolumeExpansion: true
+        # Filestore provisions a managed NFS instance, so there is no node to
+        # wait for.
+        volumeBindingMode: Immediate
+        parameters:
+          tier: BASIC_HDD
+          network: default
+  snapshotClasses:
+    create: true
+    items:
+      - name: kubeops-pd-snapshots
+        driver: pd.csi.storage.gke.io
+        deletionPolicy: Delete
+        parameters:
+          # Full backups survive deletion of the source disk; snapshots do not.
+          type: images
+
+secretsStore:
+  enabled: true
+  provider: gcp
+  mountPath: /mnt/secrets
+  parameters:
+    secrets: |
+      - resourceName: "projects/my-project/secrets/kubeops-db-password/versions/latest"
+        path: "DATABASE_PASSWORD"
+  secretObjects:
+    - secretName: kubeops-app-secrets
+      type: Opaque
+      data:
+        - objectName: DATABASE_PASSWORD
+          key: DATABASE_PASSWORD
+  asEnvFrom: true
+
+externalSecret:
+  enabled: true
+  secretStoreRef:
+    name: gcp-secret-manager
+    kind: ClusterSecretStore
+  refreshInterval: 1h
+  data:
+    - secretKey: API_TOKEN
+      remoteRef:
+        key: kubeops-api-token
+  asEnvFrom: true
+
+metrics:
+  enabled: true
+  port: 9090
+  path: /metrics
+  # Google Managed Service for Prometheus consumes PodMonitoring, but also
+  # supports the Prometheus Operator CRDs when those are installed.
+  podMonitor:
+    enabled: true
+    interval: 30s
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+networkPolicy:
+  enabled: true
+  allowExternal: true
+  egress:
+    enabled: true
+    allowDNS: true
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: kubeops
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi

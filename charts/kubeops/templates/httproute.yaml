@@ -1,0 +1,37 @@
+{{- if .Values.httpRoute.enabled }}
+# Gateway API is the successor to Ingress. The AWS Load Balancer Controller,
+# GKE Gateway controller and the AKS application routing add-on all implement
+# it, so one HTTPRoute replaces three sets of provider annotations.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "kubeops.resourceName" (dict "root" . "suffix" "httproute") }}
+  labels:
+    {{- include "kubeops.labels" . | nindent 4 }}
+    {{- with .Values.httpRoute.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.httpRoute.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs:
+    {{- toYaml .Values.httpRoute.parentRefs | nindent 4 }}
+  {{- with .Values.httpRoute.hostnames }}
+  hostnames:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- if .Values.httpRoute.rules }}
+    {{- toYaml .Values.httpRoute.rules | nindent 4 }}
+    {{- else }}
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: {{ include "kubeops.serviceName" . }}
+          port: {{ .Values.service.port }}
+    {{- end }}
+{{- end }}

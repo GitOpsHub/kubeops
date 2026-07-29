@@ -1,0 +1,12 @@
+# expect: is a shared claim mounted by every replica
+# extraPersistentVolumeClaims are shared across replicas, so a single-writer
+# access mode cannot work with more than one replica.
+replicaCount: 3
+
+extraPersistentVolumeClaims:
+  - name: shared
+    mountPath: /var/shared
+    storageClassName: gp3
+    accessModes:
+      - ReadWriteOnce
+    size: 10Gi

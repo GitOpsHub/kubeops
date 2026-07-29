@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - charts/kubeops/**
+      - scripts/validate-helm-chart.sh
       - .github/workflows/helm-chart.yml
   push:
     branches:
@@ -22,27 +23,38 @@ concurrency:
 env:
   CHART_PATH: charts/kubeops
   HELM_VERSION: v4.0.4
+  KUBECONFORM_VERSION: v0.8.0
+  # Rendered manifests are validated against this API version. Keep it at or
+  # above the chart's kubeVersion floor.
+  KUBE_VERSION: 1.30.0
 
 jobs:
+  # The profile list lives in the validation script, so a new ci/*-values.yaml
+  # file is picked up by CI without editing this workflow.
+  profiles:
+    name: Collect profiles
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.collect.outputs.matrix }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Collect platform profiles
+        id: collect
+        run: |
+          matrix="$(./scripts/validate-helm-chart.sh --list | jq -Rrc --slurp 'split("\n") | map(select(length > 0))')"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "Validating profiles: $matrix"
+
   validate:
-    name: Validate (${{ matrix.platform }})
+    name: Validate (${{ matrix.profile }})
+    needs: profiles
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform: default
-            values: charts/kubeops/ci/default-values.yaml
-          - platform: eks
-            values: charts/kubeops/ci/eks-values.yaml
-          - platform: gke
-            values: charts/kubeops/ci/gke-values.yaml
-          - platform: aks
-            values: charts/kubeops/ci/aks-values.yaml
-          - platform: minikube
-            values: charts/kubeops/ci/minikube-values.yaml
-          - platform: docker-desktop
-            values: charts/kubeops/ci/docker-desktop-values.yaml
+        profile: ${{ fromJSON(needs.profiles.outputs.matrix) }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -52,19 +64,143 @@ jobs:
         with:
           version: ${{ env.HELM_VERSION }}
 
-      - name: Lint chart
-        run: helm lint "$CHART_PATH" --strict --values "${{ matrix.values }}"
+      - name: Install kubeconform
+        run: |
+          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | tar -xz -C /usr/local/bin kubeconform
+          kubeconform -v
 
-      - name: Render chart
-        run: >-
-          helm template kubeops-test "$CHART_PATH"
-          --namespace kubeops-test
-          --values "${{ matrix.values }}"
+      # Lints, renders, and validates the result against the Kubernetes API
+      # schemas plus the CRD catalog, so provider objects such as BackendConfig
+      # and SecretProviderClass are schema-checked too.
+      - name: Validate profile
+        # Interpolated through the environment rather than straight into the
+        # shell command, matching the convention in the publish job below.
+        env:
+          PROFILE: ${{ matrix.profile }}
+        run: ./scripts/validate-helm-chart.sh --profile "$PROFILE"
+
+  guardrails:
+    name: Rejected combinations
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      # Asserts the chart still refuses value combinations that render valid
+      # YAML but cannot work on a cluster, such as a GKE Ingress in front of a
+      # plain ClusterIP Service.
+      - name: Assert invalid values are rejected
+        run: ./scripts/validate-helm-chart.sh --guardrails
+
+  install:
+    name: Install on Kubernetes
+    needs: [validate, guardrails]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Create cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: kubeops-chart
+
+      # kind has no cloud load-balancer or Ingress controller, so this proves
+      # what a render cannot: that a real API server accepts the manifests and
+      # that the workload becomes ready. The cloud paths are covered by schema
+      # validation above.
+      - name: Install stateless release
+        run: |
+          helm install stateless "$CHART_PATH" \
+            --namespace kubeops-stateless --create-namespace \
+            --values "$CHART_PATH/ci/default-values.yaml" \
+            --wait --timeout 5m
+
+      - name: Test stateless release
+        run: helm test stateless --namespace kubeops-stateless --logs
+
+      # Exercises the storage path end to end: a StatefulSet whose replicas each
+      # bind a claim from kind's default StorageClass and mount it.
+      - name: Install stateful release
+        run: |
+          helm install stateful "$CHART_PATH" \
+            --namespace kubeops-stateful --create-namespace \
+            --set workload.kind=StatefulSet \
+            --set replicaCount=2 \
+            --set persistence.enabled=true \
+            --set persistence.mountPath=/tmp/data \
+            --set persistence.size=1Gi \
+            --set podSecurityContext.fsGroup=101 \
+            --wait --timeout 5m
+
+      - name: Verify volumes are bound and mounted
+        run: |
+          kubectl get pvc --namespace kubeops-stateful
+          bound="$(kubectl get pvc --namespace kubeops-stateful \
+            -o jsonpath='{range .items[*]}{.status.phase}{"\n"}{end}' | grep -c '^Bound$')"
+          if [[ "$bound" -ne 2 ]]; then
+            echo "expected 2 bound claims, found $bound" >&2
+            kubectl describe pvc --namespace kubeops-stateful >&2
+            exit 1
+          fi
+          kubectl exec --namespace kubeops-stateful stateful-statefulset-0 \
+            -- sh -c 'touch /tmp/data/probe && ls -l /tmp/data/probe'
+
+      - name: Test stateful release
+        run: helm test stateful --namespace kubeops-stateful --logs
+
+      # Schema validation cannot see admission or defaulting. A server-side dry
+      # run puts every cloud profile in front of a real API server. The operator
+      # CRDs those profiles reference are not installed here, so a missing kind
+      # is tolerated and anything else fails the job.
+      - name: Server dry-run the cloud profiles
+        run: |
+          kubectl create namespace kubeops-dryrun
+          status=0
+          for profile in $(./scripts/validate-helm-chart.sh --list); do
+            echo "==> server dry-run: $profile"
+            rendered="$(helm template dryrun "$CHART_PATH" \
+              --namespace kubeops-dryrun \
+              --values "$CHART_PATH/ci/$profile-values.yaml")"
+            if ! output="$(printf '%s' "$rendered" \
+              | kubectl apply --dry-run=server --namespace kubeops-dryrun -f - 2>&1)"; then
+              unexpected="$(printf '%s\n' "$output" \
+                | grep -v 'no matches for kind' \
+                | grep -v 'ensure CRDs are installed first' \
+                | grep -Ei 'error|invalid' || true)"
+              if [[ -n "$unexpected" ]]; then
+                echo "::error::$profile was rejected by the API server"
+                printf '%s\n' "$unexpected"
+                status=1
+              else
+                echo "    only missing CRDs, as expected"
+              fi
+            fi
+          done
+          exit "$status"
+
+      - name: Collect diagnostics
+        if: failure()
+        run: |
+          kubectl get all,pvc --all-namespaces
+          kubectl describe pods --namespace kubeops-stateless || true
+          kubectl describe pods --namespace kubeops-stateful || true
 
   publish:
     name: Publish OCI chart
     if: startsWith(github.ref, 'refs/tags/helm-v')
-    needs: validate
+    needs: [validate, guardrails, install]
     runs-on: ubuntu-latest
     permissions:
       contents: read

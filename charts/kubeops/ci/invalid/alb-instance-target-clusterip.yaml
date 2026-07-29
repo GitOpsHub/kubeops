@@ -1,0 +1,17 @@
+# expect: ingress.aws.targetType=instance routes through node ports
+# instance targets reach pods through node ports, which a ClusterIP Service
+# does not allocate.
+service:
+  type: ClusterIP
+
+ingress:
+  enabled: true
+  className: alb
+  aws:
+    enabled: true
+    targetType: instance
+  hosts:
+    - host: app.example.com
+      paths:
+        - path: /
+          pathType: Prefix

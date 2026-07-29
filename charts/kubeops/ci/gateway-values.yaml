@@ -1,0 +1,135 @@
+# Gateway API and the stateless-Deployment paths: shared ReadWriteMany storage
+# instead of per-replica volumes, in-chart configuration, RBAC and sidecars.
+#
+# The AWS Load Balancer Controller, the GKE Gateway controller and the AKS
+# application routing add-on all implement Gateway API, so this profile is
+# cloud-neutral where the Ingress profiles are not.
+#
+# Cluster prerequisites:
+#   - Gateway API CRDs and a controller, with a Gateway named `platform`
+#   - a ReadWriteMany StorageClass (EFS, Azure Files or Filestore)
+
+workload:
+  kind: Deployment
+
+replicaCount: 3
+
+image:
+  repository: nginxinc/nginx-unprivileged
+  tag: "1.27-alpine"
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+
+httpRoute:
+  enabled: true
+  parentRefs:
+    - name: platform
+      namespace: gateway-system
+      sectionName: https
+  hostnames:
+    - app.example.com
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      timeouts:
+        request: 30s
+      backendRefs:
+        - name: kubeops-validate-service
+          port: 80
+
+# A Deployment shares one claim across replicas, so the class must support
+# ReadWriteMany.
+persistence:
+  enabled: true
+  name: data
+  mountPath: /var/lib/app
+  storageClassName: kubeops-shared-fs
+  accessModes:
+    - ReadWriteMany
+  size: 50Gi
+  retainOnDelete: true
+
+storage:
+  emptyDirs:
+    - name: tmp
+      mountPath: /tmp
+      medium: Memory
+      sizeLimit: 64Mi
+
+configMap:
+  enabled: true
+  mountPath: /etc/app
+  asEnvFrom: true
+  rollOnChange: true
+  data:
+    LOG_LEVEL: info
+    # Values are Go-templated, so release context is available.
+    app.conf: |
+      release = {{ .Release.Name }}
+      namespace = {{ .Release.Namespace }}
+
+secret:
+  enabled: true
+  mountPath: /etc/app-secret
+  asEnvFrom: false
+  stringData:
+    # A placeholder only. Real credentials belong in externalSecret or
+    # secretsStore, never in a values file.
+    PLACEHOLDER_TOKEN: replace-me
+
+rbac:
+  create: true
+  rules:
+    - apiGroups: [""]
+      resources: ["configmaps"]
+      verbs: ["get", "list", "watch"]
+
+initContainers:
+  - name: wait-for-volume
+    image: busybox:1.36
+    command: ["sh", "-c", "until [ -d /var/lib/app ]; do sleep 1; done"]
+    securityContext:
+      allowPrivilegeEscalation: false
+      runAsNonRoot: true
+      runAsUser: 65534
+      capabilities:
+        drop: [ALL]
+    volumeMounts:
+      - name: data
+        mountPath: /var/lib/app
+
+probes:
+  startup:
+    enabled: true
+    path: /
+    failureThreshold: 30
+    periodSeconds: 5
+
+container:
+  lifecycle:
+    preStop:
+      exec:
+        # Give the load balancer time to stop sending new connections before
+        # the process goes away.
+        command: ["sleep", "5"]
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+extraObjects:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: "{{ .Release.Name }}-extra"
+      labels:
+        app.kubernetes.io/instance: "{{ .Release.Name }}"
+    data:
+      note: rendered through the extraObjects escape hatch

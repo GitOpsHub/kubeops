@@ -1,5 +1,18 @@
-# EKS provisions the configured cloud load balancer through its installed
-# service controller. Controller-specific annotations can be added as needed.
+# EKS, minimal: expose the application through a cloud load balancer only.
+# See eks-full-values.yaml for ingress, storage and the identity integrations.
 service:
   type: LoadBalancer
   externalTrafficPolicy: Cluster
+  aws:
+    nlb:
+      # Requires the AWS Load Balancer Controller. Without it the in-tree legacy
+      # controller provisions a Classic Load Balancer and these annotations are
+      # ignored.
+      enabled: true
+      scheme: internet-facing
+      targetType: ip
+      crossZone: true
+      healthcheckProtocol: HTTP
+      healthcheckPath: /
+      tags:
+        ManagedBy: kubeops

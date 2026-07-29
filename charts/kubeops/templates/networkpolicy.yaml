@@ -1,0 +1,52 @@
+{{- if .Values.networkPolicy.enabled }}
+# NetworkPolicy needs a CNI that enforces it: VPC CNI with the network policy
+# agent on EKS, Dataplane V2 or Calico on GKE, Azure NPM or Cilium on AKS.
+# Without one the policy is stored and silently ignored.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "kubeops.resourceName" (dict "root" . "suffix" "netpol") }}
+  labels:
+    {{- include "kubeops.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "kubeops.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    {{- if .Values.networkPolicy.egress.enabled }}
+    - Egress
+    {{- end }}
+  ingress:
+    {{- if .Values.networkPolicy.allowExternal }}
+    - ports:
+        - port: {{ .Values.container.port }}
+          protocol: TCP
+        {{- if .Values.metrics.enabled }}
+        - port: {{ .Values.metrics.port }}
+          protocol: TCP
+        {{- end }}
+    {{- end }}
+    {{- with .Values.networkPolicy.ingressRules }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- if .Values.networkPolicy.egress.enabled }}
+  egress:
+    {{- if .Values.networkPolicy.egress.allowDNS }}
+    # Cluster DNS must stay reachable or every lookup in the pod fails.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    {{- end }}
+    {{- with .Values.networkPolicy.egress.rules }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
+{{- end }}

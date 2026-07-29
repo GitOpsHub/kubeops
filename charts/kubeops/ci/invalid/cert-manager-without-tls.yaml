@@ -1,0 +1,15 @@
+# expect: ingress.certManager.enabled requires ingress.tls
+# cert-manager fills the Secret named in ingress.tls. With no tls block it has
+# nothing to issue and the Ingress silently serves plain HTTP.
+ingress:
+  enabled: true
+  className: nginx
+  certManager:
+    enabled: true
+    issuerName: letsencrypt-prod
+  hosts:
+    - host: app.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
