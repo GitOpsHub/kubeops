@@ -80,7 +80,7 @@
 .onboarding-fields {
   display: grid;
   gap: var(--space-4);
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .onboarding-fields label {
@@ -116,6 +116,46 @@
 
 .onboarding-fields input {
   font-family: var(--font-mono);
+}
+
+/* Generated resource preview ------------------------------------------- */
+
+.resource-preview {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.resource-preview-table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.resource-preview-table th:first-child,
+.resource-preview-table td:first-child {
+  width: 220px;
+}
+
+.resource-preview-table th {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  background: var(--surface-sunken);
+  text-transform: uppercase;
+}
+
+.resource-preview-table td {
+  font-size: var(--text-xs);
+}
+
+.resource-preview-table td:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resource-preview-table tbody tr:last-child td {
+  border-bottom: 0;
 }
 
 /* Target cluster picker ------------------------------------------------ */

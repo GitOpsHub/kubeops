@@ -86,6 +86,130 @@ describe('applications list', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('groups regional releases by application name and shows their platform IDs', async () => {
+    mockAPI({
+      applications: [
+        buildApplication({
+          id: 'onboarding-east',
+          name: 'nginx',
+          namespace: 'nginx-dev-us-east-1',
+          environment: 'dev',
+          region: 'us-east-1',
+          targets: [
+            buildTarget({
+              id: 'target-east',
+              onboardingId: 'onboarding-east',
+              sourceId: 'aws-platform',
+              region: 'us-east-1',
+            }),
+          ],
+        }),
+        buildApplication({
+          id: 'onboarding-west',
+          name: 'nginx',
+          namespace: 'nginx-dev-us-west-2',
+          environment: 'dev',
+          region: 'us-west-2',
+          targets: [
+            buildTarget({
+              id: 'target-west',
+              onboardingId: 'onboarding-west',
+              sourceId: 'gcp-platform',
+              region: 'us-west-2',
+            }),
+          ],
+        }),
+      ],
+    })
+    renderApp('/applications')
+    const user = userEvent.setup()
+
+    const applicationLinks = await screen.findAllByRole('link', { name: 'nginx' })
+    expect(applicationLinks).toHaveLength(1)
+    const row = applicationLinks[0].closest('tr')
+    expect(row).not.toBeNull()
+    expect(within(row!).getByText('ID onboarding-east')).toBeInTheDocument()
+    expect(within(row!).getByText('aws-platform')).toBeInTheDocument()
+    expect(within(row!).getByText('gcp-platform')).toBeInTheDocument()
+    expect(within(row!).getByText('2 releases')).toBeInTheDocument()
+    expect(within(row!).getByText('2 targets')).toBeInTheDocument()
+    expect(screen.getByText(/1 application · 2 releases/)).toBeInTheDocument()
+
+    await user.click(
+      screen.getByRole('button', { name: 'Show deployment targets for nginx' }),
+    )
+    expect(
+      screen.getByRole('region', { name: 'Release dev-us-east-1' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('region', { name: 'Release dev-us-west-2' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'dev releases' })).toHaveTextContent(
+      '2 regional releases',
+    )
+    const eastRelease = screen.getByRole('region', { name: 'Release dev-us-east-1' })
+    expect(within(eastRelease).getByText('us-east-1')).toBeInTheDocument()
+    expect(within(eastRelease).queryByText('dev-us-east-1')).not.toBeInTheDocument()
+
+    await user.click(
+      within(eastRelease).getByRole('link', {
+        name: 'Open dev-us-east-1 application view',
+      }),
+    )
+    expect(
+      await screen.findByRole('button', { name: 'View dev-us-west-2 release' }),
+    ).toBeInTheDocument()
+  })
+
+  it('orders expanded releases by dev, qa, and prod environment', async () => {
+    mockAPI({
+      applications: [
+        buildApplication({
+          id: 'prod-release',
+          name: 'nginx',
+          environment: 'prod',
+          region: 'us-east-1',
+        }),
+        buildApplication({
+          id: 'dev-release',
+          name: 'nginx',
+          environment: 'dev',
+          region: 'us-east-2',
+        }),
+        buildApplication({
+          id: 'qa-release',
+          name: 'nginx',
+          environment: 'qa',
+          region: 'us-east-1',
+        }),
+      ],
+    })
+    renderApp('/applications')
+    const user = userEvent.setup()
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Show deployment targets for nginx' }),
+    )
+
+    const environments = screen.getAllByRole('region', {
+      name: /^(dev|qa|prod) releases$/,
+    })
+    expect(environments.map((group) => group.getAttribute('aria-label'))).toEqual([
+      'dev releases',
+      'qa releases',
+      'prod releases',
+    ])
+    expect(
+      within(environments[0]).getByRole('region', { name: 'Release dev-us-east-2' }),
+    ).toBeInTheDocument()
+    expect(
+      within(environments[1]).getByRole('region', { name: 'Release qa-us-east-1' }),
+    ).toBeInTheDocument()
+    expect(
+      within(environments[2]).getByRole('region', { name: 'Release prod-us-east-1' }),
+    ).toBeInTheDocument()
+  })
+
   it('applies bookmarked filters from the URL', async () => {
     const { fetchMock } = mockAPI({
       applications: [buildApplication({ status: 'healthy' })],
@@ -98,7 +222,7 @@ describe('applications list', () => {
           (url) =>
             url.includes('search=payments') &&
             url.includes('status=healthy') &&
-            url.includes('page=2'),
+            url.includes('pageSize=200'),
         ),
       ).toBe(true)
     })
@@ -132,13 +256,14 @@ describe('applications list', () => {
     renderApp('/applications')
     const user = userEvent.setup()
 
-    expect(await screen.findByText(/Page 1 of 2 · 25 applications/)).toBeInTheDocument()
+    expect(
+      await screen.findByText(/Page 1 of 2 · 25 applications · 25 releases/),
+    ).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Next' }))
 
-    await waitFor(() => {
-      expect(onboardingRequests(fetchMock).some((url) => url.includes('page=2'))).toBe(true)
-    })
     expect(await screen.findByText(/Page 2 of 2/)).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: 'app-20' })).toBeInTheDocument()
+    expect(onboardingRequests(fetchMock).every((url) => url.includes('pageSize=200'))).toBe(true)
   })
 
   it('opens an application detail from the list', async () => {
@@ -438,6 +563,65 @@ describe('application detail', () => {
     ).toBeInTheDocument()
   })
 
+  it('lists every regional release for the selected application', async () => {
+    mockAPI({
+      applications: [
+        buildApplication({
+          id: 'onboarding-1',
+          name: 'nginx',
+          namespace: 'nginx-dev-us-east-1',
+          environment: 'dev',
+          region: 'us-east-1',
+          targets: [
+            buildTarget({
+              id: 'target-east-1',
+              onboardingId: 'onboarding-1',
+              clusterName: 'east-cluster',
+              region: 'us-east-1',
+            }),
+          ],
+        }),
+        buildApplication({
+          id: 'onboarding-2',
+          name: 'nginx',
+          namespace: 'nginx-dev-us-east-2',
+          environment: 'dev',
+          region: 'us-east-2',
+          targets: [
+            buildTarget({
+              id: 'target-east-2',
+              onboardingId: 'onboarding-2',
+              clusterName: 'east-2-cluster',
+              region: 'us-east-2',
+            }),
+          ],
+        }),
+      ],
+    })
+    renderApp('/applications/onboarding-1')
+    const user = userEvent.setup()
+
+    expect(
+      await screen.findByRole('button', { name: 'View dev-us-east-1 release' }),
+    ).toHaveAttribute('aria-current', 'true')
+    expect(
+      screen.getByRole('button', { name: 'View dev-us-east-2 release' }),
+    ).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'View dev-us-east-2 release' }))
+
+    expect(
+      await screen.findByRole('button', { name: 'View dev-us-east-2 release' }),
+    ).toHaveAttribute('aria-current', 'true')
+    expect(
+      screen.getByRole('article', { name: 'Deployment target east-2-cluster' }),
+    ).toBeInTheDocument()
+    expect(screen.getByText('nginx-dev-us-east-2')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('article', { name: 'Deployment target east-cluster' }),
+    ).not.toBeInTheDocument()
+  })
+
   // The proxy authenticates the deep link, so this panel has no reason to hold Argo
   // CD credentials or to offer them to the operator.
   it('exposes no Argo credentials on the deployment targets', async () => {
@@ -494,6 +678,38 @@ describe('application detail', () => {
     expect(
       await screen.findByText('Synchronization started for every deployment target.'),
     ).toBeInTheDocument()
+  })
+
+  it('scales application pods through a GitOps replica update', async () => {
+    const { fetchMock, state } = mockAPI({
+      applications: [buildApplication({ status: 'healthy' })],
+    })
+    renderApp('/applications/onboarding-1')
+    const user = userEvent.setup()
+
+    await user.click(await screen.findByRole('button', { name: 'Scale' }))
+    expect(screen.getByRole('heading', { name: 'Scale payments-api pods' })).toBeInTheDocument()
+    expect(screen.getByText(/committed to GitHub/)).toBeInTheDocument()
+
+    await user.type(screen.getByLabelText('Number of pods'), '5')
+    await user.click(screen.getByRole('button', { name: 'Scale pods' }))
+
+    await waitFor(() => {
+      expect(state.scaledReplicas).toBe(5)
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/application-onboardings/onboarding-1/scale'),
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ replicas: 5 }),
+        }),
+      )
+    })
+    expect(
+      await screen.findByText('Scaling prod-us-east-1 to 5 pods through GitOps.'),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('heading', { name: 'Scale payments-api pods' }),
+    ).not.toBeInTheDocument()
   })
 
   it('offboards cluster resources only after confirmation and preserves GitHub', async () => {
@@ -604,12 +820,41 @@ describe('application onboarding form', () => {
       await screen.findByRole('heading', { name: 'Onboard an application' }),
     ).toBeInTheDocument()
     await user.type(screen.getByLabelText('Application name'), 'payments-api')
-    await user.type(screen.getByLabelText('Namespace'), 'payments')
+    expect(screen.queryByLabelText('Namespace')).not.toBeInTheDocument()
     await user.selectOptions(screen.getByLabelText('Environment'), 'prod')
     await user.selectOptions(screen.getByLabelText('Region'), 'us-east-1')
-    expect(screen.getByText('payments-prod-us-east-1')).toBeInTheDocument()
+    const preview = screen.getByRole('table', { name: 'Generated Kubernetes resources' })
+    expect(
+      within(preview).getByRole('row', {
+        name: 'Namespace payments-api-prod-us-east-1',
+      }),
+    ).toBeInTheDocument()
+    for (const [kind, suffix] of [
+      ['Deployment', 'deployment'],
+      ['Service', 'service'],
+      ['ServiceAccount', 'serviceaccount'],
+    ]) {
+      expect(
+        within(preview).getByRole('row', {
+          name: `${kind} payments-api-prod-us-east-1-${suffix}`,
+        }),
+      ).toBeInTheDocument()
+    }
+    expect(
+      within(preview).getByRole('row', {
+        name: 'Argo CD Application payments-api-prod-us-east-1',
+      }),
+    ).toBeInTheDocument()
+    expect(
+      within(preview).getByRole('row', {
+        name: 'GitHub Repository https://github.com/GitOpsHub/payments-api',
+      }),
+    ).toBeInTheDocument()
+    expect(
+      within(preview).getByRole('row', { name: 'GitHub Branch main' }),
+    ).toBeInTheDocument()
     await user.click(await screen.findByRole('checkbox'))
-    await user.click(screen.getByRole('button', { name: 'Onboard application' }))
+    await user.click(screen.getByRole('button', { name: 'Onboard' }))
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -618,7 +863,7 @@ describe('application onboarding form', () => {
           method: 'POST',
           body: JSON.stringify({
             name: 'payments-api',
-            namespace: 'payments',
+            namespace: 'payments-api',
             environment: 'prod',
             region: 'us-east-1',
             clusterIds: ['cluster-1'],
@@ -635,7 +880,7 @@ describe('application onboarding form', () => {
     ).toBeInTheDocument()
     expect(screen.getAllByText('progressing').length).toBeGreaterThan(0)
     expect(screen.getByText('registry.example.test/payments-api:2.4.1')).toBeInTheDocument()
-    expect(screen.getByText('payments-prod-us-east-1')).toBeInTheDocument()
+    expect(screen.getByText('payments-api-prod-us-east-1')).toBeInTheDocument()
   })
 
   it('submits the chart defaults without rendering a base values editor', async () => {
@@ -648,9 +893,8 @@ describe('application onboarding form', () => {
     expect(screen.queryByRole('textbox', { name: /Base Helm values/ })).not.toBeInTheDocument()
 
     await user.type(screen.getByLabelText('Application name'), 'payments-api')
-    await user.type(screen.getByLabelText('Namespace'), 'payments')
     await user.click(await screen.findByRole('checkbox'))
-    await user.click(screen.getByRole('button', { name: 'Onboard application' }))
+    await user.click(screen.getByRole('button', { name: 'Onboard' }))
 
     await waitFor(() => {
       const posted = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')
@@ -676,7 +920,7 @@ describe('application onboarding form', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('defaults are not configured')
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Onboard application' })).toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Onboard' })).toBeDisabled()
     })
   })
 
@@ -687,8 +931,7 @@ describe('application onboarding form', () => {
 
     await screen.findByRole('heading', { name: 'Onboard an application' })
     await user.type(screen.getByLabelText('Application name'), 'payments-api')
-    await user.type(screen.getByLabelText('Namespace'), 'payments')
-    await user.click(screen.getByRole('button', { name: 'Onboard application' }))
+    await user.click(screen.getByRole('button', { name: 'Onboard' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Select at least one target cluster.',

@@ -63,6 +63,8 @@ export type OnboardingDefaults = {
   chartName: string
   chartRevision: string
   valuesYaml: string
+  valuesRepositoryBaseUrl: string
+  valuesRevision: string
 }
 
 export type ApplicationOnboardingPage = {
@@ -242,6 +244,17 @@ export function syncApplicationOnboarding(id: string) {
   return request<ApplicationOnboarding>(
     `/application-onboardings/${encodeURIComponent(id)}/sync`,
     { method: 'POST' },
+  )
+}
+
+export function scaleApplicationOnboarding(id: string, replicas: number) {
+  return request<ApplicationOnboarding>(
+    `/application-onboardings/${encodeURIComponent(id)}/scale`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ replicas }),
+    },
   )
 }
 

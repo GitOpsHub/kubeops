@@ -2,7 +2,7 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "kubeops.fullname" . }}
+  name: {{ include "kubeops.resourceName" (dict "root" . "suffix" "ingress") }}
   labels:
     {{- include "kubeops.labels" . | nindent 4 }}
   {{- with .Values.ingress.annotations }}
@@ -27,7 +27,7 @@ spec:
             pathType: {{ .pathType }}
             backend:
               service:
-                name: {{ include "kubeops.fullname" $ }}
+                name: {{ include "kubeops.resourceName" (dict "root" $ "suffix" "service") }}
                 port:
                   number: {{ $.Values.service.port }}
           {{- end }}

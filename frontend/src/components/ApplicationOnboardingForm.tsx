@@ -12,16 +12,100 @@ import { StatusBadge } from './StatusBadge'
 
 const dnsLabel = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
 
+type ChartValues = {
+  fullnameOverride?: string
+  serviceAccount?: { create?: boolean; name?: string }
+  autoscaling?: { enabled?: boolean }
+  ingress?: { enabled?: boolean }
+}
+
+type PlannedResource = {
+  kind: string
+  name: string
+  href?: string
+}
+
+function helmName(value: string) {
+  return value.slice(0, 63).replace(/-+$/, '')
+}
+
+function suffixedResourceName(stem: string, suffix: string) {
+  const maxStemLength = 62 - suffix.length
+  return `${stem.slice(0, maxStemLength).replace(/-+$/, '')}-${suffix}`
+}
+
+function plannedResources(
+  applicationName: string,
+  environment: string,
+  region: string,
+  valuesYaml: string,
+  valuesRepositoryBaseUrl: string,
+  valuesRevision: string,
+): PlannedResource[] | null {
+  if (!applicationName || !valuesYaml) return null
+
+  let values: ChartValues
+  try {
+    values = (parse(valuesYaml) ?? {}) as ChartValues
+  } catch {
+    return null
+  }
+
+  const releaseName = helmName(`${applicationName}-${environment}-${region}`)
+  const resourceStem = values.fullnameOverride?.trim()
+    ? helmName(values.fullnameOverride.trim())
+    : releaseName
+  const serviceAccountName =
+    values.serviceAccount?.name?.trim() ||
+    suffixedResourceName(resourceStem, 'serviceaccount')
+  const items: PlannedResource[] = [
+    { kind: 'Namespace', name: releaseName },
+    { kind: 'Deployment', name: suffixedResourceName(resourceStem, 'deployment') },
+    { kind: 'Service', name: suffixedResourceName(resourceStem, 'service') },
+  ]
+
+  if (values.serviceAccount?.create !== false) {
+    items.push({
+      kind: 'ServiceAccount',
+      name: serviceAccountName,
+    })
+  }
+  if (values.autoscaling?.enabled) {
+    items.push({
+      kind: 'HorizontalPodAutoscaler',
+      name: suffixedResourceName(resourceStem, 'hpa'),
+    })
+  }
+  if (values.ingress?.enabled) {
+    items.push({ kind: 'Ingress', name: suffixedResourceName(resourceStem, 'ingress') })
+  }
+  items.push({ kind: 'Argo CD Application', name: releaseName })
+  if (valuesRepositoryBaseUrl) {
+    const repositoryUrl = `${valuesRepositoryBaseUrl.replace(/\/+$/, '')}/${applicationName}`
+    items.push({
+      kind: 'GitHub Repository',
+      name: repositoryUrl,
+      href: repositoryUrl,
+    })
+  }
+  if (valuesRevision) {
+    items.push({ kind: 'GitHub Branch', name: valuesRevision })
+  }
+
+  return items
+}
+
 export function ApplicationOnboardingForm() {
   const navigate = useNavigate()
   const [clusters, setClusters] = useState<Cluster[]>([])
   const [name, setName] = useState('')
-  const [namespace, setNamespace] = useState('')
   const [environment, setEnvironment] = useState('dev')
   const [region, setRegion] = useState('us-east-1')
   // The base values are not editable during onboarding; the chart defaults are
   // submitted as-is, so an empty string means they have not loaded yet.
   const [valuesYaml, setValuesYaml] = useState('')
+  const [valuesRepositoryBaseUrl, setValuesRepositoryBaseUrl] = useState('')
+  const [valuesRevision, setValuesRevision] = useState('')
   const [selectedClusterIds, setSelectedClusterIds] = useState<string[]>([])
   const [regionValues, setRegionValues] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -47,7 +131,11 @@ export function ApplicationOnboardingForm() {
     const controller = new AbortController()
     void load(controller.signal)
     void getOnboardingDefaults(controller.signal)
-      .then((defaults) => setValuesYaml(defaults.valuesYaml))
+      .then((defaults) => {
+        setValuesYaml(defaults.valuesYaml)
+        setValuesRepositoryBaseUrl(defaults.valuesRepositoryBaseUrl)
+        setValuesRevision(defaults.valuesRevision)
+      })
       .catch((defaultsError) => {
         if (!(defaultsError instanceof DOMException && defaultsError.name === 'AbortError')) {
           setError(defaultsError instanceof Error ? defaultsError.message : 'Helm defaults could not be loaded')
@@ -57,9 +145,31 @@ export function ApplicationOnboardingForm() {
   }, [load])
 
   const selectedSet = useMemo(() => new Set(selectedClusterIds), [selectedClusterIds])
+  const namespace = name
   const deploymentScope = `${environment}-${region}`
-  const deploymentNamespace = namespace ? `${namespace}-${deploymentScope}` : deploymentScope
   const scopedNameLength = 63 - deploymentScope.length - 1
+  const resourcePlan = useMemo(
+    () =>
+      dnsLabel.test(name) && name.length <= scopedNameLength
+        ? plannedResources(
+            name,
+            environment,
+            region,
+            valuesYaml,
+            valuesRepositoryBaseUrl,
+            valuesRevision,
+          )
+        : null,
+    [
+      environment,
+      name,
+      region,
+      scopedNameLength,
+      valuesRepositoryBaseUrl,
+      valuesRevision,
+      valuesYaml,
+    ],
+  )
 
   const sortedClusters = useMemo(
     () =>
@@ -98,9 +208,6 @@ export function ApplicationOnboardingForm() {
   function validate() {
     if (!dnsLabel.test(name) || name.length > scopedNameLength) {
       return `Application name must leave room for the ${deploymentScope} deployment suffix.`
-    }
-    if (!dnsLabel.test(namespace) || namespace.length > scopedNameLength) {
-      return `Namespace must leave room for the ${deploymentScope} deployment suffix.`
     }
     if (selectedClusterIds.length === 0) return 'Select at least one target cluster.'
     if (!valuesYaml.trim()) {
@@ -187,22 +294,6 @@ export function ApplicationOnboardingForm() {
             />
           </label>
           <label>
-            <span>Namespace</span>
-            <input
-              aria-label="Namespace"
-              type="text"
-              required
-              value={namespace}
-              pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?"
-              maxLength={scopedNameLength}
-              placeholder="payments"
-              onChange={(event) => setNamespace(event.target.value)}
-            />
-            <small className="field-hint">
-              Deploys as <span className="mono">{deploymentNamespace}</span>
-            </small>
-          </label>
-          <label>
             <span>Environment</span>
             <select
               aria-label="Environment"
@@ -226,6 +317,38 @@ export function ApplicationOnboardingForm() {
             </select>
           </label>
         </div>
+
+        {resourcePlan && (
+          <div className="resource-preview">
+            <table
+              className="resource-preview-table"
+              aria-label="Generated Kubernetes resources"
+            >
+              <thead>
+                <tr>
+                  <th scope="col">Resource</th>
+                  <th scope="col">Name</th>
+                </tr>
+              </thead>
+              <tbody>
+                {resourcePlan.map((resource) => (
+                  <tr key={`${resource.kind}-${resource.name}`}>
+                    <td>{resource.kind}</td>
+                    <td className="mono">
+                      {resource.href ? (
+                        <a href={resource.href} target="_blank" rel="noreferrer">
+                          {resource.name}
+                        </a>
+                      ) : (
+                        resource.name
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         <section className="target-cluster-picker" aria-labelledby="target-clusters-heading">
           <header className="target-cluster-heading">
@@ -315,7 +438,7 @@ export function ApplicationOnboardingForm() {
           type="submit"
           disabled={submitting || loading || !valuesYaml}
         >
-          {submitting ? 'Creating Argo applications…' : 'Onboard application'}
+          {submitting ? 'Onboarding…' : 'Onboard'}
         </button>
       </form>
     </section>

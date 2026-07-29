@@ -37,6 +37,11 @@ type ValuesRepository struct {
 	Existing     bool
 }
 
+type ValuesUpdate struct {
+	CommitSHA  string
+	ValuesYAML string
+}
+
 type ValuesRepositoryManager interface {
 	// Ensure creates the values repository or adopts it when it already exists.
 	// Existing repositories are read without overwriting their values.
@@ -46,6 +51,13 @@ type ValuesRepositoryManager interface {
 		regionValues map[string]string,
 		targetRegions []string,
 	) (ValuesRepository, error)
+	// UpdateReplicas changes the release-scoped values file so Argo CD will
+	// preserve the requested replica count instead of self-healing it away.
+	UpdateReplicas(
+		ctx context.Context,
+		name, revision, environment, region string,
+		replicas int32,
+	) (ValuesUpdate, error)
 }
 
 type GitHubClient struct {
@@ -308,6 +320,66 @@ func (c *GitHubClient) loadExisting(
 		Revision: repository.DefaultBranch, CommitSHA: commit.SHA,
 		ValuesYAML: string(valuesYAML), RegionValues: regions, Existing: true,
 	}, nil
+}
+
+func (c *GitHubClient) UpdateReplicas(
+	ctx context.Context,
+	name, revision, environment, region string,
+	replicas int32,
+) (ValuesUpdate, error) {
+	token, err := c.authenticationToken(ctx)
+	if err != nil {
+		return ValuesUpdate{}, err
+	}
+	repositoryPath := "/repos/" + url.PathEscape(c.organization) + "/" + url.PathEscape(name)
+	contentPath := repositoryPath + "/contents/" + url.PathEscape(environment) + "/" +
+		url.PathEscape(region) + "/values.yaml"
+	var file struct {
+		SHA      string `json:"sha"`
+		Content  string `json:"content"`
+		Encoding string `json:"encoding"`
+	}
+	if _, err := c.request(
+		ctx, token, http.MethodGet,
+		contentPath+"?ref="+url.QueryEscape(revision), nil, &file,
+	); err != nil {
+		return ValuesUpdate{}, fmt.Errorf("load %s/%s values: %w", environment, region, err)
+	}
+	if file.Encoding != "base64" {
+		return ValuesUpdate{}, errors.New("release values file uses an unsupported encoding")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(file.Content)
+	if err != nil {
+		return ValuesUpdate{}, errors.New("release values file is not valid base64")
+	}
+	var values map[string]any
+	if err := yaml.Unmarshal(decoded, &values); err != nil {
+		return ValuesUpdate{}, fmt.Errorf("decode release values: %w", err)
+	}
+	if values == nil {
+		values = make(map[string]any)
+	}
+	values["replicaCount"] = replicas
+	updatedValues, err := yaml.Marshal(values)
+	if err != nil {
+		return ValuesUpdate{}, fmt.Errorf("encode release values: %w", err)
+	}
+	var commit struct {
+		Commit struct {
+			SHA string `json:"sha"`
+		} `json:"commit"`
+	}
+	if _, err := c.request(ctx, token, http.MethodPut, contentPath, map[string]any{
+		"message": fmt.Sprintf(
+			"Scale %s/%s to %d replicas", environment, region, replicas,
+		),
+		"content": base64.StdEncoding.EncodeToString(updatedValues),
+		"branch":  revision,
+		"sha":     file.SHA,
+	}, &commit); err != nil {
+		return ValuesUpdate{}, fmt.Errorf("update %s/%s replicas: %w", environment, region, err)
+	}
+	return ValuesUpdate{CommitSHA: commit.Commit.SHA, ValuesYAML: string(updatedValues)}, nil
 }
 
 func mergeValuesYAML(baseValues, overrideValues string) (string, error) {

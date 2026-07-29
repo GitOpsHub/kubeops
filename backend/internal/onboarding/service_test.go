@@ -18,12 +18,14 @@ import (
 )
 
 type fakeRepository struct {
-	clusters []model.Cluster
-	record   model.ApplicationOnboarding
-	active   []model.ApplicationDeployment
-	updates  map[string]model.ApplicationDeployment
-	access   model.EncryptedArgoAccess
-	filter   model.ApplicationOnboardingFilter
+	clusters        []model.Cluster
+	record          model.ApplicationOnboarding
+	active          []model.ApplicationDeployment
+	updates         map[string]model.ApplicationDeployment
+	access          model.EncryptedArgoAccess
+	filter          model.ApplicationOnboardingFilter
+	valuesDigest    string
+	valuesCommitSHA string
 	// restarted records the onboardings whose deployment-timeout window was reopened.
 	restarted []string
 	// existingID is the onboarding already holding the requested name, if any.
@@ -102,6 +104,18 @@ func (f *fakeRepository) ListActiveApplicationDeployments(
 ) ([]model.ApplicationDeployment, error) {
 	return f.active, nil
 }
+func (f *fakeRepository) UpdateApplicationOnboardingValues(
+	_ context.Context,
+	_ string,
+	valuesDigest string,
+	valuesCommitSHA string,
+) error {
+	f.valuesDigest = valuesDigest
+	f.valuesCommitSHA = valuesCommitSHA
+	f.record.ValuesDigest = valuesDigest
+	f.record.ValuesCommitSHA = valuesCommitSHA
+	return nil
+}
 func (f *fakeRepository) UpdateApplicationDeployment(
 	_ context.Context,
 	id, status, syncStatus, healthStatus, message string,
@@ -167,6 +181,8 @@ type fakeValuesRepositoryManager struct {
 	deleted    string
 	regions    map[string]string
 	name       string
+	replicas   int32
+	update     ValuesUpdate
 	// calls counts Ensure invocations, so a refused onboarding can be shown to
 	// have left no repository behind.
 	calls int
@@ -190,6 +206,14 @@ func (f *fakeValuesRepositoryManager) Ensure(
 		f.repository.RegionValues = regionSet(targetRegions)
 	}
 	return f.repository, f.err
+}
+func (f *fakeValuesRepositoryManager) UpdateReplicas(
+	_ context.Context,
+	_, _, _, _ string,
+	replicas int32,
+) (ValuesUpdate, error) {
+	f.replicas = replicas
+	return f.update, f.err
 }
 
 func (f *fakeArgoClient) CreateApplication(
@@ -252,6 +276,24 @@ func (f *fakeArgoClient) DeleteResource(
 ) error {
 	f.deletedResource = ref
 	return f.resourceErr
+}
+
+func TestDefaultsIncludeValuesRepositoryCoordinates(t *testing.T) {
+	service := &Service{config: config.OnboardingConfig{
+		HelmRepoURL:      "oci://ghcr.io/gitopshub/charts",
+		HelmChart:        "kubeops",
+		HelmRevision:     "1.0.0",
+		HelmDefaultsYAML: "replicaCount: 2\n",
+		GitHubWebURL:     "https://github.example.test",
+		GitHubOrg:        "platform",
+		GitHubBranch:     "main",
+	}}
+
+	defaults := service.Defaults()
+	if defaults.ValuesRepositoryBaseURL != "https://github.example.test/platform" ||
+		defaults.ValuesRevision != "main" {
+		t.Fatalf("unexpected repository defaults: %#v", defaults)
+	}
 }
 
 func TestCreateApplicationOnboarding(t *testing.T) {
@@ -585,6 +627,57 @@ func TestSyncRecreatesMissingApplicationAndSynchronizesIt(t *testing.T) {
 		repository.updates[target.ID].Status != "healthy" {
 		t.Fatalf("application was not recreated and synced: client=%#v update=%#v",
 			client, repository.updates[target.ID])
+	}
+}
+
+func TestScaleUpdatesGitValuesAndSynchronizesApplication(t *testing.T) {
+	target := model.ApplicationDeployment{
+		ID: "target-1", ClusterName: "prod", SourceID: "aws",
+		ProviderResourceID: "arn:cluster/prod", ArgoApplication: "payments-prod-us-east-2",
+		Status: "healthy", SyncStatus: "Synced", HealthStatus: "Healthy",
+	}
+	repository := &fakeRepository{record: model.ApplicationOnboarding{
+		ID: "onboarding-1", Name: "payments", Namespace: "payments-prod-us-east-2",
+		Environment: "prod", Region: "us-east-2",
+		ChartRepoURL: "repo", ChartName: "chart", ChartRevision: "1",
+		ValuesRepositoryName: "payments", ValuesRevision: "main",
+		Targets: []model.ApplicationDeployment{target},
+	}}
+	valuesManager := &fakeValuesRepositoryManager{update: ValuesUpdate{
+		CommitSHA:  "scaled-commit",
+		ValuesYAML: "replicaCount: 5\nimage:\n  repository: nginx\n",
+	}}
+	client := &fakeArgoClient{
+		state: ApplicationState{SyncStatus: "OutOfSync", HealthStatus: "Progressing"},
+	}
+	service := &Service{
+		store: repository,
+		config: config.OnboardingConfig{
+			ArgoProject: "default", ArgoNamespace: "argo-cd", RequestTimeout: time.Second,
+		},
+		clients: map[string]ArgoClient{targetKey("aws", "arn:cluster/prod"): client},
+		github:  valuesManager,
+	}
+
+	record, err := service.Scale(context.Background(), "onboarding-1", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if valuesManager.replicas != 5 || repository.valuesCommitSHA != "scaled-commit" ||
+		client.synced != target.ArgoApplication || record.ValuesCommitSHA != "scaled-commit" {
+		t.Fatalf(
+			"scale did not update Git and sync: manager=%#v repository=%#v client=%#v record=%#v",
+			valuesManager, repository, client, record,
+		)
+	}
+}
+
+func TestScaleRejectsReplicaCountsOutsideChartBounds(t *testing.T) {
+	service := &Service{store: &fakeRepository{}}
+	for _, replicas := range []int32{0, 1001} {
+		if _, err := service.Scale(context.Background(), "onboarding-1", replicas); err == nil {
+			t.Fatalf("expected %d replicas to be rejected", replicas)
+		}
 	}
 }
 

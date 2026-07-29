@@ -67,6 +67,7 @@ export type MockState = {
   manifest: string
   /** Refs the UI asked to delete, in order. */
   deletedResources: ResourceRef[]
+  scaledReplicas: number | null
 }
 
 export function buildResource(overrides: Partial<ResourceNode> = {}): ResourceNode {
@@ -96,6 +97,7 @@ export function mockAPI(initial: Partial<MockState> = {}) {
     resources: initial.resources ?? [],
     manifest: initial.manifest ?? '{"kind":"Deployment"}',
     deletedResources: [],
+    scaledReplicas: initial.scaledReplicas ?? null,
   }
 
   const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (request, init) => {
@@ -162,6 +164,8 @@ export function mockAPI(initial: Partial<MockState> = {}) {
         chartName: 'kubeops',
         chartRevision: '0.0.1',
         valuesYaml: 'replicaCount: 2\nimage:\n  repository: nginx\n',
+        valuesRepositoryBaseUrl: 'https://github.com/GitOpsHub',
+        valuesRevision: 'main',
       })
     }
 
@@ -186,6 +190,25 @@ export function mockAPI(initial: Partial<MockState> = {}) {
         page,
         pageSize,
       })
+    }
+
+    const applicationScaleMatch = path.match(/^\/application-onboardings\/([^/]+)\/scale$/)
+    if (applicationScaleMatch && init?.method === 'POST') {
+      const id = decodeURIComponent(applicationScaleMatch[1])
+      const found = state.applications.find((item) => item.id === id)
+      if (!found) {
+        return Response.json({ error: 'application onboarding not found' }, { status: 404 })
+      }
+      const body = JSON.parse(String(init.body)) as { replicas: number }
+      state.scaledReplicas = body.replicas
+      found.status = 'progressing'
+      found.targets = found.targets.map((target) => ({
+        ...target,
+        status: 'progressing',
+        syncStatus: 'OutOfSync',
+        healthStatus: 'Progressing',
+      }))
+      return Response.json(found)
     }
 
     const lifecycleMatch = path.match(

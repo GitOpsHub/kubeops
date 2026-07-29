@@ -3,7 +3,9 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   ApiError,
   getApplicationOnboarding,
+  getApplicationOnboardings,
   offboardApplicationOnboarding,
+  scaleApplicationOnboarding,
   syncApplicationOnboarding,
   type ApplicationOnboarding,
 } from '../api/onboarding'
@@ -14,6 +16,40 @@ import { ResourceExplorer } from './ResourceExplorer'
 import { Tabs } from './Tabs'
 
 const pollIntervalMs = 5_000
+
+function releaseScope(record: ApplicationOnboarding) {
+  return `${record.environment}-${record.region}`
+}
+
+async function getApplicationReleases(
+  selected: ApplicationOnboarding,
+  signal?: AbortSignal,
+) {
+  const releases: ApplicationOnboarding[] = []
+  let page = 1
+
+  while (true) {
+    const response = await getApplicationOnboardings(
+      { search: selected.name, page, pageSize: 200 },
+      signal,
+    )
+    releases.push(...response.items)
+    if (releases.length >= response.total) break
+    page += 1
+  }
+
+  const normalizedName = selected.name.trim().toLocaleLowerCase()
+  const matching = releases.filter(
+    (release) => release.name.trim().toLocaleLowerCase() === normalizedName,
+  )
+  if (!matching.some((release) => release.id === selected.id)) matching.push(selected)
+
+  return matching.sort(
+    (left, right) =>
+      releaseScope(left).localeCompare(releaseScope(right)) ||
+      left.createdAt.localeCompare(right.createdAt),
+  )
+}
 
 function formatTimestamp(value: string | null) {
   return value ? new Date(value).toLocaleString() : 'Not yet'
@@ -33,13 +69,17 @@ function BackToApplications() {
 export function ApplicationDetail() {
   const { id = '' } = useParams()
   const navigate = useNavigate()
-  const [record, setRecord] = useState<ApplicationOnboarding | null>(null)
+  const [releases, setReleases] = useState<ApplicationOnboarding[]>([])
+  const [selectedReleaseId, setSelectedReleaseId] = useState(id)
   const [loading, setLoading] = useState(true)
   const [missing, setMissing] = useState(false)
   const [error, setError] = useState('')
-  const [action, setAction] = useState<'sync' | 'offboard' | null>(null)
+  const [action, setAction] = useState<'sync' | 'scale' | 'offboard' | null>(null)
   const [actionMessage, setActionMessage] = useState('')
   const [actionError, setActionError] = useState('')
+  const [scaling, setScaling] = useState(false)
+  const [scaleReplicas, setScaleReplicas] = useState('')
+  const [scaleError, setScaleError] = useState('')
   const [confirmingOffboard, setConfirmingOffboard] = useState(false)
   const [activeTab, setActiveTab] = useState('resources')
   const [resourceTargetId, setResourceTargetId] = useState('')
@@ -48,15 +88,17 @@ export function ApplicationDetail() {
     async (signal?: AbortSignal, quiet = false) => {
       if (!quiet) setLoading(true)
       try {
-        const next = await getApplicationOnboarding(id, signal)
-        setRecord(next)
+        const selected = await getApplicationOnboarding(id, signal)
+        const next = await getApplicationReleases(selected, signal)
+        setReleases(next)
+        setSelectedReleaseId(id)
         setMissing(false)
         setError('')
       } catch (loadError) {
         if (loadError instanceof DOMException && loadError.name === 'AbortError') return
         if (loadError instanceof ApiError && loadError.status === 404) {
           setMissing(true)
-          setRecord(null)
+          setReleases([])
           setError('')
           return
         }
@@ -80,13 +122,21 @@ export function ApplicationDetail() {
     }
   }, [load])
 
+  const record =
+    releases.find((release) => release.id === selectedReleaseId) ??
+    releases.find((release) => release.id === id) ??
+    null
+
   async function syncResources() {
+    if (!record) return
     setAction('sync')
     setActionMessage('')
     setActionError('')
     try {
-      const next = await syncApplicationOnboarding(id)
-      setRecord(next)
+      const next = await syncApplicationOnboarding(record.id)
+      setReleases((current) =>
+        current.map((release) => (release.id === next.id ? next : release)),
+      )
       if (next.targets.some((target) => target.status === 'failed')) {
         setActionError('Synchronization could not start for one or more deployment targets.')
       } else {
@@ -102,17 +152,25 @@ export function ApplicationDetail() {
   }
 
   async function offboard() {
+    if (!record) return
     setAction('offboard')
     setActionMessage('')
     setActionError('')
     try {
-      const next = await offboardApplicationOnboarding(id)
-      setRecord(next)
+      const next = await offboardApplicationOnboarding(record.id)
+      setReleases((current) =>
+        current.map((release) => (release.id === next.id ? next : release)),
+      )
       setConfirmingOffboard(false)
       if (next.status === 'offboarded') {
-        // Nothing is left to operate on, so the application leaves the UI rather
-        // than lingering as a dead row. The record and its GitHub values are kept,
-        // and the offboarded status filter still finds it.
+        const remaining = releases.filter((release) => release.id !== next.id)
+        if (remaining.length > 0) {
+          setReleases(remaining)
+          setSelectedReleaseId(remaining[0].id)
+          setResourceTargetId('')
+          navigate(`/applications/${remaining[0].id}`, { replace: true })
+          return
+        }
         navigate('/applications', { replace: true })
         return
       }
@@ -122,6 +180,47 @@ export function ApplicationDetail() {
         offboardError instanceof Error
           ? offboardError.message
           : 'Application could not be offboarded.',
+      )
+    } finally {
+      setAction(null)
+    }
+  }
+
+  async function scalePods() {
+    if (!record) return
+    const replicas = Number(scaleReplicas)
+    if (!Number.isInteger(replicas) || replicas < 1 || replicas > 1000) {
+      setScaleError('Enter a whole number from 1 to 1000.')
+      return
+    }
+    setAction('scale')
+    setScaleError('')
+    setActionMessage('')
+    setActionError('')
+    try {
+      const next = await scaleApplicationOnboarding(record.id, replicas)
+      setReleases((current) =>
+        current.map((release) => (release.id === next.id ? next : release)),
+      )
+      setScaling(false)
+      setScaleReplicas('')
+      setActiveTab('resources')
+      if (next.targets.some((target) => target.status === 'failed')) {
+        setActionError(
+          `The ${replicas}-pod value was committed, but synchronization failed for one or more clusters.`,
+        )
+      } else {
+        setActionMessage(
+          `Scaling ${releaseScope(next)} to ${replicas} ${
+            replicas === 1 ? 'pod' : 'pods'
+          } through GitOps.`,
+        )
+      }
+    } catch (scaleRequestError) {
+      setScaleError(
+        scaleRequestError instanceof Error
+          ? scaleRequestError.message
+          : 'The application could not be scaled.',
       )
     } finally {
       setAction(null)
@@ -168,7 +267,6 @@ export function ApplicationDetail() {
     )
   }
 
-  const applicationScope = `${record.environment}-${record.region}`
   const visibleTargets = record.targets
   // Falls back to the first target if the previously selected cluster is no
   // longer part of this application.
@@ -220,8 +318,16 @@ export function ApplicationDetail() {
             <button
               type="button"
               className="ghost-button"
-              disabled={record.targets.length === 0}
-              onClick={() => setActiveTab('resources')}
+              disabled={
+                action !== null ||
+                record.status === 'offboarded' ||
+                record.targets.length === 0
+              }
+              onClick={() => {
+                setScaleReplicas('')
+                setScaleError('')
+                setScaling(true)
+              }}
             >
               Scale
             </button>
@@ -277,6 +383,71 @@ export function ApplicationDetail() {
         <DeployStepper targets={record.targets} />
       </header>
 
+      {scaling && (
+        <div className="confirmation-backdrop" role="presentation">
+          <form
+            className="scale-confirmation application-scale-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="application-scale-title"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void scalePods()
+            }}
+          >
+            <p className="section-label">GitOps scaling</p>
+            <h3 id="application-scale-title">Scale {record.name} pods</h3>
+            <p>
+              Set the replica count for <strong>{releaseScope(record)}</strong>. The value is
+              committed to GitHub and synchronized to{' '}
+              {record.targets.length === 1
+                ? record.targets[0].clusterName
+                : `${record.targets.length} clusters`}
+              .
+            </p>
+            <label className="application-scale-field">
+              <span>Number of pods</span>
+              <input
+                autoFocus
+                type="number"
+                min="1"
+                max="1000"
+                step="1"
+                inputMode="numeric"
+                placeholder="For example, 3"
+                value={scaleReplicas}
+                aria-describedby={scaleError ? 'application-scale-error' : undefined}
+                onChange={(event) => {
+                  setScaleReplicas(event.target.value)
+                  setScaleError('')
+                }}
+              />
+            </label>
+            {scaleError && (
+              <p className="application-scale-error" id="application-scale-error" role="alert">
+                {scaleError}
+              </p>
+            )}
+            <div className="confirmation-actions">
+              <button
+                type="button"
+                disabled={action === 'scale'}
+                onClick={() => setScaling(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="confirm-scale"
+                type="submit"
+                disabled={action === 'scale'}
+              >
+                {action === 'scale' ? 'Scaling…' : 'Scale pods'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {confirmingOffboard && (
         <section className="offboard-confirmation" aria-labelledby="offboard-heading">
           <div>
@@ -321,13 +492,34 @@ export function ApplicationDetail() {
       )}
 
       <div className="detail-body">
-        {record.region && (
+        {releases.length > 0 && (
           <nav className="region-rail" aria-label="Filter targets by environment and region">
             <p className="section-label">Deployment scope</p>
-            <span className="region-rail-item is-active" aria-current="true">
-              {applicationScope}
-              <small>{record.targets.length}</small>
-            </span>
+            {releases.map((release) => {
+              const scope = releaseScope(release)
+              const isActive = release.id === record.id
+              return (
+                <button
+                  key={release.id}
+                  type="button"
+                  className={`region-rail-item ${isActive ? 'is-active' : ''}`}
+                  aria-current={isActive ? 'true' : undefined}
+                  aria-label={`View ${scope} release`}
+                  onClick={() => {
+                    setSelectedReleaseId(release.id)
+                    setResourceTargetId('')
+                    setActionMessage('')
+                    setActionError('')
+                    setConfirmingOffboard(false)
+                    setScaling(false)
+                    navigate(`/applications/${release.id}`, { replace: true })
+                  }}
+                >
+                  {scope}
+                  <small>{release.targets.length}</small>
+                </button>
+              )
+            })}
           </nav>
         )}
 

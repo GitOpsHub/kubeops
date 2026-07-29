@@ -95,7 +95,7 @@
 }
 
 .applications-page table {
-  min-width: 860px;
+  min-width: 1120px;
 }
 
 .applications-page .delta-legend {
@@ -114,6 +114,38 @@
   text-underline-offset: 2px;
 }
 
+.application-id {
+  display: block;
+  max-width: 190px;
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--text-subtle);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.platform-id-list,
+.environment-list {
+  display: flex;
+  gap: var(--space-1);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.platform-id {
+  display: inline-flex;
+  padding: 2px var(--space-2);
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  white-space: nowrap;
+}
+
 .environment-tag {
   display: inline-flex;
   align-items: center;
@@ -124,6 +156,17 @@
   border-radius: var(--radius-pill);
   font-size: var(--text-2xs);
   white-space: nowrap;
+}
+
+.release-target-count {
+  display: grid;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.release-target-count small {
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
 }
 
 /* Row expander --------------------------------------------------------- */
@@ -169,6 +212,242 @@
 .expanded-row > td {
   padding: 0;
   background: var(--surface-sunken);
+}
+
+.application-release-groups {
+  display: grid;
+  gap: var(--space-5);
+  padding: var(--space-4);
+}
+
+.application-environment-group {
+  --environment-tone: var(--accent);
+
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: color-mix(in srgb, var(--environment-tone) 4%, var(--surface));
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--environment-tone);
+  border-radius: var(--radius-md);
+}
+
+.application-environment-group--qa {
+  --environment-tone: var(--warn);
+}
+
+.application-environment-group--prod {
+  --environment-tone: var(--ok);
+}
+
+.application-environment-heading {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  min-height: 32px;
+  padding: 0 var(--space-1) 0 var(--space-2);
+}
+
+.application-environment-heading > div {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.application-environment-marker {
+  width: 7px;
+  height: 7px;
+  background: var(--environment-tone);
+  border-radius: 2px;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--environment-tone) 12%, transparent);
+}
+
+.application-environment-heading strong {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.application-environment-heading > div > span:last-child {
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+}
+
+.application-environment-heading small {
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+}
+
+.application-environment-releases {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  align-items: stretch;
+}
+
+.application-environment-releases .application-release {
+  min-width: 0;
+}
+
+.application-environment-releases .region-targets {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.application-release {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  transition:
+    border-color var(--duration-fast),
+    box-shadow var(--duration-fast),
+    transform var(--duration-fast);
+}
+
+.application-release:hover,
+.application-release:has(.application-release-actions > a:focus-visible) {
+  border-color: color-mix(in srgb, var(--environment-tone) 55%, var(--border));
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+.application-release-heading {
+  display: flex;
+  gap: var(--space-4);
+  align-items: start;
+  justify-content: space-between;
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.application-release-identity {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.application-release-identity > span {
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.application-release-identity strong {
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  line-height: 1.4;
+}
+
+.application-release-identity code {
+  overflow: hidden;
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.application-release-actions {
+  z-index: 2;
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.application-release-actions > .status-badge {
+  pointer-events: none;
+}
+
+.application-release-actions > a {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: var(--radius-pill);
+  place-items: center;
+  transition:
+    color var(--duration-fast),
+    background var(--duration-fast);
+}
+
+.application-release-actions > a:hover {
+  color: var(--accent-fg);
+  background: var(--accent);
+}
+
+.application-release-actions svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
+}
+
+.application-release-actions > a::after {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  content: '';
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .application-release {
+    transition: none;
+  }
+
+  .application-release:hover,
+  .application-release:has(.application-release-actions > a:focus-visible) {
+    transform: none;
+  }
+}
+
+.application-release .region-target-meta a {
+  position: relative;
+  z-index: 2;
+}
+
+.application-release > .quiet-note {
+  padding: var(--space-4);
+}
+
+.application-release .region-groups {
+  padding: 0;
+}
+
+.application-release .region-group {
+  gap: 0;
+}
+
+.application-release .region-group-heading {
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-sunken);
+  border-bottom: 1px solid var(--border);
+}
+
+.application-release .region-group-heading span {
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+}
+
+.application-release .region-targets {
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+
+.application-release .region-target {
+  background: var(--surface-hover);
+  border-top: 0;
+  border-right: 0;
+  border-bottom: 0;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 70%, transparent);
 }
 
 .region-groups {
@@ -959,6 +1238,10 @@
 }
 
 @media (max-width: 560px) {
+  .application-environment-releases {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .detail-identity {
     grid-template-columns: minmax(0, 1fr);
   }
