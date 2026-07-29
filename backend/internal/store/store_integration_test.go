@@ -214,7 +214,7 @@ func TestInventoryLifecycle(t *testing.T) {
 		ValuesRepositoryURL:      "https://github.com/GitOpsHub/payments",
 		ValuesRepositoryCloneURL: "https://github.com/GitOpsHub/payments.git",
 		ValuesRepositoryName:     "payments", ValuesRevision: "main", ValuesCommitSHA: "commit-1",
-	}, []model.Cluster{page.Items[0]}, map[string]bool{page.Items[0].Location: true})
+	}, []model.Cluster{page.Items[0]}, map[string]bool{"us-east-2": true})
 	if err != nil {
 		t.Fatal(err)
 	}
