@@ -269,6 +269,18 @@ if [[ ! -s "$TLS_DIR/ca.key" || ! -s "$TLS_DIR/ca.crt" ||
 fi
 install -m 0644 "$TLS_DIR/ca.crt" "$CA_FILE"
 
+gke_context="${KUBEOPS_GKE_CONTEXT:-$(env_value KUBEOPS_GKE_CONTEXT)}"
+gke_port="${KUBEOPS_GKE_ARGO_PORT:-$(env_value KUBEOPS_GKE_ARGO_PORT)}"
+gke_port="${gke_port:-18083}"
+gke_source_id="${KUBEOPS_GKE_SOURCE_ID:-$(env_value KUBEOPS_GKE_SOURCE_ID)}"
+gke_provider_resource_id="$(
+  if [[ -n "${KUBEOPS_GKE_PROVIDER_RESOURCE_ID:-}" ]]; then
+    printf '%s' "$KUBEOPS_GKE_PROVIDER_RESOURCE_ID"
+  else
+    env_value KUBEOPS_GKE_PROVIDER_RESOURCE_ID
+  fi
+)"
+
 printf '%s\n' \
   'targets:' \
   '  - source_id: docker-local' \
@@ -289,6 +301,20 @@ printf '%s\n' \
   '    username: kubeops' \
   '    password_env: ARGO_MINIKUBE_LOCAL_PASSWORD' \
   > "$TARGETS_FILE"
+
+if [[ -n "$gke_context" && -n "$gke_source_id" && -n "$gke_provider_resource_id" ]]; then
+  printf '%s\n' \
+    '' \
+    "  - source_id: $gke_source_id" \
+    "    provider_resource_id: $gke_provider_resource_id" \
+    "    server_url: https://localhost:$gke_port" \
+    '    token_env: ARGO_GKE_KUBERNETES_DEV_TOKEN' \
+    '    ca_file: ../config/argocd-local-ca.crt' \
+    "    ui_url: https://localhost:$gke_port" \
+    '    username: kubeops' \
+    '    password_env: ARGO_GKE_KUBERNETES_DEV_PASSWORD' \
+    >> "$TARGETS_FILE"
+fi
 
 helm repo add argo https://argoproj.github.io/argo-helm --force-update >/dev/null
 helm repo update argo >/dev/null
