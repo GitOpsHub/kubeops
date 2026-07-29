@@ -1,15 +1,43 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema#",
+  "description": "KubeOps global application chart. Provider integrations are opt-in blocks; the chart never auto-detects a cloud.",
   "type": "object",
   "required": [
+    "workload",
     "image",
     "container",
     "service",
     "ingress",
     "resources",
-    "autoscaling"
+    "autoscaling",
+    "persistence",
+    "storage"
   ],
   "properties": {
+    "workload": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "description": "Deployment for stateless applications; StatefulSet for one volume and a stable identity per replica.",
+          "enum": ["Deployment", "StatefulSet"]
+        },
+        "podManagementPolicy": {
+          "enum": ["OrderedReady", "Parallel"]
+        },
+        "minReadySeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "persistentVolumeClaimRetentionPolicy": {
+          "type": "object",
+          "properties": {
+            "whenDeleted": { "enum": ["Retain", "Delete"] },
+            "whenScaled": { "enum": ["Retain", "Delete"] }
+          }
+        }
+      }
+    },
     "replicaCount": {
       "type": "integer",
       "minimum": 1
@@ -20,34 +48,61 @@
     },
     "image": {
       "type": "object",
-      "required": [
-        "repository",
-        "tag",
-        "pullPolicy"
-      ],
+      "required": ["repository", "pullPolicy"],
       "properties": {
+        "registry": { "type": "string" },
         "repository": {
           "type": "string",
           "minLength": 1
         },
-        "tag": {
+        "tag": { "type": "string" },
+        "digest": {
+          "description": "sha256:... . Pins the image immutably and wins over tag.",
           "type": "string",
-          "minLength": 1
+          "pattern": "^(|sha256:[a-f0-9]{64})$"
         },
         "pullPolicy": {
-          "enum": [
-            "Always",
-            "IfNotPresent",
-            "Never"
-          ]
+          "enum": ["Always", "IfNotPresent", "Never"]
+        }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "properties": {
+        "create": { "type": "boolean" },
+        "automount": { "type": "boolean" },
+        "name": { "type": "string" },
+        "aws": {
+          "type": "object",
+          "properties": {
+            "roleArn": {
+              "description": "IAM Roles for Service Accounts (EKS).",
+              "type": "string",
+              "pattern": "^(|arn:aws[a-z-]*:iam::[0-9]{12}:role/.+)$"
+            }
+          }
+        },
+        "gcp": {
+          "type": "object",
+          "properties": {
+            "serviceAccount": {
+              "description": "GKE Workload Identity: NAME@PROJECT.iam.gserviceaccount.com.",
+              "type": "string"
+            }
+          }
+        },
+        "azure": {
+          "type": "object",
+          "properties": {
+            "clientId": { "type": "string" },
+            "tenantId": { "type": "string" }
+          }
         }
       }
     },
     "container": {
       "type": "object",
-      "required": [
-        "port"
-      ],
+      "required": ["port"],
       "properties": {
         "port": {
           "type": "integer",
@@ -58,18 +113,10 @@
     },
     "service": {
       "type": "object",
-      "required": [
-        "type",
-        "port",
-        "targetPort"
-      ],
+      "required": ["type", "port", "targetPort"],
       "properties": {
         "type": {
-          "enum": [
-            "ClusterIP",
-            "NodePort",
-            "LoadBalancer"
-          ]
+          "enum": ["ClusterIP", "NodePort", "LoadBalancer"]
         },
         "port": {
           "type": "integer",
@@ -90,39 +137,317 @@
           ]
         },
         "nodePort": {
-          "type": [
-            "integer",
-            "null"
-          ],
+          "type": ["integer", "null"],
           "minimum": 30000,
           "maximum": 32767
         },
         "externalTrafficPolicy": {
-          "enum": [
-            "",
-            "Cluster",
-            "Local"
-          ]
+          "enum": ["", "Cluster", "Local"]
+        },
+        "internalTrafficPolicy": {
+          "enum": ["", "Cluster", "Local"]
         },
         "sessionAffinity": {
-          "enum": [
-            "None",
-            "ClientIP"
-          ]
+          "enum": ["None", "ClientIP"]
+        },
+        "ipFamilyPolicy": {
+          "enum": ["", "SingleStack", "PreferDualStack", "RequireDualStack"]
+        },
+        "aws": {
+          "type": "object",
+          "properties": {
+            "nlb": {
+              "type": "object",
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "scheme": { "enum": ["internet-facing", "internal"] },
+                "targetType": { "enum": ["ip", "instance"] },
+                "ipAddressType": { "enum": ["ipv4", "dualstack"] }
+              }
+            }
+          }
+        }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "className": { "type": "string" },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["host", "paths"],
+            "properties": {
+              "host": {
+                "type": "string",
+                "minLength": 1
+              },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["path", "pathType"],
+                  "properties": {
+                    "path": { "type": "string", "minLength": 1 },
+                    "pathType": {
+                      "enum": ["Exact", "Prefix", "ImplementationSpecific"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "aws": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "scheme": { "enum": ["internet-facing", "internal"] },
+            "targetType": {
+              "description": "ip targets pods directly and works with a ClusterIP Service; instance needs a NodePort Service.",
+              "enum": ["ip", "instance"]
+            },
+            "ipAddressType": { "enum": ["ipv4", "dualstack"] },
+            "certificateArn": {
+              "type": "string",
+              "pattern": "^(|arn:aws[a-z-]*:acm:[a-z0-9-]+:[0-9]{12}:certificate/.+)$"
+            }
+          }
+        },
+        "gke": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "managedCertificate": {
+              "type": "object",
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "domains": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
+              }
+            },
+            "frontendConfig": {
+              "type": "object",
+              "properties": {
+                "redirectResponseCode": {
+                  "enum": [
+                    "MOVED_PERMANENTLY_DEFAULT",
+                    "FOUND",
+                    "SEE_OTHER",
+                    "TEMPORARY_REDIRECT",
+                    "PERMANENT_REDIRECT"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "certManager": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "issuerKind": { "enum": ["ClusterIssuer", "Issuer"] }
+          }
+        }
+      }
+    },
+    "httpRoute": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "parentRefs": { "type": "array" }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+        },
+        "mountPath": {
+          "type": "string",
+          "pattern": "^/.*"
+        },
+        "existingClaim": { "type": "string" },
+        "storageClassName": {
+          "description": "Empty uses the cluster default class; \"-\" disables dynamic provisioning.",
+          "type": "string"
+        },
+        "accessModes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "ReadWriteOnce",
+              "ReadOnlyMany",
+              "ReadWriteMany",
+              "ReadWriteOncePod"
+            ]
+          }
+        },
+        "size": {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(E|P|T|G|M|k|Ei|Pi|Ti|Gi|Mi|Ki)?$"
+        },
+        "volumeMode": { "enum": ["Filesystem", "Block"] },
+        "retainOnDelete": { "type": "boolean" }
+      }
+    },
+    "extraPersistentVolumeClaims": {
+      "description": "Shared claims mounted by every replica; per-replica storage belongs in persistence under a StatefulSet.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "mountPath"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+          },
+          "mountPath": {
+            "type": "string",
+            "pattern": "^/.*"
+          },
+          "accessModes": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "ReadWriteOnce",
+                "ReadOnlyMany",
+                "ReadWriteMany",
+                "ReadWriteOncePod"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "properties": {
+        "allowHostPath": { "type": "boolean" },
+        "emptyDirs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "mountPath"],
+            "properties": {
+              "medium": { "enum": ["", "Memory"] }
+            }
+          }
+        },
+        "ephemeralVolumes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "mountPath"]
+          }
+        },
+        "csiVolumes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "mountPath", "driver"]
+          }
+        },
+        "hostPaths": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "mountPath", "path"]
+          }
+        },
+        "classes": {
+          "type": "object",
+          "properties": {
+            "create": { "type": "boolean" },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["name", "provisioner"],
+                "properties": {
+                  "reclaimPolicy": { "enum": ["Delete", "Retain"] },
+                  "volumeBindingMode": {
+                    "enum": ["Immediate", "WaitForFirstConsumer"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "snapshotClasses": {
+          "type": "object",
+          "properties": {
+            "create": { "type": "boolean" },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["name", "driver"],
+                "properties": {
+                  "deletionPolicy": { "enum": ["Delete", "Retain"] }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "secretsStore": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "provider": { "enum": ["aws", "azure", "gcp", "vault"] },
+        "mountPath": {
+          "type": "string",
+          "pattern": "^/.*"
+        }
+      }
+    },
+    "externalSecret": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "apiVersion": {
+          "enum": ["external-secrets.io/v1", "external-secrets.io/v1beta1"]
+        },
+        "secretStoreRef": {
+          "type": "object",
+          "properties": {
+            "kind": { "enum": ["SecretStore", "ClusterSecretStore"] }
+          }
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "portName": {
+          "type": "string",
+          "maxLength": 15
         }
       }
     },
     "autoscaling": {
       "type": "object",
-      "required": [
-        "enabled",
-        "minReplicas",
-        "maxReplicas"
-      ],
+      "required": ["enabled", "minReplicas", "maxReplicas"],
       "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
+        "enabled": { "type": "boolean" },
         "minReplicas": {
           "type": "integer",
           "minimum": 1
@@ -132,10 +457,30 @@
           "minimum": 1
         },
         "targetCPUUtilizationPercentage": {
-          "type": "integer",
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 100
+        },
+        "targetMemoryUtilizationPercentage": {
+          "type": ["integer", "null"],
           "minimum": 1,
           "maximum": 100
         }
+      }
+    },
+    "podDisruptionBudget": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "unhealthyPodEvictionPolicy": {
+          "enum": ["", "IfHealthyBudget", "AlwaysAllow"]
+        }
+      }
+    },
+    "deploymentStrategy": {
+      "type": "object",
+      "properties": {
+        "type": { "enum": ["RollingUpdate", "Recreate"] }
       }
     },
     "terminationGracePeriodSeconds": {

@@ -1,0 +1,23 @@
+{{- if .Values.configMap.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kubeops.configMapName" . }}
+  labels:
+    {{- include "kubeops.labels" . | nindent 4 }}
+  {{- with .Values.configMap.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- with .Values.configMap.data }}
+data:
+  {{- range $key, $value := . }}
+  {{ $key }}: |
+    {{- tpl (toString $value) $ | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- with .Values.configMap.binaryData }}
+binaryData:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}

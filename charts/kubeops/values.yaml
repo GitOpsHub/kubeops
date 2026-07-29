@@ -1,9 +1,37 @@
+# KubeOps global application chart.
+#
+# The chart never auto-detects a cloud provider. The same values must render the
+# same manifests on every cluster, so every provider integration below is an
+# explicit opt-in block. Start from the matching profile in `ci/` and add only
+# what the controllers installed in your cluster actually need.
+
+# -----------------------------------------------------------------------------
+# Workload
+# -----------------------------------------------------------------------------
+
+# Deployment suits stateless applications. StatefulSet gives every replica its
+# own PersistentVolumeClaim (see `persistence`) and a stable network identity.
+workload:
+  kind: Deployment
+  # StatefulSet only.
+  podManagementPolicy: OrderedReady
+  minReadySeconds: 0
+  # Retain keeps per-replica volumes when the StatefulSet is scaled down or
+  # deleted; Delete removes them.
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+
 replicaCount: 2
 revisionHistoryLimit: 10
 
 image:
+  # Optional registry host. Leave empty when `repository` already carries one.
+  registry: ""
   repository: nginxinc/nginx-unprivileged
   tag: "1.27-alpine"
+  # A digest pins the image immutably and wins over `tag` when both are set.
+  digest: ""
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -14,7 +42,29 @@ serviceAccount:
   create: true
   automount: true
   annotations: {}
+  labels: {}
   name: ""
+  # Cloud workload identity. Each block only adds annotations/labels; the trust
+  # relationship itself is created outside the chart.
+  aws:
+    # IAM Roles for Service Accounts (EKS). Adds eks.amazonaws.com/role-arn.
+    roleArn: ""
+    audience: ""
+  gcp:
+    # GKE Workload Identity. Adds iam.gke.io/gcp-service-account.
+    serviceAccount: ""
+  azure:
+    # Azure Workload Identity. Adds azure.workload.identity/client-id to the
+    # ServiceAccount and azure.workload.identity/use=true to the pod.
+    clientId: ""
+    tenantId: ""
+
+rbac:
+  # Namespaced Role/RoleBinding for the application's own ServiceAccount.
+  create: false
+  rules: []
+  # Bind additional existing ClusterRoles into this namespace.
+  clusterRoleBindings: []
 
 podAnnotations: {}
 podLabels: {}
@@ -26,54 +76,65 @@ podSecurityContext:
   runAsNonRoot: true
   seccompProfile:
     type: RuntimeDefault
+  # fsGroup makes the kubelet chown mounted volumes so a non-root container can
+  # write to them. Required by most block-storage integrations below.
+  # fsGroup: 1000
+  # fsGroupChangePolicy: OnRootMismatch
 
 securityContext:
   allowPrivilegeEscalation: false
   capabilities:
     drop:
       - ALL
+  # readOnlyRootFilesystem: true
 
 container:
   port: 8080
+  # Extra container ports, e.g. metrics or gRPC.
+  extraPorts: []
   command: []
   args: []
   env: []
   envFrom: []
+  lifecycle: {}
 
-service:
-  annotations: {}
-  type: ClusterIP
-  port: 80
-  targetPort: http
-  nodePort: null
-  externalTrafficPolicy: ""
-  loadBalancerClass: ""
-  loadBalancerSourceRanges: []
-  allocateLoadBalancerNodePorts: true
-  sessionAffinity: None
-
-ingress:
-  enabled: false
-  className: nginx
-  annotations: {}
-  hosts:
-    - host: nginx.example.com
-      paths:
-        - path: /
-          pathType: Prefix
-  tls: []
+# Extra containers that share the pod. `initContainers` also accepts native
+# sidecars (restartPolicy: Always).
+initContainers: []
+sidecars: []
 
 probes:
   liveness:
     enabled: true
     path: /
+    port: http
+    scheme: HTTP
     initialDelaySeconds: 10
     periodSeconds: 10
+    timeoutSeconds: 1
+    failureThreshold: 3
+    successThreshold: 1
   readiness:
     enabled: true
     path: /
+    port: http
+    scheme: HTTP
     initialDelaySeconds: 5
     periodSeconds: 5
+    timeoutSeconds: 1
+    failureThreshold: 3
+    successThreshold: 1
+  # A startup probe keeps slow-booting applications from being killed by the
+  # liveness probe.
+  startup:
+    enabled: false
+    path: /
+    port: http
+    scheme: HTTP
+    initialDelaySeconds: 0
+    periodSeconds: 5
+    timeoutSeconds: 1
+    failureThreshold: 30
 
 resources:
   limits:
@@ -88,12 +149,498 @@ autoscaling:
   minReplicas: 1
   maxReplicas: 10
   targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: null
+  # Raw autoscaling/v2 metric entries (external, pods, object).
+  metrics: []
+  behavior: {}
 
-volumes: []
-volumeMounts: []
+podDisruptionBudget:
+  enabled: false
+  # A PDB carries one of these, not both. minAvailable wins when both are set.
+  minAvailable: null
+  maxUnavailable: 1
+  unhealthyPodEvictionPolicy: ""
 
 terminationGracePeriodSeconds: 30
 nodeSelector: {}
 tolerations: []
 affinity: {}
 topologySpreadConstraints: []
+priorityClassName: ""
+runtimeClassName: ""
+schedulerName: ""
+dnsPolicy: ""
+dnsConfig: {}
+hostAliases: []
+restartPolicy: ""
+
+# -----------------------------------------------------------------------------
+# Service
+# -----------------------------------------------------------------------------
+
+service:
+  annotations: {}
+  labels: {}
+  type: ClusterIP
+  port: 80
+  targetPort: http
+  appProtocol: ""
+  nodePort: null
+  externalTrafficPolicy: ""
+  internalTrafficPolicy: ""
+  loadBalancerClass: ""
+  loadBalancerSourceRanges: []
+  loadBalancerIP: ""
+  allocateLoadBalancerNodePorts: true
+  sessionAffinity: None
+  sessionAffinityConfig: {}
+  ipFamilies: []
+  ipFamilyPolicy: ""
+  extraPorts: []
+  # A StatefulSet always needs a governing headless Service; the chart creates
+  # one automatically for that workload kind.
+  headless:
+    enabled: false
+    annotations: {}
+    publishNotReadyAddresses: true
+  # Provider integrations. Each adds annotations only.
+  aws:
+    # Network Load Balancer through the AWS Load Balancer Controller. Applies
+    # only when service.type is LoadBalancer.
+    nlb:
+      enabled: false
+      # internet-facing or internal
+      scheme: internet-facing
+      targetType: ip
+      # Cross-zone balancing costs nothing on NLB and evens out traffic.
+      crossZone: true
+      ipAddressType: ipv4
+      subnets: []
+      securityGroups: []
+      # ARN of an ACM certificate to terminate TLS on the load balancer.
+      certificateArn: ""
+      sslPorts: ""
+      backendProtocol: ""
+      proxyProtocolV2: false
+      healthcheckProtocol: ""
+      healthcheckPath: ""
+      healthcheckPort: ""
+      eipAllocations: []
+      tags: {}
+      attributes: {}
+  gcp:
+    # Container-native load balancing. GKE Ingress needs NEGs whenever the
+    # Service is ClusterIP.
+    neg:
+      enabled: false
+      ingress: true
+      # Standalone NEG names keyed by port, e.g. {"80": "my-neg"}.
+      exposedPorts: {}
+    # BackendConfig attached to this Service (see ingress.gke.backendConfig).
+    backendConfig:
+      enabled: false
+      name: ""
+    # Internal passthrough load balancer, applies to service.type LoadBalancer.
+    internalLoadBalancer:
+      enabled: false
+      subnet: ""
+      globalAccess: false
+  azure:
+    loadBalancer:
+      # Internal Azure Load Balancer, applies to service.type LoadBalancer.
+      internal: false
+      internalSubnet: ""
+      resourceGroup: ""
+      pipName: ""
+      dnsLabelName: ""
+      healthProbeRequestPath: ""
+
+# -----------------------------------------------------------------------------
+# Ingress
+# -----------------------------------------------------------------------------
+
+ingress:
+  enabled: false
+  # nginx | alb (EKS) | gce, gce-internal (GKE) |
+  # webapprouting.kubernetes.azure.com (AKS app routing) | azure-application-gateway
+  className: nginx
+  # Annotations here always win over the provider blocks below.
+  annotations: {}
+  labels: {}
+  hosts:
+    - host: nginx.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+          # Optional per-path Service override.
+          # serviceName: ""
+          # servicePort: ""
+  # Raw path entries appended to every host, for controller-specific actions.
+  extraPaths: []
+  defaultBackend: {}
+  tls: []
+  # cert-manager issues and renews the Secret named in `tls`.
+  certManager:
+    enabled: false
+    issuerKind: ClusterIssuer
+    issuerName: letsencrypt-prod
+    # Set for an ACME DNS-01 or HTTP-01 override; usually unnecessary.
+    annotations: {}
+  aws:
+    # AWS Load Balancer Controller (ALB). Requires className: alb.
+    enabled: false
+    scheme: internet-facing
+    # ip targets pods directly (VPC CNI) and works with ClusterIP Services;
+    # instance requires a NodePort Service.
+    targetType: ip
+    listenPorts: ""
+    certificateArn: ""
+    # Set to "443" to redirect HTTP to HTTPS on the load balancer.
+    sslRedirect: ""
+    sslPolicy: ""
+    # Share one ALB between Ingresses that use the same group name.
+    groupName: ""
+    groupOrder: null
+    loadBalancerName: ""
+    ipAddressType: ipv4
+    subnets: []
+    securityGroups: []
+    backendProtocol: ""
+    healthcheckPath: ""
+    healthcheckPort: ""
+    healthcheckProtocol: ""
+    healthcheckIntervalSeconds: null
+    healthcheckTimeoutSeconds: null
+    successCodes: ""
+    wafv2AclArn: ""
+    shieldAdvancedProtection: null
+    targetGroupAttributes: {}
+    loadBalancerAttributes: {}
+    tags: {}
+    inboundCidrs: []
+  gke:
+    # GKE Ingress (external or internal Application Load Balancer).
+    enabled: false
+    # Reserved global static IP for the load balancer.
+    globalStaticIpName: ""
+    regionalStaticIpName: ""
+    # Pre-shared certificates already uploaded to the project.
+    preSharedCerts: []
+    # Google-managed certificates provisioned by the chart.
+    managedCertificate:
+      enabled: false
+      name: ""
+      domains: []
+    # HTTPS redirect and SSL policy for the load-balancer frontend.
+    frontendConfig:
+      enabled: false
+      name: ""
+      redirectToHttps: false
+      redirectResponseCode: MOVED_PERMANENTLY_DEFAULT
+      sslPolicy: ""
+    # Health checks, timeouts, CDN, IAP and Cloud Armor for the backend.
+    backendConfig:
+      enabled: false
+      name: ""
+      timeoutSec: null
+      connectionDraining:
+        drainingTimeoutSec: null
+      healthCheck:
+        enabled: false
+        type: HTTP
+        requestPath: /
+        port: null
+        checkIntervalSec: null
+        timeoutSec: null
+        healthyThreshold: null
+        unhealthyThreshold: null
+      cdn:
+        enabled: false
+        cachePolicy: {}
+        cacheMode: ""
+      iap:
+        enabled: false
+        oauthclientCredentials:
+          secretName: ""
+      securityPolicy:
+        name: ""
+      sessionAffinity: {}
+      logging:
+        enable: false
+        sampleRate: null
+      customRequestHeaders: []
+      customResponseHeaders: []
+  azure:
+    # AKS application routing add-on (managed NGINX).
+    appRouting:
+      enabled: false
+      # Key Vault certificate URI served by the managed controller.
+      tlsCertKeyVaultUri: ""
+    # Application Gateway Ingress Controller.
+    agic:
+      enabled: false
+      sslRedirect: false
+      backendPathPrefix: ""
+      backendProtocol: ""
+      backendHostname: ""
+      healthProbePath: ""
+      usePrivateIp: false
+      wafPolicyResourceId: ""
+      requestTimeout: null
+      connectionDraining:
+        enabled: false
+        timeout: 30
+
+# Gateway API is the successor to Ingress and is supported by the same
+# controllers on EKS, GKE and AKS. Enable it instead of, or alongside, Ingress.
+httpRoute:
+  enabled: false
+  annotations: {}
+  labels: {}
+  parentRefs: []
+  hostnames: []
+  # Defaults to a single prefix rule to this chart's Service when empty.
+  rules: []
+
+# -----------------------------------------------------------------------------
+# Storage
+# -----------------------------------------------------------------------------
+
+# The primary volume for the application. With workload.kind Deployment this is
+# a single shared PersistentVolumeClaim; with StatefulSet it becomes a
+# volumeClaimTemplate so each replica gets its own volume.
+persistence:
+  enabled: false
+  name: data
+  mountPath: /data
+  subPath: ""
+  readOnly: false
+  # Reuse a claim created outside the chart (Deployment only).
+  existingClaim: ""
+  # "" uses the cluster default StorageClass; "-" disables dynamic provisioning
+  # so the claim binds to a pre-created PersistentVolume.
+  storageClassName: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 8Gi
+  volumeMode: Filesystem
+  annotations: {}
+  labels: {}
+  selector: {}
+  # Restore from a VolumeSnapshot or clone an existing PVC.
+  dataSource: {}
+  dataSourceRef: {}
+  # Keep the PVC when the release is uninstalled (Deployment only).
+  retainOnDelete: true
+
+# Additional claims, always created as shared PersistentVolumeClaims that every
+# replica mounts, whatever the workload kind. With more than one replica they
+# must therefore use a ReadWriteMany class such as EFS, Azure Files or
+# Filestore; per-replica storage belongs in `persistence` under a StatefulSet.
+extraPersistentVolumeClaims: []
+# - name: shared
+#   mountPath: /var/shared
+#   storageClassName: kubeops-efs
+#   accessModes: [ReadWriteMany]
+#   size: 20Gi
+
+storage:
+  # Scratch space that lives and dies with the pod. Use medium: Memory for a
+  # tmpfs, which is required when readOnlyRootFilesystem is enabled.
+  emptyDirs: []
+  # - name: tmp
+  #   mountPath: /tmp
+  #   medium: Memory
+  #   sizeLimit: 64Mi
+
+  # Generic ephemeral volumes: a CSI volume provisioned per pod and deleted with
+  # it. Useful for scratch space that must outgrow the node disk.
+  ephemeralVolumes: []
+  # - name: scratch
+  #   mountPath: /scratch
+  #   storageClassName: kubeops-ebs-gp3
+  #   accessModes: [ReadWriteOnce]
+  #   size: 50Gi
+
+  # Inline CSI volumes, e.g. GCS FUSE or Azure Blob.
+  csiVolumes: []
+  # - name: bucket
+  #   mountPath: /bucket
+  #   driver: gcsfuse.csi.storage.gke.io
+  #   readOnly: true
+  #   volumeAttributes:
+  #     bucketName: my-bucket
+
+  # hostPath bypasses the storage stack and ties pods to nodes. Guarded so it
+  # cannot be enabled by accident.
+  hostPaths: []
+  allowHostPath: false
+
+  # GKE Cloud Storage FUSE CSI driver needs a pod annotation to inject its
+  # sidecar. Enable alongside a storage.csiVolumes entry for the driver.
+  gcsFuse:
+    enabled: false
+    cpuLimit: ""
+    memoryLimit: ""
+    ephemeralStorageLimit: ""
+
+  # StorageClasses the chart creates. Cluster-scoped: create them once per
+  # cluster, not once per application, unless the class is app-specific.
+  # Ready-to-use provider definitions are listed in the chart README.
+  classes:
+    create: false
+    items: []
+    # - name: kubeops-ebs-gp3
+    #   provisioner: ebs.csi.aws.com
+    #   reclaimPolicy: Delete
+    #   allowVolumeExpansion: true
+    #   volumeBindingMode: WaitForFirstConsumer
+    #   parameters:
+    #     type: gp3
+    #     encrypted: "true"
+
+  # VolumeSnapshotClasses for backup/restore through the CSI snapshot API.
+  snapshotClasses:
+    create: false
+    items: []
+    # - name: kubeops-ebs-snapshots
+    #   driver: ebs.csi.aws.com
+    #   deletionPolicy: Delete
+
+# Legacy raw pass-throughs. Anything here is appended verbatim to the pod spec
+# after every volume the blocks above generate.
+volumes: []
+volumeMounts: []
+extraVolumes: []
+extraVolumeMounts: []
+
+# -----------------------------------------------------------------------------
+# Configuration and secrets
+# -----------------------------------------------------------------------------
+
+configMap:
+  # Rendered as a ConfigMap, optionally mounted and/or exported as env vars.
+  # Values are Go-templated, so they can reference .Release and .Values.
+  enabled: false
+  annotations: {}
+  data: {}
+  binaryData: {}
+  mountPath: ""
+  subPath: ""
+  asEnvFrom: false
+  # Roll pods automatically when the ConfigMap content changes.
+  rollOnChange: true
+
+secret:
+  # Only for non-sensitive placeholders and local development. Anything in a
+  # values file ends up in Git and in the Helm release Secret in plain text.
+  # Use externalSecret or secretsStore for real credentials.
+  enabled: false
+  annotations: {}
+  stringData: {}
+  mountPath: ""
+  asEnvFrom: false
+  rollOnChange: true
+
+# External Secrets Operator: syncs a provider secret store into a Kubernetes
+# Secret that this chart's pods consume.
+externalSecret:
+  enabled: false
+  # external-secrets.io/v1 is the GA API (v1beta1 for operators older than 0.17).
+  apiVersion: external-secrets.io/v1
+  annotations: {}
+  refreshInterval: 1h
+  secretStoreRef:
+    name: ""
+    kind: ClusterSecretStore
+  target:
+    name: ""
+    creationPolicy: Owner
+    deletionPolicy: Retain
+    template: {}
+  data: []
+  # - secretKey: DATABASE_PASSWORD
+  #   remoteRef:
+  #     key: prod/app/db
+  #     property: password
+  dataFrom: []
+  asEnvFrom: true
+  mountPath: ""
+
+# Secrets Store CSI Driver: mounts provider secrets as files, and optionally
+# mirrors them into a Kubernetes Secret.
+secretsStore:
+  enabled: false
+  # aws | azure | gcp | vault
+  provider: aws
+  name: ""
+  annotations: {}
+  mountPath: /mnt/secrets
+  readOnly: true
+  parameters: {}
+  # AWS: objects is a YAML string listing objectName/objectType entries.
+  # Azure: keyvaultName, tenantId, clientID and objects.
+  # GCP: secrets with resourceName/path entries.
+  secretObjects: []
+  asEnvFrom: false
+
+# -----------------------------------------------------------------------------
+# Observability and network policy
+# -----------------------------------------------------------------------------
+
+metrics:
+  enabled: false
+  # Container port serving Prometheus metrics. Added to container.extraPorts
+  # and to the Service when enabled.
+  port: 9090
+  portName: metrics
+  path: /metrics
+  # Prometheus Operator resources.
+  serviceMonitor:
+    enabled: false
+    namespace: ""
+    labels: {}
+    annotations: {}
+    interval: 30s
+    scrapeTimeout: ""
+    scheme: http
+    tlsConfig: {}
+    relabelings: []
+    metricRelabelings: []
+  podMonitor:
+    enabled: false
+    namespace: ""
+    labels: {}
+    annotations: {}
+    interval: 30s
+    scrapeTimeout: ""
+    relabelings: []
+    metricRelabelings: []
+
+networkPolicy:
+  enabled: false
+  # Allow ingress from anywhere in the cluster. Disable and use `ingressRules`
+  # to restrict traffic to specific namespaces or pods.
+  allowExternal: true
+  ingressRules: []
+  egress:
+    enabled: false
+    # Cluster DNS must stay reachable or every lookup in the pod fails.
+    allowDNS: true
+    rules: []
+
+# -----------------------------------------------------------------------------
+# Escape hatches
+# -----------------------------------------------------------------------------
+
+# Raw manifests rendered with the release context, for anything the chart does
+# not model. Each entry is Go-templated.
+extraObjects: []
+
+tests:
+  # `helm test` connectivity check against the Service.
+  enabled: true
+  image:
+    repository: busybox
+    tag: "1.36"
+    pullPolicy: IfNotPresent

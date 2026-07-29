@@ -1,0 +1,23 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+# Keeps node upgrades and cluster autoscaler scale-downs from draining every
+# replica at once. All three managed services drain nodes during upgrades.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "kubeops.resourceName" (dict "root" . "suffix" "pdb") }}
+  labels:
+    {{- include "kubeops.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.podDisruptionBudget.minAvailable }}
+  # A PDB carries one of these, not both, so minAvailable takes precedence.
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- else }}
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  {{- end }}
+  {{- with .Values.podDisruptionBudget.unhealthyPodEvictionPolicy }}
+  unhealthyPodEvictionPolicy: {{ . }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "kubeops.selectorLabels" . | nindent 6 }}
+{{- end }}

@@ -1,0 +1,9 @@
+# expect: storage.hostPaths bypasses the storage stack
+# hostPath ties a pod's data to whichever node it landed on. It stays available
+# but has to be confirmed explicitly.
+storage:
+  allowHostPath: false
+  hostPaths:
+    - name: node-data
+      path: /var/data
+      mountPath: /var/data

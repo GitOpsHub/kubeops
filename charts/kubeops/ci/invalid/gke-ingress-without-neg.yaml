@@ -1,0 +1,18 @@
+# expect: GKE Ingress cannot reach a plain ClusterIP Service
+# A GKE Ingress needs either NEGs or a NodePort Service to reach pods.
+service:
+  type: ClusterIP
+  gcp:
+    neg:
+      enabled: false
+
+ingress:
+  enabled: true
+  className: gce
+  gke:
+    enabled: true
+  hosts:
+    - host: app.example.com
+      paths:
+        - path: /
+          pathType: Prefix

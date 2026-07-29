@@ -1,5 +1,10 @@
-# AKS provisions the configured cloud load balancer through its service
-# controller. Controller-specific annotations can be added as needed.
+# AKS, minimal: expose the application through a cloud load balancer only.
+# See aks-full-values.yaml for ingress, storage and the identity integrations.
 service:
   type: LoadBalancer
   externalTrafficPolicy: Cluster
+  azure:
+    loadBalancer:
+      # Set internal to true for a load balancer reachable only from the VNet.
+      internal: false
+      healthProbeRequestPath: /

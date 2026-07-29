@@ -1,0 +1,117 @@
+{{- if .Values.ingress.gke.backendConfig.enabled }}
+{{- $backend := .Values.ingress.gke.backendConfig }}
+# BackendConfig configures the Google Cloud load balancer backend service:
+# health checks, timeouts, Cloud CDN, IAP and Cloud Armor. It is attached to the
+# Service through the cloud.google.com/backend-config annotation.
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: {{ include "kubeops.backendConfigName" . }}
+  labels:
+    {{- include "kubeops.labels" . | nindent 4 }}
+spec:
+  {{- with $backend.timeoutSec }}
+  timeoutSec: {{ . }}
+  {{- end }}
+  {{- with $backend.connectionDraining.drainingTimeoutSec }}
+  connectionDraining:
+    drainingTimeoutSec: {{ . }}
+  {{- end }}
+  {{- if $backend.healthCheck.enabled }}
+  healthCheck:
+    type: {{ $backend.healthCheck.type }}
+    requestPath: {{ $backend.healthCheck.requestPath }}
+    port: {{ default $.Values.container.port $backend.healthCheck.port }}
+    {{- with $backend.healthCheck.checkIntervalSec }}
+    checkIntervalSec: {{ . }}
+    {{- end }}
+    {{- with $backend.healthCheck.timeoutSec }}
+    timeoutSec: {{ . }}
+    {{- end }}
+    {{- with $backend.healthCheck.healthyThreshold }}
+    healthyThreshold: {{ . }}
+    {{- end }}
+    {{- with $backend.healthCheck.unhealthyThreshold }}
+    unhealthyThreshold: {{ . }}
+    {{- end }}
+  {{- end }}
+  {{- if $backend.cdn.enabled }}
+  cdn:
+    enabled: true
+    {{- with $backend.cdn.cacheMode }}
+    cacheMode: {{ . }}
+    {{- end }}
+    {{- with $backend.cdn.cachePolicy }}
+    cachePolicy:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+  {{- end }}
+  {{- if $backend.iap.enabled }}
+  iap:
+    enabled: true
+    oauthclientCredentials:
+      secretName: {{ $backend.iap.oauthclientCredentials.secretName }}
+  {{- end }}
+  {{- with $backend.securityPolicy.name }}
+  securityPolicy:
+    name: {{ . }}
+  {{- end }}
+  {{- with $backend.sessionAffinity }}
+  sessionAffinity:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- if $backend.logging.enable }}
+  logging:
+    enable: true
+    {{- with $backend.logging.sampleRate }}
+    sampleRate: {{ . }}
+    {{- end }}
+  {{- end }}
+  {{- with $backend.customRequestHeaders }}
+  customRequestHeaders:
+    headers:
+      {{- toYaml . | nindent 6 }}
+  {{- end }}
+  {{- with $backend.customResponseHeaders }}
+  customResponseHeaders:
+    headers:
+      {{- toYaml . | nindent 6 }}
+  {{- end }}
+{{- end }}
+{{- if .Values.ingress.gke.frontendConfig.enabled }}
+{{- $frontend := .Values.ingress.gke.frontendConfig }}
+---
+# FrontendConfig configures the load balancer frontend: the HTTP-to-HTTPS
+# redirect and the SSL policy. Attached through the
+# networking.gke.io/v1beta1.FrontendConfig annotation on the Ingress.
+apiVersion: networking.gke.io/v1beta1
+kind: FrontendConfig
+metadata:
+  name: {{ include "kubeops.frontendConfigName" . }}
+  labels:
+    {{- include "kubeops.labels" . | nindent 4 }}
+spec:
+  {{- if $frontend.redirectToHttps }}
+  redirectToHttps:
+    enabled: true
+    responseCodeName: {{ $frontend.redirectResponseCode }}
+  {{- end }}
+  {{- with $frontend.sslPolicy }}
+  sslPolicy: {{ . }}
+  {{- end }}
+{{- end }}
+{{- if .Values.ingress.gke.managedCertificate.enabled }}
+---
+# Google-managed certificates are provisioned and renewed by Google. Each domain
+# must already resolve to the load balancer address or provisioning stays in
+# FAILED_NOT_VISIBLE.
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: {{ include "kubeops.managedCertificateName" . }}
+  labels:
+    {{- include "kubeops.labels" . | nindent 4 }}
+spec:
+  domains:
+    {{- toYaml .Values.ingress.gke.managedCertificate.domains | nindent 4 }}
+{{- end }}

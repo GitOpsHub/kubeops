@@ -1,0 +1,46 @@
+{{- if eq .Values.workload.kind "StatefulSet" }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "kubeops.workloadName" . }}
+  labels:
+    {{- include "kubeops.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "kubeops.headlessServiceName" . }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  podManagementPolicy: {{ .Values.workload.podManagementPolicy }}
+  {{- with .Values.workload.minReadySeconds }}
+  minReadySeconds: {{ . }}
+  {{- end }}
+  updateStrategy:
+    type: {{ eq .Values.deploymentStrategy.type "Recreate" | ternary "OnDelete" "RollingUpdate" }}
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  persistentVolumeClaimRetentionPolicy:
+    {{- toYaml .Values.workload.persistentVolumeClaimRetentionPolicy | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "kubeops.selectorLabels" . | nindent 6 }}
+  template:
+    {{- include "kubeops.podTemplate" . | nindent 4 }}
+  {{- if .Values.persistence.enabled }}
+  # Each replica gets its own claim, so a single-writer class such as EBS,
+  # Azure Disk or Persistent Disk backs a multi-replica workload safely.
+  # extraPersistentVolumeClaims stay shared claims, mounted by every replica.
+  volumeClaimTemplates:
+    - metadata:
+        name: {{ .Values.persistence.name }}
+        labels:
+          {{- include "kubeops.labels" . | nindent 10 }}
+          {{- with .Values.persistence.labels }}
+          {{- toYaml . | nindent 10 }}
+          {{- end }}
+        {{- with .Values.persistence.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      spec:
+        {{- include "kubeops.claimSpec" .Values.persistence | nindent 8 }}
+  {{- end }}
+{{- end }}

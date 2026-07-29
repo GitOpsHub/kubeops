@@ -2,16 +2,69 @@ KubeOps global application chart {{ .Chart.Version }} is installed.
 
 Release:   {{ .Release.Name }}
 Namespace: {{ .Release.Namespace }}
-Image:     {{ .Values.image.repository }}:{{ .Values.image.tag }}
+Workload:  {{ .Values.workload.kind }}/{{ include "kubeops.workloadName" . }}
+Image:     {{ include "kubeops.image" . }}
 
 {{- if .Values.ingress.enabled }}
+
 Application URL:
-{{- range .Values.ingress.hosts }}
-  {{- range .paths }}
-  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}{{ .path }}
-  {{- end }}
+{{- $tlsHosts := list }}
+{{- range .Values.ingress.tls }}
+{{- range .hosts }}
+{{- $tlsHosts = append $tlsHosts . }}
 {{- end }}
+{{- end }}
+{{- range .Values.ingress.hosts }}
+{{- $host := .host }}
+{{- range .paths }}
+  http{{ if has $host $tlsHosts }}s{{ end }}://{{ $host }}{{ .path }}
+{{- end }}
+{{- end }}
+
+The address takes a few minutes to appear while the controller provisions the
+load balancer:
+  kubectl --namespace {{ .Release.Namespace }} get ingress {{ include "kubeops.resourceName" (dict "root" . "suffix" "ingress") }} --watch
+{{- if .Values.ingress.gke.managedCertificate.enabled }}
+
+Each domain must resolve to the load balancer address before Google issues the
+certificate. Watch provisioning with:
+  kubectl --namespace {{ .Release.Namespace }} describe managedcertificate {{ include "kubeops.managedCertificateName" . }}
+{{- end }}
+{{- else if .Values.httpRoute.enabled }}
+
+Routed through Gateway API. Check the attachment status with:
+  kubectl --namespace {{ .Release.Namespace }} describe httproute {{ include "kubeops.resourceName" (dict "root" . "suffix" "httproute") }}
+{{- else if eq .Values.service.type "LoadBalancer" }}
+
+The cloud controller is provisioning a load balancer. Watch for its address:
+  kubectl --namespace {{ .Release.Namespace }} get service {{ include "kubeops.serviceName" . }} --watch
+{{- else if eq .Values.service.type "NodePort" }}
+
+Reach the application on any node:
+  kubectl --namespace {{ .Release.Namespace }} get service {{ include "kubeops.serviceName" . }} -o jsonpath='{.spec.ports[0].nodePort}'
 {{- else }}
+
 To access the application locally:
-  kubectl --namespace {{ .Release.Namespace }} port-forward service/{{ include "kubeops.resourceName" (dict "root" . "suffix" "service") }} 8080:{{ .Values.service.port }}
+  kubectl --namespace {{ .Release.Namespace }} port-forward service/{{ include "kubeops.serviceName" . }} 8080:{{ .Values.service.port }}
+{{- end }}
+
+{{- if .Values.persistence.enabled }}
+
+Storage:
+{{- if eq .Values.workload.kind "StatefulSet" }}
+  Each replica has its own {{ .Values.persistence.size }} volume at {{ .Values.persistence.mountPath }}.
+{{- else }}
+  A shared {{ .Values.persistence.size }} volume is mounted at {{ .Values.persistence.mountPath }}.
+{{- end }}
+{{- if .Values.persistence.retainOnDelete }}
+  The claim is annotated helm.sh/resource-policy: keep, so `helm uninstall` will
+  not delete it. Remove it by hand when the data is no longer needed.
+{{- end }}
+  kubectl --namespace {{ .Release.Namespace }} get pvc -l app.kubernetes.io/instance={{ .Release.Name }}
+{{- end }}
+
+{{- if .Values.tests.enabled }}
+
+Verify the deployment end to end:
+  helm test {{ .Release.Name }} --namespace {{ .Release.Namespace }}
 {{- end }}

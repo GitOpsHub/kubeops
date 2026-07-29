@@ -1,0 +1,248 @@
+# Amazon EKS: every integration this chart offers, exercised together.
+#
+# Cluster prerequisites:
+#   - AWS Load Balancer Controller       (Ingress class `alb`)
+#   - EBS CSI driver add-on              (per-replica block storage)
+#   - EFS CSI driver add-on              (shared ReadWriteMany storage)
+#   - Secrets Store CSI Driver + ASCP    (secretsStore provider `aws`)
+#   - External Secrets Operator          (externalSecret)
+#   - Prometheus Operator CRDs           (metrics.serviceMonitor)
+#   - VPC CNI network policy agent       (networkPolicy enforcement)
+#
+# ARNs and IDs below are placeholders; replace them per account.
+
+workload:
+  kind: StatefulSet
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+
+replicaCount: 3
+
+image:
+  repository: nginxinc/nginx-unprivileged
+  tag: "1.27-alpine"
+
+serviceAccount:
+  create: true
+  aws:
+    # IAM Roles for Service Accounts. The trust policy is created outside the
+    # chart; this only annotates the ServiceAccount the pods run as.
+    roleArn: arn:aws:iam::111122223333:role/kubeops-app
+
+podSecurityContext:
+  runAsNonRoot: true
+  fsGroup: 1000
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# target-type: ip sends traffic straight to pod IPs, so the Service stays
+# ClusterIP and no node port is involved.
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: alb
+  aws:
+    enabled: true
+    scheme: internet-facing
+    targetType: ip
+    listenPorts: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    certificateArn: arn:aws:acm:us-east-1:111122223333:certificate/00000000-0000-0000-0000-000000000000
+    sslRedirect: "443"
+    sslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+    # Ingresses sharing a group name share one ALB, which keeps per-app load
+    # balancer cost down.
+    groupName: kubeops-shared
+    groupOrder: 10
+    ipAddressType: ipv4
+    healthcheckPath: /
+    healthcheckProtocol: HTTP
+    healthcheckIntervalSeconds: 15
+    healthcheckTimeoutSeconds: 5
+    successCodes: "200-399"
+    targetGroupAttributes:
+      deregistration_delay.timeout_seconds: 30
+      stickiness.enabled: "false"
+    loadBalancerAttributes:
+      idle_timeout.timeout_seconds: 60
+      routing.http2.enabled: "true"
+    tags:
+      Environment: production
+      ManagedBy: kubeops
+    inboundCidrs:
+      - 0.0.0.0/0
+  hosts:
+    - host: app.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - hosts:
+        - app.example.com
+      secretName: app-example-com-tls
+
+# Per-replica gp3 volume. gp3 is cheaper and faster than gp2 at every size.
+persistence:
+  enabled: true
+  name: data
+  mountPath: /var/lib/app
+  storageClassName: kubeops-ebs-gp3
+  accessModes:
+    - ReadWriteOnce
+  size: 20Gi
+
+# EFS is the only ReadWriteMany option on EKS. The file system is created
+# outside the chart; the StorageClass below points at it.
+extraPersistentVolumeClaims:
+  - name: shared
+    mountPath: /var/shared
+    storageClassName: kubeops-efs
+    accessModes:
+      - ReadWriteMany
+    size: 10Gi
+
+storage:
+  # readOnlyRootFilesystem needs writable scratch space mounted explicitly.
+  emptyDirs:
+    - name: tmp
+      mountPath: /tmp
+      medium: Memory
+      sizeLimit: 64Mi
+  ephemeralVolumes:
+    - name: scratch
+      mountPath: /scratch
+      storageClassName: kubeops-ebs-gp3
+      accessModes:
+        - ReadWriteOnce
+      size: 5Gi
+  classes:
+    create: true
+    items:
+      - name: kubeops-ebs-gp3
+        provisioner: ebs.csi.aws.com
+        reclaimPolicy: Delete
+        allowVolumeExpansion: true
+        volumeBindingMode: WaitForFirstConsumer
+        parameters:
+          type: gp3
+          iops: "3000"
+          throughput: "125"
+          encrypted: "true"
+          csi.storage.k8s.io/fstype: ext4
+      - name: kubeops-efs
+        provisioner: efs.csi.aws.com
+        reclaimPolicy: Delete
+        # EFS provisions access points rather than volumes, so there is nothing
+        # to wait for and nothing to expand.
+        allowVolumeExpansion: false
+        volumeBindingMode: Immediate
+        parameters:
+          provisioningMode: efs-ap
+          fileSystemId: fs-0123456789abcdef0
+          directoryPerms: "700"
+          gidRangeStart: "1000"
+          gidRangeEnd: "2000"
+          basePath: /kubeops
+          ensureUniqueDirectory: "true"
+  snapshotClasses:
+    create: true
+    items:
+      - name: kubeops-ebs-snapshots
+        driver: ebs.csi.aws.com
+        deletionPolicy: Delete
+
+secretsStore:
+  enabled: true
+  provider: aws
+  mountPath: /mnt/secrets
+  parameters:
+    objects: |
+      - objectName: "prod/kubeops/app"
+        objectType: "secretsmanager"
+        jmesPath:
+          - path: "database_password"
+            objectAlias: "DATABASE_PASSWORD"
+  secretObjects:
+    - secretName: kubeops-app-secrets
+      type: Opaque
+      data:
+        - objectName: DATABASE_PASSWORD
+          key: DATABASE_PASSWORD
+  asEnvFrom: true
+
+externalSecret:
+  enabled: true
+  secretStoreRef:
+    name: aws-secretsmanager
+    kind: ClusterSecretStore
+  refreshInterval: 1h
+  data:
+    - secretKey: API_TOKEN
+      remoteRef:
+        key: prod/kubeops/api
+        property: token
+  asEnvFrom: true
+
+metrics:
+  enabled: true
+  port: 9090
+  path: /metrics
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+networkPolicy:
+  enabled: true
+  allowExternal: true
+  egress:
+    enabled: true
+    allowDNS: true
+    rules:
+      - to:
+          - ipBlock:
+              cidr: 0.0.0.0/0
+              except:
+                # Block the instance metadata service so credentials must come
+                # from IRSA rather than the node role.
+                - 169.254.169.254/32
+        ports:
+          - port: 443
+            protocol: TCP
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: kubeops
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi

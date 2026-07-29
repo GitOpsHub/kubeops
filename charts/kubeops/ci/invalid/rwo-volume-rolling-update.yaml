@@ -1,0 +1,17 @@
+# expect: a single-writer volume needs deploymentStrategy.type=Recreate
+# A rolling update starts the replacement pod before the old one detaches the
+# volume, so the rollout deadlocks on multi-attach.
+workload:
+  kind: Deployment
+
+replicaCount: 1
+
+deploymentStrategy:
+  type: RollingUpdate
+
+persistence:
+  enabled: true
+  storageClassName: gp3
+  accessModes:
+    - ReadWriteOnce
+  size: 10Gi

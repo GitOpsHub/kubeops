@@ -1,4 +1,4 @@
-.PHONY: db-up db-down db-destroy dev dev-setup dev-recreate dev-argocd dev-frontend dev-backend test test-db test-integration lint build
+.PHONY: db-up db-down db-destroy dev dev-setup dev-recreate dev-argocd dev-frontend dev-backend test test-db test-integration test-chart lint build
 
 # Integration tests TRUNCATE every table, so they run against their own
 # database rather than the `kubeops` database the local dev stack uses.
@@ -51,6 +51,12 @@ test-db: db-up
 
 test-integration: test-db
 	cd backend && TEST_DATABASE_URL='$(TEST_DATABASE_URL)' go test ./internal/store -run TestInventoryLifecycle -count=1
+
+# Lints and renders every platform profile in charts/kubeops/ci, validates the
+# result against the Kubernetes API schemas, and asserts the chart still rejects
+# the unworkable value combinations in ci/invalid.
+test-chart:
+	./scripts/validate-helm-chart.sh
 
 lint:
 	cd frontend && npm run lint

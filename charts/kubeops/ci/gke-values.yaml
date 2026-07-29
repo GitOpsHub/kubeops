@@ -1,5 +1,16 @@
-# GKE provisions the configured cloud load balancer through its service
-# controller. Controller-specific annotations can be added as needed.
+# GKE, minimal: expose the application through a cloud load balancer only.
+# See gke-full-values.yaml for ingress, storage and the identity integrations.
 service:
   type: LoadBalancer
   externalTrafficPolicy: Cluster
+  gcp:
+    # Container-native load balancing sends traffic to pod IPs rather than node
+    # ports. Requires a VPC-native cluster.
+    neg:
+      enabled: true
+      ingress: false
+      exposedPorts:
+        "80": {}
+    internalLoadBalancer:
+      # Set to true for a regional internal passthrough load balancer.
+      enabled: false
