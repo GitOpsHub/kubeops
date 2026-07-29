@@ -7,7 +7,10 @@ metadata:
     {{- include "kubeops.labels" . | nindent 4 }}
   annotations:
     helm.sh/hook: test
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    # Deleting on success would race `helm test --logs`, which reads the pod
+    # after the hook completes. Cleaning up before the next run instead keeps
+    # the logs readable without letting test pods accumulate.
+    helm.sh/hook-delete-policy: before-hook-creation
 spec:
   restartPolicy: Never
   {{- with .Values.imagePullSecrets }}
