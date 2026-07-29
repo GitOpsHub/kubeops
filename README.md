@@ -128,7 +128,13 @@ organization package administrator must change the package visibility to
 required. Keeping it private is also supported — `scripts/setup-local-argocd.sh`
 provisions the `kubeops-ghcr-helm-creds` repository secret so Argo CD can pull
 with credentials. Configure the fixed chart name, revision, and matching local defaults
-file in `.env`. Set `GITHUB_TOKEN`
+file in `.env`.
+
+`GLOBAL_HELM_REVISION` is the chart version new onboardings are pinned to; it is
+`1.1.0`. Each application records the revision it was onboarded with, so raising
+this value changes what the next onboarding gets and leaves existing
+applications where they are. Move one of those by editing the chart revision on
+its Argo CD Application. Set `GITHUB_TOKEN`
 to a PAT authorized for the `GitOpsHub` organization and private repository
 creation (`repo` for a classic PAT; `delete_repo` is recommended for compensation
 cleanup). A GitHub App ID, installation ID, and private-key file remain supported
