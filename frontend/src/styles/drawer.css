@@ -1,29 +1,33 @@
-/* Cluster detail drawer and its scale-confirmation dialog. */
+/* Cluster operations modal and its scale-confirmation dialog. */
 
-.drawer-backdrop {
+.cluster-modal-backdrop {
   position: fixed;
   inset: 0;
   z-index: 30;
-  display: flex;
-  justify-content: flex-end;
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
   background: var(--scrim);
   backdrop-filter: blur(2px);
 }
 
-.detail-drawer {
+.cluster-detail-modal {
   position: relative;
   display: grid;
-  gap: var(--space-5);
+  gap: var(--space-4);
   align-content: start;
-  width: min(560px, 100%);
-  padding: var(--space-6);
+  width: min(960px, 100%);
+  max-height: min(900px, calc(100dvh - 64px));
+  padding: var(--space-5);
   overflow-y: auto;
   background: var(--canvas);
-  border-left: 1px solid var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
+  scrollbar-width: thin;
 }
 
-.drawer-close {
+.cluster-modal-close {
   position: absolute;
   top: var(--space-4);
   right: var(--space-4);
@@ -40,20 +44,22 @@
   line-height: 1;
 }
 
-.drawer-close:hover {
+.cluster-modal-close:hover {
   color: var(--text);
   background: var(--surface-hover);
   border-color: var(--border-strong);
 }
 
-.drawer-identity {
+.cluster-modal-identity {
   display: flex;
   gap: var(--space-3);
+  grid-column: 1 / -1;
   align-items: center;
-  padding-right: var(--space-7);
+  padding: 0 var(--space-7) var(--space-4) 0;
+  border-bottom: 1px solid var(--border);
 }
 
-.drawer-identity > div {
+.cluster-modal-identity > div {
   display: grid;
   gap: var(--space-1);
   min-width: 0;
@@ -65,7 +71,7 @@
   flex: 0 0 auto;
 }
 
-.detail-drawer h2 {
+.cluster-detail-modal h2 {
   overflow-wrap: anywhere;
   font-family: var(--font-mono);
   font-size: var(--text-xl);
@@ -73,8 +79,7 @@
   letter-spacing: -0.01em;
 }
 
-.drawer-source {
-  margin-top: calc(var(--space-5) * -1);
+.cluster-modal-source {
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
@@ -143,6 +148,7 @@
 .node-pool-list {
   display: grid;
   gap: var(--space-3);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .node-pool-card {
@@ -536,7 +542,18 @@
 }
 
 @media (max-width: 720px) {
-  .detail-drawer {
-    padding: var(--space-5) var(--space-4);
+  .cluster-modal-backdrop {
+    padding: var(--space-3);
+  }
+
+  .cluster-detail-modal {
+    width: 100%;
+    max-height: calc(100dvh - 24px);
+    padding: var(--space-4);
+    border-radius: var(--radius-md);
+  }
+
+  .node-pool-list {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

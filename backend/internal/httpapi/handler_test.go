@@ -73,6 +73,7 @@ type fakeApplicationOnboarder struct {
 	// Resource endpoints: what to return, and what the handler passed through.
 	resources       []onboarding.ResourceNode
 	manifest        string
+	desiredManifest string
 	resourceErr     error
 	deletedRef      onboarding.ResourceRef
 	resourceTargets []string
@@ -86,13 +87,16 @@ func (f *fakeApplicationOnboarder) Resources(
 	f.resourceTargets = append(f.resourceTargets, targetID)
 	return f.resources, f.resourceErr
 }
-func (f *fakeApplicationOnboarder) ResourceManifest(
+func (f *fakeApplicationOnboarder) ResourceManifests(
 	_ context.Context,
 	_ string,
 	_ string,
 	_ onboarding.ResourceRef,
-) (string, error) {
-	return f.manifest, f.resourceErr
+) (onboarding.ResourceManifestComparison, error) {
+	return onboarding.ResourceManifestComparison{
+		LiveManifest:    f.manifest,
+		DesiredManifest: f.desiredManifest,
+	}, f.resourceErr
 }
 func (f *fakeApplicationOnboarder) DeleteResource(
 	_ context.Context,

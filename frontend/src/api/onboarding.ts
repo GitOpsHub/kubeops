@@ -174,6 +174,12 @@ export type ResourceNode = {
   createdAt: string
   images?: string[]
   info?: { name: string; value: string }[]
+  /** Live cloud entry point enriched from the Service or Ingress manifest. */
+  exposure?: {
+    type: string
+    addresses: string[]
+    ports?: string[]
+  }
 }
 
 /** The tuple Argo CD addresses a resource by. */
@@ -222,6 +228,23 @@ export async function getResourceManifest(
     { signal },
   )
   return response.manifest
+}
+
+export type ResourceManifestComparison = {
+  desiredManifest: string
+  manifest: string
+}
+
+export function getResourceManifestComparison(
+  onboardingId: string,
+  targetId: string,
+  ref: ResourceRef,
+  signal?: AbortSignal,
+) {
+  return request<ResourceManifestComparison>(
+    `${resourcePath(onboardingId, targetId)}/manifest?${resourceQuery(ref)}`,
+    { signal },
+  )
 }
 
 export async function deleteResource(

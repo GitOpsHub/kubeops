@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -102,6 +103,110 @@ func TestHTTPArgoClientDoesNotExposeResponseBody(t *testing.T) {
 	_, err = client.GetApplication(context.Background(), "payments", "argo-cd")
 	if err == nil || err.Error() != "Argo CD API returned status 502" {
 		t.Fatalf("unexpected safe error: %v", err)
+	}
+}
+
+func TestHTTPArgoClientSelectsDesiredResourceFromRenderedManifests(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/applications/nginx/manifests" ||
+			r.URL.Query().Get("appNamespace") != "argo-cd" {
+			t.Fatalf("unexpected endpoint: %s", r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"manifests": []string{
+			`{"apiVersion":"v1","kind":"Service","metadata":{"name":"nginx","namespace":"nginx"}}`,
+			`{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"nginx","namespace":"nginx"},"spec":{"replicas":3}}`,
+		}})
+	}))
+	defer server.Close()
+
+	client, err := NewHTTPArgoClient(config.ArgoTarget{
+		SourceID: "gcp", ServerURL: server.URL, Token: "test-token",
+	}, config.OnboardingConfig{RequestTimeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := client.DesiredResourceManifest(
+		context.Background(),
+		"nginx",
+		"argo-cd",
+		ResourceRef{
+			Group: "apps", Version: "v1", Kind: "Deployment",
+			Namespace: "nginx", Name: "nginx",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(manifest, `"replicas":3`) {
+		t.Fatalf("selected the wrong desired resource: %s", manifest)
+	}
+}
+
+func TestHTTPArgoClientEnrichesLoadBalancerService(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/applications/nginx/resource-tree":
+			_, _ = w.Write([]byte(`{"nodes":[{
+				"group":"","version":"v1","kind":"Service","namespace":"nginx",
+				"name":"nginx-service","uid":"service-1",
+				"health":{"status":"Healthy"}
+			}]}`))
+		case "/api/v1/applications/nginx":
+			_, _ = w.Write([]byte(`{"status":{"resources":[{
+				"group":"","version":"v1","kind":"Service","namespace":"nginx",
+				"name":"nginx-service","status":"Synced"
+			}]}}`))
+		case "/api/v1/applications/nginx/resource":
+			if r.URL.Query().Get("kind") != "Service" ||
+				r.URL.Query().Get("resourceName") != "nginx-service" {
+				t.Fatalf("unexpected resource query: %s", r.URL.RawQuery)
+			}
+			manifest := `apiVersion: v1
+kind: Service
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80
+      protocol: TCP
+status:
+  loadBalancer:
+    ingress:
+      - ip: 35.237.212.233
+      - hostname: nginx.example.test
+`
+			_ = json.NewEncoder(w).Encode(map[string]string{"manifest": manifest})
+		default:
+			t.Fatalf("unexpected endpoint: %s", r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewHTTPArgoClient(config.ArgoTarget{
+		SourceID: "gcp", ServerURL: server.URL, Token: "test-token",
+	}, config.OnboardingConfig{RequestTimeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := client.ApplicationResources(context.Background(), "nginx", "argo-cd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 || nodes[0].Exposure == nil {
+		t.Fatalf("expected one exposed service, got %#v", nodes)
+	}
+	exposure := nodes[0].Exposure
+	if exposure.Type != "LoadBalancer" {
+		t.Fatalf("unexpected exposure type: %q", exposure.Type)
+	}
+	if len(exposure.Addresses) != 2 ||
+		exposure.Addresses[0] != "35.237.212.233" ||
+		exposure.Addresses[1] != "nginx.example.test" {
+		t.Fatalf("unexpected addresses: %#v", exposure.Addresses)
+	}
+	if len(exposure.Ports) != 1 || exposure.Ports[0] != "80/TCP" {
+		t.Fatalf("unexpected ports: %#v", exposure.Ports)
 	}
 }
 

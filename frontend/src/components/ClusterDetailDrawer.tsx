@@ -212,9 +212,9 @@ export function ClusterDetailDrawer({
   }
 
   return (
-    <div className="drawer-backdrop" role="presentation" onMouseDown={onClose}>
-      <aside
-        className="detail-drawer detail-drawer--operations"
+    <div className="cluster-modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className="cluster-detail-modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby="cluster-detail-title"
@@ -222,7 +222,7 @@ export function ClusterDetailDrawer({
       >
         <button
           ref={closeButton}
-          className="drawer-close"
+          className="cluster-modal-close"
           type="button"
           onClick={onClose}
           aria-label="Close cluster details"
@@ -230,16 +230,19 @@ export function ClusterDetailDrawer({
           ×
         </button>
 
-        <header className="drawer-identity">
+        <header className="cluster-modal-identity">
           <KubernetesLogo className="drawer-kubernetes-logo" />
           <div>
             <p className="section-label">{providerLabels[cluster.provider]}</p>
             <h2 id="cluster-detail-title">{cluster.name}</h2>
+            <p className="cluster-modal-source">{cluster.sourceName} · {cluster.location}</p>
           </div>
         </header>
-        <p className="drawer-source">{cluster.sourceName} · {cluster.location}</p>
 
-        <section className="operations-section" aria-labelledby="overview-heading">
+        <section
+          className="operations-section operations-section--overview"
+          aria-labelledby="overview-heading"
+        >
           <div className="operations-heading">
             <div>
               <p className="section-label">Overview</p>
@@ -256,7 +259,10 @@ export function ClusterDetailDrawer({
           </dl>
         </section>
 
-        <section className="operations-section" aria-labelledby="node-pools-heading">
+        <section
+          className="operations-section operations-section--compute"
+          aria-labelledby="node-pools-heading"
+        >
           <div className="operations-heading">
             <div>
               <p className="section-label">Compute</p>
@@ -334,7 +340,10 @@ export function ClusterDetailDrawer({
           {scaleMessage && <p className="scale-message" role="status">{scaleMessage}</p>}
         </section>
 
-        <section className="operations-section" aria-labelledby="networking-heading">
+        <section
+          className="operations-section operations-section--networking"
+          aria-labelledby="networking-heading"
+        >
           <div className="operations-heading">
             <div>
               <p className="section-label">Connectivity</p>
@@ -356,7 +365,10 @@ export function ClusterDetailDrawer({
           )}
         </section>
 
-        <section className="operations-section" aria-labelledby="argo-heading">
+        <section
+          className="operations-section operations-section--gitops"
+          aria-labelledby="argo-heading"
+        >
           <div className="operations-heading">
             <div>
               <p className="section-label">GitOps</p>
@@ -418,7 +430,7 @@ export function ClusterDetailDrawer({
             </section>
           </div>
         )}
-      </aside>
+      </section>
     </div>
   )
 }

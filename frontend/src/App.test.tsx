@@ -24,7 +24,10 @@ describe('App', () => {
 
     expect(await screen.findByRole('heading', { name: 'Fleet control center' })).toBeInTheDocument()
     expect(await screen.findByText('prod-us-east')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /All clouds/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'All, 6 clusters' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
     expect(screen.queryByText('Kubernetes estate')).not.toBeInTheDocument()
     expect(
       screen.queryByText(/Search, filter, and reconcile every managed/),
@@ -60,15 +63,17 @@ describe('App', () => {
     })
   })
 
-  it('returns to all clusters when the selected provider is clicked again', async () => {
+  it('returns to the complete fleet through the All provider option', async () => {
     const { fetchMock } = mockAPI()
     renderApp()
     const user = userEvent.setup()
     const aks = await screen.findByRole('button', { name: 'AKS, 3 clusters' })
+    const all = screen.getByRole('button', { name: 'All, 6 clusters' })
 
     await user.click(aks)
     expect(aks).toHaveAttribute('aria-pressed', 'true')
-    await user.click(aks)
+    expect(all).toHaveAttribute('aria-pressed', 'false')
+    await user.click(all)
 
     await waitFor(() => {
       const clusterRequests = fetchMock.mock.calls
@@ -77,6 +82,7 @@ describe('App', () => {
       expect(clusterRequests.some((url) => !url.includes('provider='))).toBe(true)
     })
     expect(aks).toHaveAttribute('aria-pressed', 'false')
+    expect(all).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('heading', { name: /All providers/ })).toBeInTheDocument()
   })
 
@@ -126,6 +132,10 @@ describe('App', () => {
     // in the actions cell. Anchoring the name picks out the former.
     await user.click(await screen.findByRole('button', { name: /^prod-us-east/ }))
 
+    expect(
+      await screen.findByRole('dialog', { name: 'prod-us-east' }),
+    ).toHaveClass('cluster-detail-modal')
+    expect(document.querySelector('.detail-drawer')).not.toBeInTheDocument()
     expect(await screen.findByRole('heading', { name: 'Node pools' })).toBeInTheDocument()
     expect(await screen.findByText('vpc-123')).toBeInTheDocument()
     expect(screen.getByText('subnet-a, subnet-b')).toBeInTheDocument()

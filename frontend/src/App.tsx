@@ -7,6 +7,7 @@ import { ApplicationsList } from './components/ApplicationsList'
 import { ApplicationOnboardingForm } from './components/ApplicationOnboardingForm'
 import { ApplicationDetail } from './components/ApplicationDetail'
 import { ThemeToggle } from './components/ThemeToggle'
+import type { ApplicationTopbarState, AppShellContext } from './lib/app-shell'
 
 function navClass({ isActive }: { isActive: boolean }) {
   return `primary-nav-link ${isActive ? 'is-active' : ''}`
@@ -23,6 +24,9 @@ function relativeTime(value: string) {
 
 function AppShell() {
   const [latestRun, setLatestRun] = useState<SyncRun | null>(null)
+  const [applicationTopbar, setApplicationTopbar] =
+    useState<ApplicationTopbarState | null>(null)
+  const outletContext: AppShellContext = { onLatestRunChange: setLatestRun, setApplicationTopbar }
 
   return (
     <div className="app-shell">
@@ -42,26 +46,29 @@ function AppShell() {
             Applications
           </NavLink>
         </nav>
+        <div className="topbar-context" />
         <div className="topbar-actions">
-          <div className="sync-readout">
-            <span className={`sync-dot sync-dot--${latestRun?.status || 'idle'}`} />
-            <div>
-              <strong>
-                {latestRun
-                  ? latestRun.status === 'succeeded'
-                    ? 'Synced'
-                    : `Sync ${latestRun.status}`
-                  : 'Awaiting sync'}
-              </strong>
-              <span>{latestRun ? relativeTime(latestRun.queuedAt) : 'No activity yet'}</span>
+          {!applicationTopbar && (
+            <div className="sync-readout">
+              <span className={`sync-dot sync-dot--${latestRun?.status || 'idle'}`} />
+              <div>
+                <strong>
+                  {latestRun
+                    ? latestRun.status === 'succeeded'
+                      ? 'Synced'
+                      : `Sync ${latestRun.status}`
+                    : 'Awaiting sync'}
+                </strong>
+                <span>{latestRun ? relativeTime(latestRun.queuedAt) : 'No activity yet'}</span>
+              </div>
             </div>
-          </div>
+          )}
           <ThemeToggle />
         </div>
       </header>
 
       <main className="dashboard-content" id="main">
-        <Outlet context={{ onLatestRunChange: setLatestRun }} />
+        <Outlet context={outletContext} />
       </main>
     </div>
   )

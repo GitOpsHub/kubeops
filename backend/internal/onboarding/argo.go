@@ -12,8 +12,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 
 	"github.com/GitOpsHub/kubeops/backend/internal/config"
+	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -58,13 +60,14 @@ type ResourceRef struct {
 // means the node sits at the root.
 type ResourceNode struct {
 	ResourceRef
-	UID          string         `json:"uid"`
-	ParentUID    string         `json:"parentUid"`
-	HealthStatus string         `json:"healthStatus"`
-	SyncStatus   string         `json:"syncStatus"`
-	CreatedAt    string         `json:"createdAt"`
-	Images       []string       `json:"images,omitempty"`
-	Info         []ResourceInfo `json:"info,omitempty"`
+	UID          string           `json:"uid"`
+	ParentUID    string           `json:"parentUid"`
+	HealthStatus string           `json:"healthStatus"`
+	SyncStatus   string           `json:"syncStatus"`
+	CreatedAt    string           `json:"createdAt"`
+	Images       []string         `json:"images,omitempty"`
+	Info         []ResourceInfo   `json:"info,omitempty"`
+	Exposure     *NetworkExposure `json:"exposure,omitempty"`
 }
 
 // ResourceInfo is a label Argo CD attaches to a node, such as a revision or a
@@ -74,6 +77,15 @@ type ResourceInfo struct {
 	Value string `json:"value"`
 }
 
+// NetworkExposure describes the cloud entry point attached to a Service or
+// Ingress. Argo's resource-tree response omits this live status, so it is
+// enriched from the resource manifest for the topology view.
+type NetworkExposure struct {
+	Type      string   `json:"type"`
+	Addresses []string `json:"addresses"`
+	Ports     []string `json:"ports,omitempty"`
+}
+
 type ArgoClient interface {
 	CreateApplication(context.Context, ApplicationSpec) (ApplicationState, error)
 	GetApplication(context.Context, string, string) (ApplicationState, error)
@@ -81,6 +93,7 @@ type ArgoClient interface {
 	DeleteApplication(context.Context, string, string) error
 	ApplicationResources(context.Context, string, string) ([]ResourceNode, error)
 	ResourceManifest(context.Context, string, string, ResourceRef) (string, error)
+	DesiredResourceManifest(context.Context, string, string, ResourceRef) (string, error)
 	DeleteResource(context.Context, string, string, ResourceRef) error
 }
 
@@ -309,7 +322,7 @@ func (c *HTTPArgoClient) ApplicationResources(
 		if len(node.ParentRefs) > 0 {
 			parent = node.ParentRefs[0].UID
 		}
-		nodes = append(nodes, ResourceNode{
+		resource := ResourceNode{
 			ResourceRef:  node.ResourceRef,
 			UID:          node.UID,
 			ParentUID:    parent,
@@ -320,9 +333,74 @@ func (c *HTTPArgoClient) ApplicationResources(
 			CreatedAt:  node.CreatedAt,
 			Images:     node.Images,
 			Info:       node.Info,
-		})
+		}
+		if node.Kind == "Service" || node.Kind == "Ingress" {
+			manifest, manifestErr := c.ResourceManifest(
+				ctx, name, argoNamespace, node.ResourceRef,
+			)
+			if manifestErr == nil {
+				resource.Exposure = networkExposure(node.Kind, manifest)
+			}
+		}
+		nodes = append(nodes, resource)
 	}
 	return nodes, nil
+}
+
+func networkExposure(kind, manifest string) *NetworkExposure {
+	var resource struct {
+		Spec struct {
+			Type  string `yaml:"type"`
+			Ports []struct {
+				Port     int    `yaml:"port"`
+				Protocol string `yaml:"protocol"`
+			} `yaml:"ports"`
+		} `yaml:"spec"`
+		Status struct {
+			LoadBalancer struct {
+				Ingress []struct {
+					IP       string `yaml:"ip"`
+					Hostname string `yaml:"hostname"`
+				} `yaml:"ingress"`
+			} `yaml:"loadBalancer"`
+		} `yaml:"status"`
+	}
+	if err := yaml.Unmarshal([]byte(manifest), &resource); err != nil {
+		return nil
+	}
+
+	exposureType := kind
+	if kind == "Service" {
+		if !strings.EqualFold(resource.Spec.Type, "LoadBalancer") {
+			return nil
+		}
+		exposureType = "LoadBalancer"
+	}
+
+	exposure := &NetworkExposure{Type: exposureType, Addresses: []string{}}
+	seenAddresses := map[string]struct{}{}
+	for _, ingress := range resource.Status.LoadBalancer.Ingress {
+		address := strings.TrimSpace(ingress.IP)
+		if address == "" {
+			address = strings.TrimSpace(ingress.Hostname)
+		}
+		if address == "" {
+			continue
+		}
+		if _, exists := seenAddresses[address]; exists {
+			continue
+		}
+		seenAddresses[address] = struct{}{}
+		exposure.Addresses = append(exposure.Addresses, address)
+	}
+	for _, port := range resource.Spec.Ports {
+		protocol := strings.ToUpper(strings.TrimSpace(port.Protocol))
+		if protocol == "" {
+			protocol = "TCP"
+		}
+		exposure.Ports = append(exposure.Ports, fmt.Sprintf("%d/%s", port.Port, protocol))
+	}
+	return exposure
 }
 
 func (c *HTTPArgoClient) resourceSyncStates(
@@ -376,6 +454,55 @@ func (c *HTTPArgoClient) ResourceManifest(
 		return "", err
 	}
 	return payload.Manifest, nil
+}
+
+// DesiredResourceManifest returns the Helm-rendered object Argo CD intends to
+// apply. The manifests endpoint returns every rendered resource, so select the
+// requested object by its Kubernetes identity.
+func (c *HTTPArgoClient) DesiredResourceManifest(
+	ctx context.Context,
+	name, argoNamespace string,
+	ref ResourceRef,
+) (string, error) {
+	endpoint := c.serverURL + "/api/v1/applications/" + url.PathEscape(name) +
+		"/manifests?appNamespace=" + url.QueryEscape(argoNamespace)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set("Authorization", "Bearer "+c.token)
+
+	var payload struct {
+		Manifests []string `json:"manifests"`
+	}
+	if err := c.decode(request, &payload); err != nil {
+		return "", err
+	}
+	for _, manifest := range payload.Manifests {
+		var identity struct {
+			APIVersion string `yaml:"apiVersion"`
+			Kind       string `yaml:"kind"`
+			Metadata   struct {
+				Name      string `yaml:"name"`
+				Namespace string `yaml:"namespace"`
+			} `yaml:"metadata"`
+		}
+		if err := yaml.Unmarshal([]byte(manifest), &identity); err != nil {
+			continue
+		}
+		group, version := "", identity.APIVersion
+		if slash := strings.LastIndex(identity.APIVersion, "/"); slash >= 0 {
+			group, version = identity.APIVersion[:slash], identity.APIVersion[slash+1:]
+		}
+		if identity.Kind == ref.Kind &&
+			identity.Metadata.Name == ref.Name &&
+			(identity.Metadata.Namespace == "" || identity.Metadata.Namespace == ref.Namespace) &&
+			group == ref.Group &&
+			version == ref.Version {
+			return manifest, nil
+		}
+	}
+	return "", ErrResourceNotFound
 }
 
 // DeleteResource removes one resource from the cluster. Argo CD will recreate

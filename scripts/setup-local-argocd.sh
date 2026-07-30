@@ -280,6 +280,17 @@ gke_provider_resource_id="$(
     env_value KUBEOPS_GKE_PROVIDER_RESOURCE_ID
   fi
 )"
+aks_context="${KUBEOPS_AKS_CONTEXT:-$(env_value KUBEOPS_AKS_CONTEXT)}"
+aks_port="${KUBEOPS_AKS_ARGO_PORT:-$(env_value KUBEOPS_AKS_ARGO_PORT)}"
+aks_port="${aks_port:-18084}"
+aks_source_id="${KUBEOPS_AKS_SOURCE_ID:-$(env_value KUBEOPS_AKS_SOURCE_ID)}"
+aks_provider_resource_id="$(
+  if [[ -n "${KUBEOPS_AKS_PROVIDER_RESOURCE_ID:-}" ]]; then
+    printf '%s' "$KUBEOPS_AKS_PROVIDER_RESOURCE_ID"
+  else
+    env_value KUBEOPS_AKS_PROVIDER_RESOURCE_ID
+  fi
+)"
 
 printf '%s\n' \
   'targets:' \
@@ -313,6 +324,20 @@ if [[ -n "$gke_context" && -n "$gke_source_id" && -n "$gke_provider_resource_id"
     "    ui_url: https://localhost:$gke_port" \
     '    username: kubeops' \
     '    password_env: ARGO_GKE_KUBERNETES_DEV_PASSWORD' \
+    >> "$TARGETS_FILE"
+fi
+
+if [[ -n "$aks_context" && -n "$aks_source_id" && -n "$aks_provider_resource_id" ]]; then
+  printf '%s\n' \
+    '' \
+    "  - source_id: $aks_source_id" \
+    "    provider_resource_id: $aks_provider_resource_id" \
+    "    server_url: https://localhost:$aks_port" \
+    '    token_env: ARGO_AKS_AZURE_SUBSCRIPTION_1_TOKEN' \
+    '    ca_file: ../config/argocd-local-ca.crt' \
+    "    ui_url: https://localhost:$aks_port" \
+    '    username: kubeops' \
+    '    password_env: ARGO_AKS_AZURE_SUBSCRIPTION_1_PASSWORD' \
     >> "$TARGETS_FILE"
 fi
 

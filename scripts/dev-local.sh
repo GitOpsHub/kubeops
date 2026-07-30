@@ -27,6 +27,9 @@ env_value() {
 GKE_CONTEXT="${KUBEOPS_GKE_CONTEXT:-$(env_value KUBEOPS_GKE_CONTEXT)}"
 GKE_PORT="${KUBEOPS_GKE_ARGO_PORT:-$(env_value KUBEOPS_GKE_ARGO_PORT)}"
 GKE_PORT="${GKE_PORT:-18083}"
+AKS_CONTEXT="${KUBEOPS_AKS_CONTEXT:-$(env_value KUBEOPS_AKS_CONTEXT)}"
+AKS_PORT="${KUBEOPS_AKS_ARGO_PORT:-$(env_value KUBEOPS_AKS_ARGO_PORT)}"
+AKS_PORT="${AKS_PORT:-18084}"
 
 cleanup() {
   local pid
@@ -61,6 +64,15 @@ if [[ -n "$GKE_CONTEXT" ]]; then
   fi
   start_process kubectl --context "$GKE_CONTEXT" -n "$ARGO_NAMESPACE" \
     port-forward "service/$ARGO_RELEASE-argocd-server" "$GKE_PORT:443" \
+    --address 127.0.0.1
+fi
+if [[ -n "$AKS_CONTEXT" ]]; then
+  if ! kubectl config get-contexts -o name | grep -Fxq "$AKS_CONTEXT"; then
+    echo "Configured AKS Kubernetes context not found: $AKS_CONTEXT" >&2
+    exit 1
+  fi
+  start_process kubectl --context "$AKS_CONTEXT" -n "$ARGO_NAMESPACE" \
+    port-forward "service/$ARGO_RELEASE-argocd-server" "$AKS_PORT:443" \
     --address 127.0.0.1
 fi
 start_process env GITHUB_TOKEN="$github_token" make dev-backend
