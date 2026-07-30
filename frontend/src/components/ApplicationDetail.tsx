@@ -1,24 +1,97 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom'
 import {
   ApiError,
   getApplicationOnboarding,
   getApplicationOnboardings,
+  getTargetResources,
   offboardApplicationOnboarding,
   scaleApplicationOnboarding,
   syncApplicationOnboarding,
   type ApplicationOnboarding,
+  type ApplicationDeployment,
+  type ResourceNode,
 } from '../api/onboarding'
+import type { ApplicationEndpoint, AppShellContext } from '../lib/app-shell'
+import { ApplicationManifestsModal } from './ApplicationManifestsModal'
 import { KubernetesLogo, ProviderLogo } from './BrandIcons'
 import { DeploymentTargetLogo } from './DeploymentTargetPanel'
-import { DeployStepper } from './DeployStepper'
 import { ResourceExplorer } from './ResourceExplorer'
+import { StatusBadge } from './StatusBadge'
 import { Tabs } from './Tabs'
 
 const pollIntervalMs = 5_000
 
 function releaseScope(record: ApplicationOnboarding) {
   return `${record.environment}-${record.region}`
+}
+
+function releaseSyncStatus(targets: ApplicationDeployment[]) {
+  const statuses = targets.map((target) =>
+    target.syncStatus.trim().toLowerCase().replace(/\s+/g, ''),
+  )
+  if (statuses.length > 0 && statuses.every((status) => status === 'synced')) {
+    return 'Synced' as const
+  }
+  if (statuses.some((status) => status === 'outofsync')) {
+    return 'Out of Sync' as const
+  }
+  return 'Sync pending' as const
+}
+
+function endpointLinks(nodes: ResourceNode[]) {
+  const endpoints = new Map<string, ApplicationEndpoint>()
+
+  for (const node of nodes) {
+    if (!node.exposure) continue
+    const ports = (node.exposure.ports ?? [])
+      .map((value) => {
+        const match = value.match(/^(\d+)\/TCP$/i)
+        return match ? Number(match[1]) : 0
+      })
+      .filter(Boolean)
+    const networkPorts = ports.length > 0 ? ports : [443]
+
+    for (const address of node.exposure.addresses) {
+      const trimmed = address.trim()
+      if (!trimmed || trimmed.includes('/') || trimmed.includes('@')) continue
+      const host = trimmed.includes(':') && !trimmed.startsWith('[') ? `[${trimmed}]` : trimmed
+
+      for (const port of networkPorts) {
+        const scheme = port === 443 ? 'https' : 'http'
+        const portSuffix =
+          (scheme === 'https' && port === 443) || (scheme === 'http' && port === 80)
+            ? ''
+            : `:${port}`
+        const url = `${scheme}://${host}${portSuffix}`
+        endpoints.set(url, { label: url, url })
+      }
+    }
+  }
+  return [...endpoints.values()]
+}
+
+function valuesFileLink(record: ApplicationOnboarding) {
+  const repositoryUrl = record.valuesRepositoryUrl
+    .trim()
+    .replace(/\/+$/, '')
+    .replace(/\.git$/, '')
+  if (!repositoryUrl) return null
+
+  const hasRegionValues = record.targets.some(
+    (target) => target.hasRegionValues && target.region === record.region,
+  )
+  const path = hasRegionValues
+    ? `${record.environment}/${record.region}/values.yaml`
+    : 'values.yaml'
+  const revision = record.valuesCommitSha.trim() || record.valuesRevision.trim() || 'HEAD'
+  const encodedPath = path.split('/').map(encodeURIComponent).join('/')
+
+  return {
+    path,
+    revision,
+    url: `${repositoryUrl}/blob/${encodeURIComponent(revision)}/${encodedPath}`,
+  }
 }
 
 async function getApplicationReleases(
@@ -69,6 +142,7 @@ function BackToApplications() {
 export function ApplicationDetail() {
   const { id = '' } = useParams()
   const navigate = useNavigate()
+  const { setApplicationTopbar } = useOutletContext<AppShellContext>()
   const [releases, setReleases] = useState<ApplicationOnboarding[]>([])
   const [selectedReleaseId, setSelectedReleaseId] = useState(id)
   const [loading, setLoading] = useState(true)
@@ -83,6 +157,8 @@ export function ApplicationDetail() {
   const [confirmingOffboard, setConfirmingOffboard] = useState(false)
   const [activeTab, setActiveTab] = useState('resources')
   const [resourceTargetId, setResourceTargetId] = useState('')
+  const [endpoints, setEndpoints] = useState<ApplicationEndpoint[]>([])
+  const [showingManifests, setShowingManifests] = useState(false)
 
   const load = useCallback(
     async (signal?: AbortSignal, quiet = false) => {
@@ -126,6 +202,52 @@ export function ApplicationDetail() {
     releases.find((release) => release.id === selectedReleaseId) ??
     releases.find((release) => release.id === id) ??
     null
+  const valuesFile = record ? valuesFileLink(record) : null
+
+  useEffect(() => {
+    setEndpoints([])
+  }, [record?.id])
+
+  useEffect(() => {
+    if (!record) {
+      setEndpoints([])
+      setApplicationTopbar(null)
+      return
+    }
+
+    const controller = new AbortController()
+    const baseState = {
+      name: record.name,
+      syncStatus: releaseSyncStatus(record.targets),
+    }
+    setApplicationTopbar({ ...baseState, endpoints: [] })
+
+    void Promise.all(
+      record.targets.map((target) =>
+        getTargetResources(record.id, target.id, controller.signal),
+      ),
+    )
+      .then((resources) => {
+        if (!controller.signal.aborted) {
+          const nextEndpoints = endpointLinks(resources.flat())
+          setEndpoints(nextEndpoints)
+          setApplicationTopbar({
+            ...baseState,
+            endpoints: nextEndpoints,
+          })
+        }
+      })
+      .catch((endpointError) => {
+        if (!(endpointError instanceof DOMException && endpointError.name === 'AbortError')) {
+          setApplicationTopbar({ ...baseState, endpoints: [] })
+        }
+      })
+
+    return () => {
+      controller.abort()
+      setApplicationTopbar(null)
+    }
+  }, [record, setApplicationTopbar])
 
   async function syncResources() {
     if (!record) return
@@ -303,34 +425,73 @@ export function ApplicationDetail() {
             </div>
           </div>
           <div className="detail-primary-actions" aria-label="Application actions">
-            <button
-              type="button"
-              className="primary-button"
-              disabled={action !== null || record.targets.length === 0}
-              onClick={() => void syncResources()}
+            <div
+              className="detail-action-state"
+              aria-label={`Application sync: ${releaseSyncStatus(record.targets)}`}
             >
-              {action === 'sync'
-                ? 'Deploying…'
-                : record.status === 'offboarded'
-                  ? 'Deploy again'
-                  : 'Deploy'}
-            </button>
-            <button
-              type="button"
-              className="ghost-button"
-              disabled={
-                action !== null ||
-                record.status === 'offboarded' ||
-                record.targets.length === 0
-              }
-              onClick={() => {
-                setScaleReplicas('')
-                setScaleError('')
-                setScaling(true)
-              }}
-            >
-              Scale
-            </button>
+              <span>Release state</span>
+              <StatusBadge
+                status={releaseSyncStatus(record.targets)}
+                tone={
+                  releaseSyncStatus(record.targets) === 'Synced'
+                    ? 'ok'
+                    : releaseSyncStatus(record.targets) === 'Out of Sync'
+                      ? 'warn'
+                      : 'idle'
+                }
+              />
+            </div>
+            <div className="detail-action-buttons">
+              <button
+                type="button"
+                className="ghost-button detail-manifests-button"
+                disabled={record.targets.length === 0}
+                onClick={() => setShowingManifests(true)}
+              >
+                <svg viewBox="0 0 18 18" aria-hidden="true">
+                  <path d="M5 2.5h6l3 3v10H5zM11 2.5v3h3M7.5 9h4M7.5 12h4" />
+                </svg>
+                Manifest
+              </button>
+              <button
+                type="button"
+                className="primary-button"
+                disabled={action !== null || record.targets.length === 0}
+                onClick={() => void syncResources()}
+              >
+                <svg className="detail-deploy-icon" viewBox="0 0 18 18" aria-hidden="true">
+                  <path d="M14.5 6A6 6 0 1 0 15 11M14.5 6V2.5M14.5 6H11M9 5.5v7M6.5 10 9 12.5l2.5-2.5" />
+                </svg>
+                {action === 'sync'
+                  ? 'Deploying…'
+                  : record.status === 'offboarded'
+                    ? 'Deploy again'
+                    : 'Deploy'}
+              </button>
+              <button
+                type="button"
+                className="ghost-button"
+                disabled={
+                  action !== null ||
+                  record.status === 'offboarded' ||
+                  record.targets.length === 0
+                }
+                onClick={() => {
+                  setScaleReplicas('')
+                  setScaleError('')
+                  setScaling(true)
+                }}
+              >
+                <svg
+                  className="scale-horizontal-icon"
+                  viewBox="0 0 16 16"
+                  aria-hidden="true"
+                >
+                  <path d="M7 8H2m0 0 3-3M2 8l3 3M9 8h5m0 0-3-3m3 3-3 3" />
+                </svg>
+                Scale
+              </button>
+            </div>
           </div>
           <div className="detail-target-summary" aria-label="Deployment clusters">
             <p className="section-label">
@@ -380,8 +541,41 @@ export function ApplicationDetail() {
             </div>
           </div>
         </div>
-        <DeployStepper targets={record.targets} />
       </header>
+
+      <section className="detail-endpoint-bar" aria-label="Application URLs">
+        <div className="detail-endpoint-label">
+          <span className="section-label">Public endpoints</span>
+          <strong>{endpoints.length || '—'}</strong>
+        </div>
+        {endpoints.length > 0 ? (
+          <nav className="detail-endpoint-links" aria-label="Application endpoints">
+            {endpoints.map((endpoint) => (
+              <a
+                key={endpoint.url}
+                href={endpoint.url}
+                target="_blank"
+                rel="noreferrer"
+                title={`Open ${endpoint.label}`}
+              >
+                {endpoint.label}
+                <span aria-hidden="true">↗</span>
+              </a>
+            ))}
+          </nav>
+        ) : (
+          <span className="detail-endpoint-empty">No external URL reported</span>
+        )}
+      </section>
+
+      {showingManifests && (
+        <ApplicationManifestsModal
+          onboardingId={record.id}
+          namespace={record.namespace}
+          targets={record.targets}
+          onClose={() => setShowingManifests(false)}
+        />
+      )}
 
       {scaling && (
         <div className="confirmation-backdrop" role="presentation">
@@ -584,11 +778,16 @@ export function ApplicationDetail() {
                       <dd className="mono">{record.chartRepoUrl}</dd>
                     </div>
                     <div>
-                      <dt>Values repository</dt>
+                      <dt>Values file</dt>
                       <dd>
-                        {record.valuesRepositoryUrl ? (
-                          <a href={record.valuesRepositoryUrl} target="_blank" rel="noreferrer">
-                            {record.valuesRepositoryName} ↗
+                        {valuesFile ? (
+                          <a
+                            href={valuesFile.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            title={`Open ${valuesFile.path} at ${valuesFile.revision}`}
+                          >
+                            {record.valuesRepositoryName}/{valuesFile.path} ↗
                           </a>
                         ) : (
                           '—'

@@ -1,5 +1,15 @@
 /* Fleet page: provider tabs, fleet stats, sources, sync activity. */
 
+.fleet-page {
+  display: grid;
+  gap: var(--space-6);
+  align-content: start;
+  width: 100%;
+  max-width: calc(1400px - var(--space-6) - var(--space-6));
+  margin-inline: auto;
+  min-width: 0;
+}
+
 .provider-console {
   display: grid;
   gap: var(--space-4);
@@ -43,6 +53,10 @@
   inset: auto var(--space-2) -1px;
   height: var(--rail-width);
   background: var(--provider-color);
+}
+
+.provider-button--all {
+  --provider-color: var(--accent);
 }
 
 .provider-button--aws {
@@ -377,6 +391,10 @@
 }
 
 @media (max-width: 720px) {
+  .fleet-page {
+    gap: var(--space-5);
+  }
+
   .inventory-filter-bar {
     grid-template-columns: 1fr;
   }

@@ -171,6 +171,8 @@ type fakeArgoClient struct {
 	// Resource-tree responses and the ref the last delete was asked for.
 	resources       []ResourceNode
 	manifest        string
+	desiredManifest string
+	desiredErr      error
 	resourceErr     error
 	deletedResource ResourceRef
 }
@@ -269,6 +271,13 @@ func (f *fakeArgoClient) ResourceManifest(
 ) (string, error) {
 	return f.manifest, f.resourceErr
 }
+func (f *fakeArgoClient) DesiredResourceManifest(
+	_ context.Context,
+	_, _ string,
+	_ ResourceRef,
+) (string, error) {
+	return f.desiredManifest, f.desiredErr
+}
 func (f *fakeArgoClient) DeleteResource(
 	_ context.Context,
 	_, _ string,
@@ -276,6 +285,41 @@ func (f *fakeArgoClient) DeleteResource(
 ) error {
 	f.deletedResource = ref
 	return f.resourceErr
+}
+
+func TestResourceManifestsAllowsControllerGeneratedResourceWithoutDesiredObject(t *testing.T) {
+	target := model.ApplicationDeployment{
+		ID: "target-1", SourceID: "gcp", ProviderResourceID: "projects/test/clusters/gke",
+		ArgoApplication: "nginx",
+	}
+	client := &fakeArgoClient{
+		manifest:   "apiVersion: v1\nkind: Pod\n",
+		desiredErr: ErrResourceNotFound,
+	}
+	service := &Service{
+		store: &fakeRepository{record: model.ApplicationOnboarding{
+			ID: "onboarding-1", Targets: []model.ApplicationDeployment{target},
+		}},
+		config: config.OnboardingConfig{
+			ArgoNamespace: "argo-cd", RequestTimeout: time.Second,
+		},
+		clients: map[string]ArgoClient{
+			targetKey(target.SourceID, target.ProviderResourceID): client,
+		},
+	}
+
+	comparison, err := service.ResourceManifests(
+		context.Background(),
+		"onboarding-1",
+		target.ID,
+		ResourceRef{Version: "v1", Kind: "Pod", Namespace: "nginx", Name: "nginx-123"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if comparison.LiveManifest != client.manifest || comparison.DesiredManifest != "" {
+		t.Fatalf("unexpected comparison: %#v", comparison)
+	}
 }
 
 func TestDefaultsIncludeValuesRepositoryCoordinates(t *testing.T) {

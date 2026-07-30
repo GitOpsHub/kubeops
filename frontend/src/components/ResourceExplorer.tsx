@@ -8,7 +8,9 @@ import {
   type ResourceRef,
 } from '../api/onboarding'
 import { useStoredPreference } from '../hooks/useStoredPreference'
+import { formatResourceManifest } from '../lib/resource-manifest'
 import { buildResourceTree } from '../lib/resource-tree'
+import { KubernetesResourceIcon } from './KubernetesResourceIcon'
 import { ResourceGraph } from './ResourceGraph'
 import { ResourceTable } from './ResourceTable'
 import { StatusBadge } from './StatusBadge'
@@ -168,12 +170,15 @@ export function ResourceExplorer({ onboardingId, target }: Props) {
       )}
 
       {selected && (
-        <ResourceDrawer
+        <ResourceManifestModal
           node={selected}
           onboardingId={onboardingId}
           targetId={target.id}
           onClose={() => setSelected(null)}
-          onDelete={() => setPendingDelete(selected)}
+          onDelete={() => {
+            setPendingDelete(selected)
+            setSelected(null)
+          }}
         />
       )}
 
@@ -222,7 +227,7 @@ export function ResourceExplorer({ onboardingId, target }: Props) {
   )
 }
 
-type DrawerProps = {
+type ModalProps = {
   node: ResourceNode
   onboardingId: string
   targetId: string
@@ -235,22 +240,20 @@ type DrawerProps = {
  * unreadable as-is. Anything that does not parse is shown untouched rather than
  * discarded.
  */
-function formatManifest(manifest: string) {
-  try {
-    return JSON.stringify(JSON.parse(manifest), null, 2)
-  } catch {
-    return manifest
-  }
-}
-
 /**
- * One detail surface for both views. A card on a positioned canvas has nowhere
- * to expand into, and sharing the drawer keeps the two views behaving alike.
+ * Selecting a resource opens its live YAML immediately in one focused modal.
+ * The graph and list share this surface so their behaviour cannot drift.
  */
-function ResourceDrawer({ node, onboardingId, targetId, onClose, onDelete }: DrawerProps) {
+function ResourceManifestModal({
+  node,
+  onboardingId,
+  targetId,
+  onClose,
+  onDelete,
+}: ModalProps) {
   const [manifest, setManifest] = useState('')
   const [manifestError, setManifestError] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const closeButton = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
@@ -262,111 +265,92 @@ function ResourceDrawer({ node, onboardingId, targetId, onClose, onDelete }: Dra
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
 
-  // A different resource is a different manifest, so the old one cannot linger.
   useEffect(() => {
+    const controller = new AbortController()
     setManifest('')
     setManifestError('')
-  }, [node.uid])
-
-  async function loadManifest() {
     setLoading(true)
-    setManifestError('')
-    try {
-      setManifest(formatManifest(await getResourceManifest(onboardingId, targetId, toRef(node))))
-    } catch (error) {
-      setManifestError(error instanceof Error ? error.message : 'The manifest is unavailable')
-    } finally {
-      setLoading(false)
-    }
-  }
+
+    void getResourceManifest(onboardingId, targetId, toRef(node), controller.signal)
+      .then((nextManifest) => {
+        if (!controller.signal.aborted) setManifest(formatResourceManifest(nextManifest))
+      })
+      .catch((error) => {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) {
+          setManifestError(error instanceof Error ? error.message : 'The manifest is unavailable')
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false)
+      })
+
+    return () => controller.abort()
+  }, [node, onboardingId, targetId])
 
   return (
-    <div className="drawer-backdrop" role="presentation" onMouseDown={onClose}>
-      <aside
-        className="detail-drawer"
+    <div className="resource-modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className="resource-modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby="resource-detail-title"
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <button
-          ref={closeButton}
-          className="drawer-close"
-          type="button"
-          onClick={onClose}
-          aria-label="Close resource details"
-        >
-          ×
-        </button>
-
-        <header className="drawer-identity">
-          <div>
-            <p className="section-label">{node.kind}</p>
-            <h2 id="resource-detail-title">{node.name}</h2>
+        <header className="resource-modal-header">
+          <div className="resource-modal-title">
+            <span className="resource-modal-mark" aria-hidden="true">
+              <KubernetesResourceIcon kind={node.kind} />
+            </span>
+            <div>
+              <p className="section-label">{node.kind} YAML</p>
+              <h2 id="resource-detail-title" title={node.name}>{node.name}</h2>
+            </div>
           </div>
         </header>
 
-        <dl className="fact-list">
-          <div>
-            <dt>API version</dt>
-            <dd className="mono">{node.group ? `${node.group}/${node.version}` : node.version}</dd>
-          </div>
-          <div>
-            <dt>Namespace</dt>
-            <dd className="mono">{node.namespace || 'cluster-scoped'}</dd>
-          </div>
-          <div>
-            <dt>Health</dt>
-            <dd>
-              {node.healthStatus && node.healthStatus !== 'Unknown' ? (
-                <StatusBadge status={node.healthStatus} />
-              ) : (
-                'Not reported'
-              )}
-            </dd>
-          </div>
-          <div>
-            <dt>Sync</dt>
-            <dd>{node.syncStatus || 'Not tracked directly'}</dd>
-          </div>
-          {node.images && node.images.length > 0 && (
-            <div>
-              <dt>Images</dt>
-              <dd className="mono">{node.images.join(', ')}</dd>
-            </div>
+        <div className="resource-modal-meta">
+          <span>{node.group ? `${node.group}/${node.version}` : node.version}</span>
+          <span>{node.namespace || 'cluster-scoped'}</span>
+          {node.healthStatus && node.healthStatus !== 'Unknown' && (
+            <StatusBadge status={node.healthStatus} />
           )}
-          {node.info?.map((item) => (
-            <div key={item.name}>
-              <dt>{item.name}</dt>
-              <dd className="mono">{item.value}</dd>
-            </div>
-          ))}
-        </dl>
-
-        {manifest ? (
-          <pre className="resource-manifest" aria-label={`Manifest for ${node.name}`}>
-            {manifest}
-          </pre>
-        ) : (
-          <div className="resource-manifest-actions">
-            <button
-              type="button"
-              className="ghost-button"
-              disabled={loading}
-              onClick={() => void loadManifest()}
-            >
-              {loading ? 'Loading manifest…' : 'Show live manifest'}
-            </button>
-            {manifestError && <span className="quiet-note">{manifestError}</span>}
-          </div>
-        )}
-
-        <div className="drawer-danger">
-          <button type="button" className="danger-button" onClick={onDelete}>
-            Delete resource
-          </button>
+          {node.syncStatus && <span>{node.syncStatus}</span>}
         </div>
-      </aside>
+
+        <div className="resource-modal-body">
+          {loading ? (
+            <div className="resource-modal-state" role="status">
+              <span className="loader" aria-hidden="true" />
+              Loading live YAML…
+            </div>
+          ) : manifestError ? (
+            <div className="resource-modal-state" role="alert">
+              {manifestError}
+            </div>
+          ) : (
+            <pre className="resource-manifest" aria-label={`YAML for ${node.name}`}>
+              {manifest}
+            </pre>
+          )}
+        </div>
+
+        <footer className="resource-modal-footer">
+          <button
+            type="button"
+            className="danger-button resource-modal-delete"
+            onClick={onDelete}
+            aria-label="Delete resource"
+            title="Delete resource"
+          >
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M3.5 5.5h13M8 3.5h4M5.5 5.5l.7 11h7.6l.7-11M8 8.5v5M12 8.5v5" />
+            </svg>
+          </button>
+          <button ref={closeButton} type="button" className="ghost-button" onClick={onClose}>
+            Close
+          </button>
+        </footer>
+      </section>
     </div>
   )
 }

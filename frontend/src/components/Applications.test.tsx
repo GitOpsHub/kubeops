@@ -318,6 +318,19 @@ describe('application detail', () => {
           ],
         }),
       ],
+      resources: [
+        buildResource({
+          group: '',
+          version: 'v1',
+          kind: 'Service',
+          name: 'payments-api-service',
+          exposure: {
+            type: 'LoadBalancer',
+            addresses: ['35.237.212.233'],
+            ports: ['80/TCP', '443/TCP'],
+          },
+        }),
+      ],
     })
     renderApp('/applications/onboarding-1')
 
@@ -330,8 +343,27 @@ describe('application detail', () => {
       'href',
       'https://argo.example.test/applications/payments-api',
     )
-    expect(screen.getByLabelText('Application state: partial')).toBeInTheDocument()
-    expect(screen.getByText('1 of 2 targets ready · 1 failed')).toBeInTheDocument()
+    const syncState = await screen.findByLabelText('Application sync: Out of Sync')
+    expect(within(syncState).getByText('Out of Sync')).toHaveClass('status-badge--warn')
+    const deployButton = screen.getByRole('button', { name: 'Deploy' })
+    expect(
+      syncState.compareDocumentPosition(deployButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: 'Scale' }).querySelector('.scale-horizontal-icon'),
+    ).not.toBeNull()
+    expect(screen.queryByText('Application state')).not.toBeInTheDocument()
+    expect(screen.queryByText('Awaiting sync')).not.toBeInTheDocument()
+    expect(
+      within(document.querySelector('.topbar') as HTMLElement).queryByText('payments-api'),
+    ).not.toBeInTheDocument()
+    const endpointBar = screen.getByRole('region', { name: 'Application URLs' })
+    expect(
+      await within(endpointBar).findByRole('link', { name: 'http://35.237.212.233' }),
+    ).toHaveAttribute('href', 'http://35.237.212.233')
+    expect(
+      within(endpointBar).getByRole('link', { name: 'https://35.237.212.233' }),
+    ).toHaveAttribute('href', 'https://35.237.212.233')
 
     // Credentials must stay untouched until the operator asks for them.
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('argo-access'))).toBe(false)
@@ -365,11 +397,94 @@ describe('application detail', () => {
     await user.click(screen.getByText('payments-api-1'))
     expect(screen.getByText('apps/v1')).toBeInTheDocument()
 
-    // The manifest is a separate request, made only when asked for.
-    await user.click(screen.getByRole('button', { name: 'Show live manifest' }))
-    expect(await screen.findByLabelText('Manifest for payments-api-1')).toHaveTextContent(
-      '"kind": "Deployment"',
+    // Selecting a resource loads its live definition directly as YAML.
+    expect(await screen.findByLabelText('YAML for payments-api-1')).toHaveTextContent(
+      'kind: Deployment',
     )
+  })
+
+  it('shows declarative manifests without Pods or ReplicaSets', async () => {
+    mockAPI({
+      applications: [
+        buildApplication({
+          targets: [
+            buildTarget({
+              status: 'healthy',
+              syncStatus: 'Synced',
+              healthStatus: 'Healthy',
+            }),
+          ],
+        }),
+      ],
+      resources: [
+        buildResource({ uid: 'deployment', kind: 'Deployment', name: 'payments-api' }),
+        buildResource({ uid: 'service', group: '', kind: 'Service', name: 'payments-service' }),
+        buildResource({ uid: 'pod', kind: 'Pod', name: 'payments-api-abc' }),
+        buildResource({ uid: 'replicaset', kind: 'ReplicaSet', name: 'payments-api-1' }),
+      ],
+      desiredManifest:
+        '{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"payments-api"},"spec":{"replicas":2}}',
+      manifest:
+        '{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"payments-api","uid":"generated"},"spec":{"replicas":3},"status":{"readyReplicas":3}}',
+    })
+    renderApp('/applications/onboarding-1')
+    const user = userEvent.setup()
+
+    const yamlButton = await screen.findByRole('button', { name: 'Manifest' })
+    const syncState = screen.getByLabelText('Application sync: Synced')
+    const syncBadge = within(syncState).getByText('Synced')
+    expect(
+      syncBadge.compareDocumentPosition(yamlButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(
+      yamlButton.compareDocumentPosition(
+        screen.getByRole('button', { name: 'Deploy' }),
+      ) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    await user.click(yamlButton)
+
+    const modal = await screen.findByRole('dialog', { name: 'Kubernetes manifests' })
+    expect(within(modal).getByText('Deployed to')).toBeInTheDocument()
+    expect(within(modal).getAllByText('prod-us-east')).toHaveLength(3)
+    expect(within(modal).getByText('payments')).toBeInTheDocument()
+    expect(within(modal).getAllByText('Synced').length).toBeGreaterThanOrEqual(1)
+    expect(
+      within(modal).queryByRole('combobox', { name: 'Resource manifest' }),
+    ).not.toBeInTheDocument()
+    expect(
+      within(modal).getByRole('tablist', { name: 'Resource manifests' }),
+    ).toBeInTheDocument()
+    expect(within(modal).getAllByRole('tab')).toHaveLength(2)
+    expect(
+      within(modal).queryByRole('tab', { name: /Pod payments-api-abc/ }),
+    ).not.toBeInTheDocument()
+    expect(
+      within(modal).queryByRole('tab', { name: /ReplicaSet payments-api-1/ }),
+    ).not.toBeInTheDocument()
+    const deploymentDiff = await within(modal).findByLabelText(
+      'Manifest diff for payments-api',
+    )
+    expect(deploymentDiff).toHaveTextContent('Helm rendered')
+    expect(deploymentDiff).toHaveTextContent('replicas: 2')
+    expect(deploymentDiff).toHaveTextContent('replicas: 3')
+    expect(deploymentDiff).not.toHaveTextContent('uid: generated')
+    expect(
+      within(modal).getByRole('button', { name: 'Generated fields hidden' }),
+    ).toHaveAttribute('aria-pressed', 'true')
+
+    await user.click(
+      within(modal).getByRole('button', { name: 'Generated fields hidden' }),
+    )
+    expect(await within(modal).findByText('uid: generated')).toBeInTheDocument()
+
+    await user.click(
+      within(modal).getByRole('tab', { name: /Service payments-service/ }),
+    )
+    expect(
+      await within(modal).findByLabelText('Manifest diff for payments-service'),
+    ).toBeInTheDocument()
+    await user.click(within(modal).getByRole('button', { name: 'Close' }))
+    expect(screen.queryByRole('dialog', { name: 'Kubernetes manifests' })).not.toBeInTheDocument()
   })
 
   it('deletes a resource only after the warning is confirmed', async () => {
@@ -484,7 +599,7 @@ describe('application detail', () => {
     expect(names()).toEqual(['api-a', 'api-b'])
   })
 
-  it('opens the same detail drawer from a graph card', async () => {
+  it('opens the same YAML modal from a graph card', async () => {
     mockAPI({
       applications: [
         buildApplication({ targets: [buildTarget({ id: 'target-1', region: 'us-east-1' })] }),
@@ -497,12 +612,20 @@ describe('application detail', () => {
     await user.click(await screen.findByRole('tab', { name: 'Kubernetes resources' }))
     await user.click(await screen.findByRole('button', { name: /payments-api/ }))
 
-    const drawer = await screen.findByRole('dialog')
-    expect(within(drawer).getByRole('heading', { name: 'payments-api' })).toBeInTheDocument()
-    expect(within(drawer).getByText('apps/v1')).toBeInTheDocument()
+    const modal = await screen.findByRole('dialog')
+    expect(within(modal).getByRole('heading', { name: 'payments-api' })).toBeInTheDocument()
+    expect(within(modal).getByText('apps/v1')).toBeInTheDocument()
+    expect(within(modal).getByRole('button', { name: 'Close' })).toBeInTheDocument()
+    expect(within(modal).getAllByRole('button', { name: 'Close' })).toHaveLength(1)
+    expect(
+      within(modal).getByRole('button', { name: 'Delete resource' }).querySelector('svg'),
+    ).not.toBeNull()
+    expect(await within(modal).findByLabelText('YAML for payments-api')).toHaveTextContent(
+      'kind: Deployment',
+    )
 
-    // Deleting from the graph goes through the drawer, then the same warning.
-    await user.click(within(drawer).getByRole('button', { name: 'Delete resource' }))
+    // Deleting from the graph goes through the modal, then the same warning.
+    await user.click(within(modal).getByRole('button', { name: 'Delete resource' }))
     expect(
       within(screen.getByRole('alertdialog')).getByText(/recreates it on the next sync/),
     ).toBeInTheDocument()
@@ -512,7 +635,13 @@ describe('application detail', () => {
     mockAPI({
       applications: [
         buildApplication({
-          targets: [buildTarget({ id: 'target-1', region: 'us-east-1' })],
+          targets: [
+            buildTarget({
+              id: 'target-1',
+              region: 'us-east-1',
+              hasRegionValues: true,
+            }),
+          ],
         }),
       ],
     })
@@ -530,6 +659,14 @@ describe('application detail', () => {
 
     await user.click(screen.getByRole('tab', { name: 'Chart & values' }))
     expect(screen.getByText('global-app 1.2.3')).toBeInTheDocument()
+    expect(
+      screen.getByRole('link', {
+        name: 'payments-api/prod/us-east-1/values.yaml ↗',
+      }),
+    ).toHaveAttribute(
+      'href',
+      'https://github.com/GitOpsHub/payments-api/blob/commit-1/prod/us-east-1/values.yaml',
+    )
     expect(
       screen.getByRole('article', { name: 'Deployment target prod-us-east' }),
     ).toBeInTheDocument()
@@ -767,9 +904,7 @@ describe('application detail', () => {
     const { fetchMock, state } = mockAPI({ applications: [buildApplication()] })
     renderApp('/applications/onboarding-1')
 
-    await waitFor(() => {
-      expect(screen.getAllByText('progressing').length).toBeGreaterThan(0)
-    })
+    await screen.findByLabelText('Application sync: Out of Sync')
     const initialCalls = fetchMock.mock.calls.length
 
     state.applications = [
@@ -788,7 +923,7 @@ describe('application detail', () => {
     await waitFor(() => {
       expect(fetchMock.mock.calls.length).toBeGreaterThan(initialCalls)
     })
-    expect(await screen.findByLabelText('Application state: healthy')).toBeInTheDocument()
+    expect(await screen.findByLabelText('Application sync: Synced')).toBeInTheDocument()
     expect(screen.queryByText(/Every target is synced and healthy./)).not.toBeInTheDocument()
   })
 
@@ -878,7 +1013,7 @@ describe('application onboarding form', () => {
     expect(
       await screen.findByRole('heading', { name: 'payments-api', level: 1 }),
     ).toBeInTheDocument()
-    expect(screen.getAllByText('progressing').length).toBeGreaterThan(0)
+    expect(screen.getByLabelText('Application sync: Out of Sync')).toBeInTheDocument()
     expect(screen.getByText('registry.example.test/payments-api:2.4.1')).toBeInTheDocument()
     expect(screen.getByText('payments-api-prod-us-east-1')).toBeInTheDocument()
   })

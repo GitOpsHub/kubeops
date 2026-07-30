@@ -43,7 +43,12 @@ type ApplicationOnboarder interface {
 	) (model.ApplicationOnboardingPage, error)
 	Defaults() onboarding.Defaults
 	Resources(context.Context, string, string) ([]onboarding.ResourceNode, error)
-	ResourceManifest(context.Context, string, string, onboarding.ResourceRef) (string, error)
+	ResourceManifests(
+		context.Context,
+		string,
+		string,
+		onboarding.ResourceRef,
+	) (onboarding.ResourceManifestComparison, error)
 	DeleteResource(context.Context, string, string, onboarding.ResourceRef) error
 }
 
@@ -458,14 +463,14 @@ func (api *API) applicationResourceManifest(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "kind, name, and version are required")
 		return
 	}
-	manifest, err := api.onboarder.ResourceManifest(
+	manifests, err := api.onboarder.ResourceManifests(
 		r.Context(), r.PathValue("id"), r.PathValue("targetId"), ref,
 	)
 	if err != nil {
 		api.writeResourceError(w, err, "read application resource manifest")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"manifest": manifest})
+	writeJSON(w, http.StatusOK, manifests)
 }
 
 func (api *API) deleteApplicationResource(w http.ResponseWriter, r *http.Request) {

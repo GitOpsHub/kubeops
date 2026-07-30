@@ -380,6 +380,43 @@ func (s *Service) ResourceManifest(
 	return client.ResourceManifest(callCtx, target.ArgoApplication, s.config.ArgoNamespace, ref)
 }
 
+type ResourceManifestComparison struct {
+	DesiredManifest string `json:"desiredManifest"`
+	LiveManifest    string `json:"manifest"`
+}
+
+// ResourceManifests returns the Helm-rendered desired object beside the live
+// cluster object so callers can present reconciliation drift accurately.
+func (s *Service) ResourceManifests(
+	ctx context.Context,
+	onboardingID string,
+	targetID string,
+	ref ResourceRef,
+) (ResourceManifestComparison, error) {
+	target, client, err := s.target(ctx, onboardingID, targetID)
+	if err != nil {
+		return ResourceManifestComparison{}, err
+	}
+	callCtx, cancel := context.WithTimeout(ctx, s.config.RequestTimeout)
+	defer cancel()
+	live, err := client.ResourceManifest(
+		callCtx, target.ArgoApplication, s.config.ArgoNamespace, ref,
+	)
+	if err != nil {
+		return ResourceManifestComparison{}, err
+	}
+	desired, err := client.DesiredResourceManifest(
+		callCtx, target.ArgoApplication, s.config.ArgoNamespace, ref,
+	)
+	if err != nil && !errors.Is(err, ErrResourceNotFound) {
+		return ResourceManifestComparison{}, err
+	}
+	return ResourceManifestComparison{
+		DesiredManifest: desired,
+		LiveManifest:    live,
+	}, nil
+}
+
 // DeleteResource removes one live resource from its cluster. Anything still
 // declared in Git comes back on the next sync, which the caller is told.
 func (s *Service) DeleteResource(

@@ -10,6 +10,7 @@ import {
   getSyncRuns,
   queueSourceSync,
 } from '../api/inventory'
+import type { AppShellContext } from '../lib/app-shell'
 import { KubernetesLogo, ProviderLogo } from './BrandIcons'
 import { ClusterDetailDrawer } from './ClusterDetailDrawer'
 import { StatusBadge } from './StatusBadge'
@@ -45,9 +46,7 @@ function clusterCountLabel(count: number) {
 }
 
 export function FleetDashboard() {
-  const { onLatestRunChange } = useOutletContext<{
-    onLatestRunChange: (run: SyncRun | null) => void
-  }>()
+  const { onLatestRunChange } = useOutletContext<AppShellContext>()
   const [sources, setSources] = useState<CloudSource[]>([])
   const [clusters, setClusters] = useState<Cluster[]>([])
   const [runs, setRuns] = useState<SyncRun[]>([])
@@ -141,8 +140,16 @@ export function FleetDashboard() {
 
   function selectProvider(nextProvider: Provider) {
     updateFilter(() => {
-      setProvider(nextProvider === provider ? '' : nextProvider)
+      setProvider(nextProvider)
       setProviderSearch('')
+    })
+  }
+
+  function selectAllProviders() {
+    updateFilter(() => {
+      setProvider('')
+      setProviderSearch('')
+      setGlobalSearch('')
     })
   }
 
@@ -154,10 +161,10 @@ export function FleetDashboard() {
   }
 
   return (
-    <>
+    <section className="fleet-page" aria-labelledby="fleet-heading">
       <header className="page-heading">
         <div>
-          <h1>Fleet control center</h1>
+          <h1 id="fleet-heading">Fleet control center</h1>
         </div>
         <div className="fleet-stats">
           <div
@@ -197,6 +204,19 @@ export function FleetDashboard() {
         <h2 id="provider-filter-heading" className="sr-only">Filter by provider</h2>
 
         <div className="provider-selector" role="group" aria-label="Filter by cloud provider">
+          <button
+            type="button"
+            className={`provider-button provider-button--all ${
+              provider === '' ? 'is-selected' : ''
+            }`}
+            onClick={selectAllProviders}
+            aria-pressed={provider === ''}
+            aria-label={`All, ${clusterCountLabel(fleetTotal)}`}
+          >
+            <KubernetesLogo className="provider-logo" />
+            <strong>All</strong>
+            <small>{fleetTotal}</small>
+          </button>
           {providers.map((item) => (
             <button
               type="button"
@@ -521,6 +541,6 @@ export function FleetDashboard() {
           onClose={() => setSelectedCluster(null)}
         />
       )}
-    </>
+    </section>
   )
 }

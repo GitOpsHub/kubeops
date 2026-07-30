@@ -65,6 +65,7 @@ export type MockState = {
   argoAccessStatus: number
   resources: ResourceNode[]
   manifest: string
+  desiredManifest: string
   /** Refs the UI asked to delete, in order. */
   deletedResources: ResourceRef[]
   scaledReplicas: number | null
@@ -96,6 +97,8 @@ export function mockAPI(initial: Partial<MockState> = {}) {
     argoAccessStatus: initial.argoAccessStatus ?? 200,
     resources: initial.resources ?? [],
     manifest: initial.manifest ?? '{"kind":"Deployment"}',
+    desiredManifest:
+      initial.desiredManifest ?? initial.manifest ?? '{"kind":"Deployment"}',
     deletedResources: [],
     scaledReplicas: initial.scaledReplicas ?? null,
   }
@@ -122,7 +125,10 @@ export function mockAPI(initial: Partial<MockState> = {}) {
         return new Response(null, { status: 204 })
       }
       if (manifestSuffix) {
-        return Response.json({ manifest: state.manifest })
+        return Response.json({
+          manifest: state.manifest,
+          desiredManifest: state.desiredManifest,
+        })
       }
       return Response.json({ items: state.resources })
     }
