@@ -31,6 +31,16 @@ control. Press Ctrl-C to stop the local processes. Override the defaults with
 `KUBEOPS_DOCKER_CONTEXT`, `KUBEOPS_MINIKUBE_CONTEXT`,
 `KUBEOPS_DOCKER_ARGO_PORT`, or `KUBEOPS_MINIKUBE_ARGO_PORT`.
 
+Argo CD is reached over `kubectl` port-forwards on localhost, one per target
+in `config/argo-targets.yaml`: `18081` for docker-desktop and `18082` for
+minikube. Remote clusters are opt-in — set `KUBEOPS_GKE_CONTEXT` or
+`KUBEOPS_AKS_CONTEXT` in `.env` (with optional `KUBEOPS_GKE_ARGO_PORT` and
+`KUBEOPS_AKS_ARGO_PORT`, default `18083` and `18084`) to forward a GKE or AKS
+Argo CD as well. A target whose kube context is missing is skipped rather than
+failing the others. `make dev` supervises the forwards and restarts any that
+drop, so a laptop suspend or a rescheduled Argo CD server pod no longer leaves
+every Argo CD operation failing with connection refused.
+
 To discard and recreate the complete local environment, run:
 
 ```sh
@@ -65,6 +75,21 @@ To run only one application process:
 make dev-backend
 make dev-frontend
 ```
+
+These start no port-forwards, so Argo CD is unreachable and onboarding, sync,
+and resource views fail with connection refused until the forwards are running.
+Start and manage them separately:
+
+```sh
+make argo-forward          # start the supervised forwards (safe to re-run)
+make argo-forward-status   # show which targets are reachable
+make argo-forward-stop     # tear them down
+```
+
+`make argo-forward` waits for each Argo CD endpoint to answer before reporting
+success and writes per-target logs to the ignored `.dev/argo-forwards/`
+directory. `make dev` manages the same forwards on its own, so the targets above
+are only needed when the API runs outside it.
 
 Open `http://localhost:5173`. Database migrations run automatically when the API starts.
 

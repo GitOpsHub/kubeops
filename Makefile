@@ -1,4 +1,4 @@
-.PHONY: db-up db-down db-destroy dev dev-setup dev-recreate dev-argocd dev-frontend dev-backend test test-db test-integration test-chart lint build
+.PHONY: db-up db-down db-destroy dev dev-setup dev-recreate dev-argocd argo-forward argo-forward-stop argo-forward-status dev-frontend dev-backend test test-db test-integration test-chart lint build
 
 # Integration tests TRUNCATE every table, so they run against their own
 # database rather than the `kubeops` database the local dev stack uses.
@@ -18,6 +18,16 @@ dev: dev-setup
 	./scripts/dev-local.sh
 
 dev-setup: db-up dev-argocd
+
+# Argo CD port-forwards on their own, for when the API runs outside `make dev`.
+argo-forward:
+	./scripts/argo-port-forward.sh start
+
+argo-forward-stop:
+	./scripts/argo-port-forward.sh stop
+
+argo-forward-status:
+	./scripts/argo-port-forward.sh status
 
 dev-recreate:
 	$(MAKE) db-destroy
