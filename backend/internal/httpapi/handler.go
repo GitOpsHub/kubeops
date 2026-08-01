@@ -87,6 +87,8 @@ func newHandler(
 ) http.Handler {
 	api := &API{config: cfg, store: repository, manager: manager, onboarder: onboarder}
 	mux := http.NewServeMux()
+	// {$} matches only the bare root so unknown paths still fall through to 404.
+	mux.HandleFunc("GET /{$}", api.health)
 	mux.HandleFunc("GET /api/health", api.health)
 	mux.HandleFunc("GET /api/ready", api.ready)
 	mux.HandleFunc("GET /api/clusters", api.clusters)
