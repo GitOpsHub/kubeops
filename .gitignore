@@ -157,3 +157,4 @@ config/.argocd-local-tls/
 # Local tool state
 .claude/settings.local.json
 .serena/
+.dev/

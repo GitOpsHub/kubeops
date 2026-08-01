@@ -51,30 +51,17 @@ if [[ -z "$github_token" ]] && command -v gh >/dev/null 2>&1; then
 fi
 
 cd "$ROOT_DIR"
-start_process kubectl --context "$DOCKER_CONTEXT" -n "$ARGO_NAMESPACE" \
-  port-forward "service/$ARGO_RELEASE-argocd-server" "$DOCKER_PORT:443" \
-  --address 127.0.0.1
-start_process kubectl --context "$MINIKUBE_CONTEXT" -n "$ARGO_NAMESPACE" \
-  port-forward "service/$ARGO_RELEASE-argocd-server" "$MINIKUBE_PORT:443" \
-  --address 127.0.0.1
-if [[ -n "$GKE_CONTEXT" ]]; then
-  if ! kubectl config get-contexts -o name | grep -Fxq "$GKE_CONTEXT"; then
-    echo "Configured GKE Kubernetes context not found: $GKE_CONTEXT" >&2
-    exit 1
-  fi
-  start_process kubectl --context "$GKE_CONTEXT" -n "$ARGO_NAMESPACE" \
-    port-forward "service/$ARGO_RELEASE-argocd-server" "$GKE_PORT:443" \
-    --address 127.0.0.1
-fi
-if [[ -n "$AKS_CONTEXT" ]]; then
-  if ! kubectl config get-contexts -o name | grep -Fxq "$AKS_CONTEXT"; then
-    echo "Configured AKS Kubernetes context not found: $AKS_CONTEXT" >&2
-    exit 1
-  fi
-  start_process kubectl --context "$AKS_CONTEXT" -n "$ARGO_NAMESPACE" \
-    port-forward "service/$ARGO_RELEASE-argocd-server" "$AKS_PORT:443" \
-    --address 127.0.0.1
-fi
+# Supervised forwards: a dropped connection restarts itself instead of silently
+# leaving every Argo CD call in the session failing with "connection refused".
+KUBEOPS_DOCKER_CONTEXT="$DOCKER_CONTEXT" \
+  KUBEOPS_MINIKUBE_CONTEXT="$MINIKUBE_CONTEXT" \
+  KUBEOPS_DOCKER_ARGO_PORT="$DOCKER_PORT" \
+  KUBEOPS_MINIKUBE_ARGO_PORT="$MINIKUBE_PORT" \
+  KUBEOPS_GKE_CONTEXT="$GKE_CONTEXT" KUBEOPS_GKE_ARGO_PORT="$GKE_PORT" \
+  KUBEOPS_AKS_CONTEXT="$AKS_CONTEXT" KUBEOPS_AKS_ARGO_PORT="$AKS_PORT" \
+  KUBEOPS_ARGO_NAMESPACE="$ARGO_NAMESPACE" KUBEOPS_ARGO_RELEASE="$ARGO_RELEASE" \
+  ./scripts/argo-port-forward.sh start
+trap 'cleanup; ./scripts/argo-port-forward.sh stop >/dev/null 2>&1 || true' EXIT INT TERM
 start_process env GITHUB_TOKEN="$github_token" make dev-backend
 start_process make dev-frontend
 
