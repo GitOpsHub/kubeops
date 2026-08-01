@@ -246,6 +246,31 @@ kbd {
   justify-content: center;
 }
 
+/* A view that polls is never truly stuck, so a failed attempt keeps the loading
+   message and adds what went wrong under it — one stable panel instead of a
+   spinner and an error banner trading places on every poll. */
+.retry-state {
+  display: grid;
+  gap: var(--space-2);
+  place-items: center;
+  padding: var(--space-8) var(--space-5);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+.retry-state strong {
+  color: var(--text);
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.retry-state > span:not(.loader) {
+  max-width: 60ch;
+  color: var(--text-subtle);
+  font-size: var(--text-xs);
+}
+
 .pagination {
   display: flex;
   gap: var(--space-4);

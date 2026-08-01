@@ -74,3 +74,22 @@ export function age(createdAt: string, now = Date.now()) {
   if (hours < 48) return `${hours}h`
   return `${Math.round(hours / 24)}d`
 }
+
+/**
+ * Conversational age for a lifecycle event, such as "12m ago". Anything older
+ * than a month reads as a date instead, where "43d ago" stops being useful.
+ */
+export function relativeTime(value: string, now = Date.now()) {
+  const at = new Date(value).getTime()
+  if (Number.isNaN(at)) return ''
+  const seconds = Math.round((now - at) / 1000)
+  if (seconds < 0) return 'scheduled'
+  if (seconds < 45) return 'just now'
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.round(hours / 24)
+  if (days <= 30) return `${days}d ago`
+  return new Date(at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+}

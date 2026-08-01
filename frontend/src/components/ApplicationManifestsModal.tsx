@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   getResourceManifestComparison,
   getTargetResources,
@@ -9,6 +9,7 @@ import {
 import { buildManifestDiff, prepareManifestPair } from '../lib/resource-diff'
 import { KubernetesResourceIcon } from './KubernetesResourceIcon'
 import { StatusBadge } from './StatusBadge'
+import { Dialog, DialogClose, DialogDescription, DialogTitle } from './ui/Dialog'
 
 type Props = {
   onboardingId: string
@@ -53,20 +54,10 @@ export function ApplicationManifestsModal({
   const [resourcesLoading, setResourcesLoading] = useState(true)
   const [manifestLoading, setManifestLoading] = useState(false)
   const [error, setError] = useState('')
-  const closeButton = useRef<HTMLButtonElement>(null)
   const target =
     targets.find((candidate) => candidate.id === selectedTargetId) ?? targets[0]
   const targetId = target?.id ?? ''
   const selectedNode = nodes.find((node) => node.uid === selectedUid) ?? nodes[0]
-
-  useEffect(() => {
-    closeButton.current?.focus()
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [onClose])
 
   useEffect(() => {
     if (!targetId) return
@@ -154,21 +145,23 @@ export function ApplicationManifestsModal({
   const generatedResource = !desiredManifest.trim()
 
   return (
-    <div className="resource-modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section
-        className="resource-modal application-manifests-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="application-manifests-title"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
+    <Dialog
+      open
+      onOpenChange={(next) => !next && onClose()}
+      backdropClassName="resource-modal-backdrop"
+      className="resource-modal application-manifests-modal"
+    >
         <header className="application-manifests-header">
           <div>
             <p className="section-label">Reconciliation diff</p>
-            <h2 id="application-manifests-title">Kubernetes manifests</h2>
-            <p className="application-manifests-subtitle">
-              Compare Helm output with the object running in the cluster.
-            </p>
+            <DialogTitle asChild>
+              <h2>Kubernetes manifests</h2>
+            </DialogTitle>
+            <DialogDescription asChild>
+              <p className="application-manifests-subtitle">
+                Compare Helm output with the object running in the cluster.
+              </p>
+            </DialogDescription>
           </div>
           <div className="application-manifests-deployment">
             <span className="resource-modal-mark" aria-hidden="true">
@@ -319,11 +312,12 @@ export function ApplicationManifestsModal({
           <span>
             {nodes.length} {nodes.length === 1 ? 'resource' : 'resources'} · {deploymentSync}
           </span>
-          <button ref={closeButton} type="button" className="ghost-button" onClick={onClose}>
-            Close
-          </button>
+          <DialogClose asChild>
+            <button type="button" className="ghost-button">
+              Close
+            </button>
+          </DialogClose>
         </footer>
-      </section>
-    </div>
+    </Dialog>
   )
 }

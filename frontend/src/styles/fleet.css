@@ -114,18 +114,34 @@
 
 /* Fleet stats ---------------------------------------------------------- */
 
+.fleet-heading {
+  align-items: flex-end;
+}
+
+/* The metric strip is the page's one piece of at-a-glance state, so it holds a
+   row of its own rather than competing with the title for the same line when
+   the window narrows. */
 .fleet-stats {
   display: flex;
   gap: var(--space-5);
   align-items: stretch;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .fleet-metric {
   display: grid;
   gap: 2px;
+  min-width: 0;
   padding-left: var(--space-4);
   border-left: var(--rail-width) solid var(--accent);
+}
+
+.fleet-metric > span,
+.fleet-metric small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .fleet-metric:nth-child(2) {
@@ -191,12 +207,80 @@
   background: var(--err);
 }
 
+/* Inventory table ------------------------------------------------------ */
+
+/* Provider, location, version, health, endpoint, and nodes each held a column,
+   which left nothing for the cluster name that identifies the row. Related
+   attributes now share a cell and the short columns get fixed widths. */
+.inventory-section table {
+  min-width: 820px;
+  table-layout: fixed;
+}
+
+.inventory-section .col-cluster {
+  width: auto;
+}
+
+.inventory-section .col-provider {
+  width: 150px;
+}
+
+.inventory-section .col-location {
+  width: 22%;
+  min-width: 150px;
+}
+
+.inventory-section .col-nodes {
+  width: 84px;
+}
+
+.inventory-section .col-health {
+  width: 140px;
+}
+
+.inventory-section .col-seen {
+  width: 152px;
+}
+
+/* "38 seconds ago" broke across two lines at a narrower width and made every
+   row in the table taller to hold it. */
+.inventory-section .col-seen {
+  white-space: nowrap;
+}
+
+.inventory-section .col-actions {
+  width: 96px;
+}
+
+@media (max-width: 1120px) {
+  .inventory-section .col-provider {
+    display: none;
+  }
+}
+
+@media (max-width: 940px) {
+  .inventory-section .col-nodes {
+    display: none;
+  }
+}
+
+@media (max-width: 820px) {
+  .inventory-section .col-seen {
+    display: none;
+  }
+
+  .inventory-section table {
+    min-width: 0;
+  }
+}
+
 /* Cluster identity cell ------------------------------------------------ */
 
 .cluster-name {
   display: inline-flex;
   gap: var(--space-3);
   align-items: center;
+  max-width: 100%;
   padding: 0;
   color: inherit;
   background: none;
@@ -206,12 +290,16 @@
 
 .cluster-name > span:last-child {
   display: grid;
+  min-width: 0;
 }
 
 .cluster-name strong {
+  overflow: hidden;
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cluster-name:hover strong {
@@ -219,8 +307,48 @@
 }
 
 .cluster-name small {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-subtle);
   font-size: var(--text-2xs);
+  white-space: nowrap;
+}
+
+/* Endpoint access is a two-value fact. It reads as a qualifier on the source,
+   not as a column an operator scans down. */
+.endpoint-tag {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  color: var(--text-muted);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-2xs);
+  font-style: normal;
+  text-transform: capitalize;
+}
+
+.location-cell {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.location-cell > span {
+  overflow: hidden;
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.location-cell small {
+  overflow: hidden;
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Sources and activity ------------------------------------------------- */
@@ -241,7 +369,7 @@
   display: grid;
   gap: var(--space-3);
   align-items: end;
-  grid-template-columns: minmax(240px, 1fr);
+  grid-template-columns: minmax(240px, 420px);
   margin-bottom: var(--space-4);
 }
 

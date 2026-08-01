@@ -3,10 +3,13 @@ import { buildResourceForest, type ResourceTreeNode } from './resource-tree'
 
 /** Geometry for a Kubernetes topology with ownership and traffic relationships. */
 
-export const cardWidth = 176
-export const cardHeight = 96
-export const columnGap = 36
-export const rowGap = 18
+/* Argo CD's tree draws each object as a wide, short pill rather than a tile, so
+   a long Kubernetes name fits on one line and a deep ownership chain stays
+   readable without scrolling vertically. */
+export const cardWidth = 282
+export const cardHeight = 52
+export const columnGap = 60
+export const rowGap = 14
 
 type GraphResourceNode = ResourceTreeNode & {
   virtual?: boolean
@@ -43,7 +46,9 @@ export type ResourceGraphLayout = {
 
 const rowPitch = cardHeight + rowGap
 const columnPitch = cardWidth + columnGap
-const laneHeaderHeight = 34
+/* Lanes still drive the x maths, but they are no longer drawn as a labelled
+   header rail, so the first row starts at the top of the canvas. */
+const laneHeaderHeight = 0
 
 const laneByKind: Record<string, number> = {
   loadbalancer: 0,
