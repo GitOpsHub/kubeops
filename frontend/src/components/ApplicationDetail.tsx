@@ -208,6 +208,17 @@ export function ApplicationDetail() {
     setEndpoints([])
   }, [record?.id])
 
+  // The offboard dialog is modal, so Escape has to dismiss it — but never while
+  // the request is in flight, since the confirmation is the only progress signal.
+  useEffect(() => {
+    if (!confirmingOffboard) return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && action === null) setConfirmingOffboard(false)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [confirmingOffboard, action])
+
   useEffect(() => {
     if (!record) {
       setEndpoints([])
@@ -643,34 +654,57 @@ export function ApplicationDetail() {
       )}
 
       {confirmingOffboard && (
-        <section className="offboard-confirmation" aria-labelledby="offboard-heading">
-          <div>
-            <strong id="offboard-heading">Remove this application from every cluster?</strong>
-            <span>
-              Argo CD will delete the application and its managed resources from{' '}
+        <div
+          className="confirmation-backdrop"
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget && action === null) {
+              setConfirmingOffboard(false)
+            }
+          }}
+        >
+          <section
+            className="offboard-confirmation"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="offboard-heading"
+            aria-describedby="offboard-description"
+          >
+            <p className="section-label offboard-confirmation-eyebrow">Destructive action</p>
+            <h3 id="offboard-heading">Remove this application from every cluster?</h3>
+            <p id="offboard-description">
+              Argo CD will delete <strong>{record.name}</strong> and its managed resources from{' '}
               {record.targets.length} {record.targets.length === 1 ? 'cluster' : 'clusters'}.
               The GitHub repository and its values will remain available.
-            </span>
-          </div>
-          <div>
-            <button
-              type="button"
-              className="text-button"
-              disabled={action !== null}
-              onClick={() => setConfirmingOffboard(false)}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="danger-button"
-              disabled={action !== null}
-              onClick={() => void offboard()}
-            >
-              {action === 'offboard' ? 'Offboarding…' : 'Offboard application'}
-            </button>
-          </div>
-        </section>
+            </p>
+            <ul className="offboard-confirmation-targets">
+              {record.targets.map((target) => (
+                <li key={target.id}>
+                  <span>{target.clusterName}</span>
+                  <small>{target.region}</small>
+                </li>
+              ))}
+            </ul>
+            <div className="confirmation-actions">
+              <button
+                autoFocus
+                type="button"
+                disabled={action !== null}
+                onClick={() => setConfirmingOffboard(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="danger-button"
+                disabled={action !== null}
+                onClick={() => void offboard()}
+              >
+                {action === 'offboard' ? 'Offboarding…' : 'Offboard application'}
+              </button>
+            </div>
+          </section>
+        </div>
       )}
 
       {(actionMessage || actionError) && (
