@@ -200,6 +200,25 @@ func TestHealth(t *testing.T) {
 	}
 }
 
+func TestCORSPreflightAllowsDelete(t *testing.T) {
+	handler := NewHandler(config.Config{
+		CORSAllowedOrigin: "https://kubeops.example.test",
+	}, &fakeRepository{})
+	request := httptest.NewRequest(http.MethodOptions, "/api/application-onboardings/example", nil)
+	request.Header.Set("Origin", "https://kubeops.example.test")
+	request.Header.Set("Access-Control-Request-Method", http.MethodDelete)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("expected status 204, got %d", response.Code)
+	}
+	if methods := response.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(methods, http.MethodDelete) {
+		t.Fatalf("expected DELETE in allowed methods, got %q", methods)
+	}
+}
+
 func TestReadinessFailure(t *testing.T) {
 	handler := NewHandler(config.Config{}, &fakeRepository{readyErr: errors.New("offline")})
 	response := httptest.NewRecorder()

@@ -11,6 +11,7 @@ func TestLoadReadsEnvironmentFile(t *testing.T) {
 	t.Setenv("APP_ENV", "")
 	t.Setenv("BACKEND_HOST", "")
 	t.Setenv("BACKEND_PORT", "")
+	t.Setenv("PORT", "")
 	t.Setenv("CORS_ALLOWED_ORIGIN", "")
 
 	path := filepath.Join(t.TempDir(), ".env")
@@ -36,6 +37,7 @@ func TestLoadUsesDefaultsWhenFileDoesNotExist(t *testing.T) {
 	t.Setenv("APP_ENV", "")
 	t.Setenv("BACKEND_HOST", "")
 	t.Setenv("BACKEND_PORT", "")
+	t.Setenv("PORT", "")
 	t.Setenv("CORS_ALLOWED_ORIGIN", "")
 
 	cfg, err := Load(filepath.Join(t.TempDir(), "missing"))
@@ -44,6 +46,36 @@ func TestLoadUsesDefaultsWhenFileDoesNotExist(t *testing.T) {
 	}
 
 	if cfg.Address() != "127.0.0.1:8080" {
+		t.Fatalf("unexpected address: %s", cfg.Address())
+	}
+}
+
+func TestLoadUsesPlatformPort(t *testing.T) {
+	t.Setenv("BACKEND_HOST", "0.0.0.0")
+	t.Setenv("BACKEND_PORT", "")
+	t.Setenv("PORT", "3000")
+
+	cfg, err := Load(filepath.Join(t.TempDir(), "missing"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Address() != "0.0.0.0:3000" {
+		t.Fatalf("unexpected address: %s", cfg.Address())
+	}
+}
+
+func TestLoadPrefersExplicitBackendPort(t *testing.T) {
+	t.Setenv("BACKEND_HOST", "0.0.0.0")
+	t.Setenv("BACKEND_PORT", "9090")
+	t.Setenv("PORT", "3000")
+
+	cfg, err := Load(filepath.Join(t.TempDir(), "missing"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Address() != "0.0.0.0:9090" {
 		t.Fatalf("unexpected address: %s", cfg.Address())
 	}
 }

@@ -113,6 +113,42 @@ The root `.env`, `config/cloud-sources.yaml`, and `config/argo-targets.yaml`
 are ignored. Only variables prefixed with `VITE_` are exposed to browser code;
 never place secrets in them.
 
+## Vercel deployment
+
+The frontend and backend deploy as separate Vercel projects from this monorepo.
+Set their project root directories to `frontend` and `backend`, respectively.
+The frontend configuration enables Vite builds and SPA history fallback; the
+backend uses Vercel's native Go server detection and listens on Vercel's `PORT`.
+
+Configure the frontend project with:
+
+```text
+VITE_API_BASE_URL=https://<backend-domain>/api
+```
+
+Configure the backend project with its runtime variables from `.env`, replacing
+local URLs and paths with production values. At minimum it requires
+`DATABASE_URL`, `BACKEND_HOST=0.0.0.0`, `PUBLIC_BASE_URL`, and
+`CORS_ALLOWED_ORIGIN=https://<frontend-domain>`. Vercel supplies `PORT`; do not
+create that variable manually. Environment variable changes require a new
+deployment.
+
+GitHub Actions runs tests for pull requests and creates production deployments
+for pushes to `main`, after both test jobs pass. Create a GitHub Actions
+environment named `production`, then add these environment secrets under
+**Settings > Environments > production**:
+
+- `VERCEL_TOKEN` — a Vercel access token that can deploy both projects
+- `VERCEL_ORG_ID` — the Vercel team or account ID owning both projects
+- `VERCEL_BACKEND_PROJECT_ID` — the backend Vercel project ID
+- `VERCEL_FRONTEND_PROJECT_ID` — the frontend Vercel project ID
+
+The IDs are available in each project's Vercel settings or in
+`.vercel/project.json` after running `vercel link` locally. Keep `.vercel/`
+uncommitted. If the projects remain connected to Vercel's Git integration,
+disable its automatic deployments to avoid producing a second deployment for
+every GitHub Actions run.
+
 ## Application onboarding
 
 The reusable global chart lives in [`charts/kubeops`](charts/kubeops) and is

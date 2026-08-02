@@ -109,7 +109,7 @@ func Load(envFile string) (Config, error) {
 	return Config{
 		Environment:       valueOrDefault("APP_ENV", "development"),
 		Host:              valueOrDefault("BACKEND_HOST", "127.0.0.1"),
-		Port:              valueOrDefault("BACKEND_PORT", "8080"),
+		Port:              backendPort(),
 		CORSAllowedOrigin: valueOrDefault("CORS_ALLOWED_ORIGIN", "http://localhost:5173"),
 		DatabaseURL:       valueOrDefault("DATABASE_URL", "postgres://kubeops:kubeops@127.0.0.1:5432/kubeops?sslmode=disable"),
 		SyncInterval:      syncInterval,
@@ -118,6 +118,10 @@ func Load(envFile string) (Config, error) {
 		CloudSources:      sources,
 		Onboarding:        onboarding,
 	}, nil
+}
+
+func backendPort() string {
+	return valueOrDefault("BACKEND_PORT", valueOrDefault("PORT", "8080"))
 }
 
 func loadOnboardingConfig() (OnboardingConfig, error) {
@@ -136,7 +140,7 @@ func loadOnboardingConfig() (OnboardingConfig, error) {
 
 	publicBaseURL := strings.TrimSuffix(valueOrDefault("PUBLIC_BASE_URL", "http://"+
 		valueOrDefault("BACKEND_HOST", "127.0.0.1")+":"+
-		valueOrDefault("BACKEND_PORT", "8080")), "/")
+		backendPort()), "/")
 	if parsed, err := url.Parse(publicBaseURL); err != nil ||
 		parsed.Scheme == "" || parsed.Host == "" {
 		return OnboardingConfig{}, fmt.Errorf("PUBLIC_BASE_URL must be an absolute URL")
