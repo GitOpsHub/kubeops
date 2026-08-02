@@ -47,7 +47,7 @@ describe('applications list', () => {
     expect(within(row).getByText('partial')).toBeInTheDocument()
   })
 
-  it('expands a row into its deployment targets grouped by region', async () => {
+  it('expands a row into one flat table of deployment targets', async () => {
     mockAPI({
       applications: [
         buildApplication({
@@ -62,7 +62,7 @@ describe('applications list', () => {
     const user = userEvent.setup()
 
     expect(
-      screen.queryByRole('region', { name: 'Deployment scope prod-eu-west-1' }),
+      screen.queryByRole('table', { name: 'Deployment targets for payments-api' }),
     ).not.toBeInTheDocument()
 
     const expander = await screen.findByRole('button', {
@@ -70,19 +70,21 @@ describe('applications list', () => {
     })
     await user.click(expander)
 
-    const group = await screen.findByRole('region', {
-      name: 'Deployment scope prod-eu-west-1',
+    const targets = await screen.findByRole('table', {
+      name: 'Deployment targets for payments-api',
     })
-    expect(within(group).getByRole('article', { name: 'Target prod-eu' })).toBeInTheDocument()
-    expect(
-      screen.getByRole('region', { name: 'Deployment scope prod-us-east-1' }),
-    ).toBeInTheDocument()
+    const rows = within(targets).getAllByRole('row').slice(1)
+    expect(rows).toHaveLength(2)
+    // Regions sort within the environment, so eu-west-1 leads.
+    expect(within(rows[0]).getByText('eu-west-1')).toBeInTheDocument()
+    expect(within(rows[0]).getByText('prod-eu')).toBeInTheDocument()
+    expect(within(rows[1]).getByText('prod-us-east')).toBeInTheDocument()
 
     await user.click(
       screen.getByRole('button', { name: 'Hide deployment targets for payments-api' }),
     )
     expect(
-      screen.queryByRole('region', { name: 'Deployment scope prod-eu-west-1' }),
+      screen.queryByRole('table', { name: 'Deployment targets for payments-api' }),
     ).not.toBeInTheDocument()
   })
 
@@ -128,40 +130,32 @@ describe('applications list', () => {
     expect(applicationLinks).toHaveLength(1)
     const row = applicationLinks[0].closest('tr')
     expect(row).not.toBeNull()
-    expect(within(row!).getByText('ID onboarding-east')).toBeInTheDocument()
     expect(within(row!).getByText('aws-platform')).toBeInTheDocument()
     expect(within(row!).getByText('gcp-platform')).toBeInTheDocument()
     expect(within(row!).getByText('2 releases')).toBeInTheDocument()
     expect(within(row!).getByText('2 targets')).toBeInTheDocument()
-    expect(screen.getByText(/1 application · 2 releases/)).toBeInTheDocument()
+    expect(screen.getByText('Showing 1–1 of 1 application')).toBeInTheDocument()
 
     await user.click(
       screen.getByRole('button', { name: 'Show deployment targets for nginx' }),
     )
-    expect(
-      screen.getByRole('region', { name: 'Release dev-us-east-1' }),
-    ).toBeInTheDocument()
-    expect(
-      screen.getByRole('region', { name: 'Release dev-us-west-2' }),
-    ).toBeInTheDocument()
-    expect(screen.getByRole('region', { name: 'dev releases' })).toHaveTextContent(
-      '2 regional releases',
-    )
-    const eastRelease = screen.getByRole('region', { name: 'Release dev-us-east-1' })
-    expect(within(eastRelease).getByText('us-east-1')).toBeInTheDocument()
-    expect(within(eastRelease).queryByText('dev-us-east-1')).not.toBeInTheDocument()
+    // The UUID moves off the row and into the expanded header, where it is
+    // copied rather than scanned.
+    expect(screen.getByText('ID onboarding-east')).toBeInTheDocument()
+    const targets = screen.getByRole('table', { name: 'Deployment targets for nginx' })
+    const targetRows = within(targets).getAllByRole('row').slice(1)
+    expect(targetRows).toHaveLength(2)
+    expect(within(targetRows[0]).getByText('us-east-1')).toBeInTheDocument()
+    expect(within(targetRows[0]).getByText('nginx-dev-us-east-1')).toBeInTheDocument()
+    expect(within(targetRows[1]).getByText('us-west-2')).toBeInTheDocument()
 
-    await user.click(
-      within(eastRelease).getByRole('link', {
-        name: 'Open dev-us-east-1 application view',
-      }),
-    )
+    await user.click(screen.getByRole('link', { name: 'Open application →' }))
     expect(
       await screen.findByRole('button', { name: 'View dev-us-west-2 release' }),
     ).toBeInTheDocument()
   })
 
-  it('orders expanded releases by dev, qa, and prod environment', async () => {
+  it('orders expanded targets by dev, qa, and prod environment', async () => {
     mockAPI({
       applications: [
         buildApplication({
@@ -169,18 +163,21 @@ describe('applications list', () => {
           name: 'nginx',
           environment: 'prod',
           region: 'us-east-1',
+          targets: [buildTarget({ id: 'target-prod', onboardingId: 'prod-release' })],
         }),
         buildApplication({
           id: 'dev-release',
           name: 'nginx',
           environment: 'dev',
           region: 'us-east-2',
+          targets: [buildTarget({ id: 'target-dev', onboardingId: 'dev-release' })],
         }),
         buildApplication({
           id: 'qa-release',
           name: 'nginx',
           environment: 'qa',
           region: 'us-east-1',
+          targets: [buildTarget({ id: 'target-qa', onboardingId: 'qa-release' })],
         }),
       ],
     })
@@ -191,78 +188,143 @@ describe('applications list', () => {
       await screen.findByRole('button', { name: 'Show deployment targets for nginx' }),
     )
 
-    const environments = screen.getAllByRole('region', {
-      name: /^(dev|qa|prod) releases$/,
-    })
-    expect(environments.map((group) => group.getAttribute('aria-label'))).toEqual([
-      'dev releases',
-      'qa releases',
-      'prod releases',
-    ])
+    const targets = screen.getByRole('table', { name: 'Deployment targets for nginx' })
+    const rows = within(targets).getAllByRole('row').slice(1)
     expect(
-      within(environments[0]).getByRole('region', { name: 'Release dev-us-east-2' }),
-    ).toBeInTheDocument()
-    expect(
-      within(environments[1]).getByRole('region', { name: 'Release qa-us-east-1' }),
-    ).toBeInTheDocument()
-    expect(
-      within(environments[2]).getByRole('region', { name: 'Release prod-us-east-1' }),
-    ).toBeInTheDocument()
+      rows.map((row) => within(row).getAllByRole('cell')[0].textContent),
+    ).toEqual(['dev', 'qa', 'prod'])
   })
 
-  it('applies bookmarked filters from the URL', async () => {
-    const { fetchMock } = mockAPI({
-      applications: [buildApplication({ status: 'healthy' })],
+  it('filters by application status without truncating the matched application', async () => {
+    mockAPI({
+      applications: [
+        buildApplication({
+          id: 'nginx-east',
+          name: 'nginx',
+          environment: 'dev',
+          region: 'us-east-1',
+          status: 'healthy',
+          targets: [buildTarget({ id: 'target-east', onboardingId: 'nginx-east' })],
+        }),
+        buildApplication({
+          id: 'nginx-west',
+          name: 'nginx',
+          environment: 'dev',
+          region: 'us-west-2',
+          status: 'failed',
+          targets: [
+            buildTarget({
+              id: 'target-west',
+              onboardingId: 'nginx-west',
+              region: 'us-west-2',
+              clusterName: 'dev-us-west',
+            }),
+          ],
+        }),
+        buildApplication({ id: 'billing', name: 'billing-api', status: 'healthy' }),
+      ],
     })
-    renderApp('/applications?search=payments&status=healthy&page=2')
+    // Filtering releases server-side used to drop the failing half of nginx and
+    // leave the row claiming one healthy target.
+    renderApp('/applications?status=partial')
 
-    await waitFor(() => {
-      expect(
-        onboardingRequests(fetchMock).some(
-          (url) =>
-            url.includes('search=payments') &&
-            url.includes('status=healthy') &&
-            url.includes('pageSize=200'),
-        ),
-      ).toBe(true)
-    })
-    expect(screen.getByRole('searchbox', { name: /Search applications/ })).toHaveValue('payments')
-    expect(screen.getByRole('combobox', { name: 'Status' })).toHaveValue('healthy')
+    const row = (await screen.findByRole('link', { name: 'nginx' })).closest('tr')
+    expect(within(row!).getByText('2 releases')).toBeInTheDocument()
+    expect(within(row!).getByText('2 targets')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'billing-api' })).not.toBeInTheDocument()
   })
 
-  it('stores search and status filters in the URL', async () => {
-    const { fetchMock } = mockAPI({ applications: [buildApplication({ status: 'failed' })] })
+  it('sorts applications by status severity', async () => {
+    mockAPI({
+      applications: [
+        buildApplication({ id: 'alpha', name: 'alpha', status: 'healthy' }),
+        buildApplication({ id: 'bravo', name: 'bravo', status: 'failed' }),
+      ],
+    })
     renderApp('/applications')
     const user = userEvent.setup()
 
-    await user.type(await screen.findByRole('searchbox', { name: /Search applications/ }), 'pay')
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Status' }), 'failed')
+    const names = async () =>
+      (await screen.findAllByRole('link', { name: /^(alpha|bravo)$/ })).map(
+        (link) => link.textContent,
+      )
+    expect(await names()).toEqual(['alpha', 'bravo'])
 
-    await waitFor(() => {
-      expect(
-        onboardingRequests(fetchMock).some(
-          (url) => url.includes('search=pay') && url.includes('status=failed'),
-        ),
-      ).toBe(true)
-    })
+    await user.click(screen.getByRole('button', { name: 'Status' }))
+    expect(await names()).toEqual(['bravo', 'alpha'])
   })
 
-  it('pages through results', async () => {
+  it('applies bookmarked filters from the URL without filtering the fetch', async () => {
     const { fetchMock } = mockAPI({
-      applications: Array.from({ length: 25 }, (_, index) =>
-        buildApplication({ id: `onboarding-${index}`, name: `app-${index}` }),
+      applications: [
+        buildApplication({ status: 'healthy' }),
+        buildApplication({ id: 'billing', name: 'billing-api', namespace: 'billing' }),
+      ],
+    })
+    renderApp('/applications?search=payments&status=healthy')
+
+    expect(await screen.findByRole('link', { name: 'payments-api' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'billing-api' })).not.toBeInTheDocument()
+    expect(screen.getByRole('searchbox', { name: /Search applications/ })).toHaveValue('payments')
+    expect(screen.getByRole('combobox', { name: 'Status' })).toHaveValue('healthy')
+
+    const requests = onboardingRequests(fetchMock)
+    expect(requests.length).toBeGreaterThan(0)
+    expect(requests.every((url) => url.includes('pageSize=200'))).toBe(true)
+    expect(
+      requests.every((url) => !url.includes('search=') && !url.includes('status=')),
+    ).toBe(true)
+  })
+
+  it('debounces the search into the URL and filters in place', async () => {
+    const { fetchMock } = mockAPI({
+      applications: [
+        buildApplication(),
+        buildApplication({ id: 'billing', name: 'billing-api', namespace: 'billing' }),
+      ],
+    })
+    renderApp('/applications')
+    const user = userEvent.setup()
+
+    await user.type(await screen.findByRole('searchbox', { name: /Search applications/ }), 'bill')
+
+    // The chip is written from the URL, so seeing it proves the debounced write landed.
+    expect(await screen.findByLabelText('Remove name filter bill')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'billing-api' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'payments-api' })).not.toBeInTheDocument()
+
+    // Typing never refetches: the list is filtered in memory.
+    const before = onboardingRequests(fetchMock).length
+    await user.type(screen.getByRole('searchbox', { name: /Search applications/ }), 'ing')
+    await waitFor(() =>
+      expect(screen.getByLabelText('Remove name filter billing')).toBeInTheDocument(),
+    )
+    expect(onboardingRequests(fetchMock).length).toBe(before)
+  })
+
+  it('pages through results at the chosen page size', async () => {
+    const { fetchMock } = mockAPI({
+      applications: Array.from({ length: 60 }, (_, index) =>
+        buildApplication({
+          id: `onboarding-${index}`,
+          name: `app-${String(index).padStart(2, '0')}`,
+        }),
       ),
     })
     renderApp('/applications')
     const user = userEvent.setup()
 
-    expect(
-      await screen.findByText(/Page 1 of 2 · 25 applications · 25 releases/),
-    ).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Next' }))
+    expect(await screen.findByText('Showing 1–50 of 60 applications')).toBeInTheDocument()
 
-    expect(await screen.findByText(/Page 2 of 2/)).toBeInTheDocument()
-    expect(await screen.findByRole('link', { name: 'app-20' })).toBeInTheDocument()
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Applications per page' }),
+      '25',
+    )
+    expect(await screen.findByText('Showing 1–25 of 60 applications')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Next' }))
+    expect(await screen.findByText('Showing 26–50 of 60 applications')).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: 'app-30' })).toBeInTheDocument()
     expect(onboardingRequests(fetchMock).every((url) => url.includes('pageSize=200'))).toBe(true)
   })
 
@@ -282,13 +344,18 @@ describe('applications list', () => {
     expect(screen.queryByRole('tab', { name: 'Deployment targets' })).not.toBeInTheDocument()
   })
 
-  it('reports an unreachable applications API', async () => {
+  it('keeps loading and reports the failure when the applications API is unreachable', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
       Response.json({ error: 'database is unavailable' }, { status: 503 }),
     )
     renderApp('/applications')
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('database is unavailable')
+    const state = await screen.findByRole('status')
+    expect(state).toHaveTextContent('Loading applications…')
+    expect(state).toHaveTextContent('database is unavailable')
+    expect(within(state).getByRole('button', { name: 'Try again' })).toBeInTheDocument()
+    // The list still polls, so it must not claim the fleet is empty.
+    expect(screen.queryByText('No applications onboarded yet')).not.toBeInTheDocument()
   })
 })
 
@@ -856,12 +923,19 @@ describe('application detail', () => {
     renderApp('/applications/onboarding-1')
     const user = userEvent.setup()
 
-    await user.click(await screen.findByRole('tab', { name: 'Timeline' }))
-    await user.click(await screen.findByRole('button', { name: 'Offboard' }))
+    // Offboarding is destructive, so it lives behind the overflow menu rather
+    // than beside Deploy.
+    await user.click(await screen.findByRole('button', { name: 'More application actions' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Offboard' }))
     expect(
       screen.getByText(/The GitHub repository and its values will remain available/),
     ).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Offboard application' }))
+
+    // The confirmation stays disarmed until the application is named back.
+    const confirm = screen.getByRole('button', { name: 'Offboard application' })
+    expect(confirm).toBeDisabled()
+    await user.type(screen.getByRole('textbox'), 'payments-api')
+    await user.click(confirm)
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -934,14 +1008,16 @@ describe('application detail', () => {
     expect(await screen.findByText('Application not found')).toBeInTheDocument()
   })
 
-  it('reports a failing detail request', async () => {
+  it('keeps loading and reports the failure when the detail request fails', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
       Response.json({ error: 'database is unavailable' }, { status: 503 }),
     )
     renderApp('/applications/onboarding-1')
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('database is unavailable')
-    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()
+    const state = await screen.findByRole('status')
+    expect(state).toHaveTextContent('Loading application…')
+    expect(state).toHaveTextContent('database is unavailable')
+    expect(within(state).getByRole('button', { name: 'Try again' })).toBeInTheDocument()
   })
 })
 

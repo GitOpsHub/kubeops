@@ -162,9 +162,10 @@ export function FleetDashboard() {
 
   return (
     <section className="fleet-page" aria-labelledby="fleet-heading">
-      <header className="page-heading">
+      <header className="page-heading fleet-heading">
         <div>
           <h1 id="fleet-heading">Fleet control center</h1>
+          <p>Every cluster your connected cloud sources have discovered.</p>
         </div>
         <div className="fleet-stats">
           <div
@@ -350,15 +351,13 @@ export function FleetDashboard() {
               <table>
                 <thead>
                   <tr>
-                    <th>Cluster</th>
-                    <th>Cloud provider</th>
-                    <th>Location</th>
-                    <th>Version</th>
-                    <th>Health</th>
-                    <th>Endpoint</th>
-                    <th>Nodes</th>
-                    <th>Last seen</th>
-                    <th aria-label="Row actions" />
+                    <th className="col-cluster">Cluster</th>
+                    <th className="col-provider">Provider</th>
+                    <th className="col-location">Location</th>
+                    <th className="col-nodes">Nodes</th>
+                    <th className="col-health">Health</th>
+                    <th className="col-seen">Last seen</th>
+                    <th className="col-actions" aria-label="Row actions" />
                   </tr>
                 </thead>
                 <tbody>
@@ -368,7 +367,10 @@ export function FleetDashboard() {
                       className={`row-clickable ${cluster.removedAt ? 'removed-row' : ''}`}
                       onClick={() => setSelectedCluster(cluster)}
                     >
-                      <td>
+                      {/* Endpoint access rides with the source name: it qualifies
+                          how you reach this cluster, and it never earned a column
+                          of its own for a one-word value. */}
+                      <td className="col-cluster">
                         <button
                           type="button"
                           className="cluster-name"
@@ -382,31 +384,47 @@ export function FleetDashboard() {
                             />
                           </span>
                           <span>
-                            <strong>{cluster.name}</strong>
-                            <small>{cluster.sourceName}</small>
+                            <strong title={cluster.name}>{cluster.name}</strong>
+                            <small title={cluster.sourceName}>
+                              {cluster.sourceName}
+                              <i className="endpoint-tag">{cluster.endpointAccess}</i>
+                            </small>
                           </span>
                         </button>
                       </td>
-                      <td>
+                      <td className="col-provider">
                         <span className="provider-cell">
                           <ProviderLogo provider={cluster.provider} className="provider-logo" />
                           {providerLabels[cluster.provider]}
                         </span>
                       </td>
-                      <td className="mono">{cluster.location}</td>
-                      <td className="mono">{cluster.kubernetesVersion || '—'}</td>
-                      <td>
+                      {/* Location and version are both "which cluster is this",
+                          and the version string is long enough that a column of
+                          its own squeezed every neighbour. */}
+                      <td className="col-location">
+                        <span className="location-cell">
+                          <span className="mono">{cluster.location}</span>
+                          <small
+                            className="mono"
+                            title={cluster.kubernetesVersion || undefined}
+                          >
+                            {cluster.kubernetesVersion || '—'}
+                          </small>
+                        </span>
+                      </td>
+                      <td className="col-nodes numeric">{cluster.nodeCount ?? '—'}</td>
+                      <td className="col-health">
                         <StatusBadge
                           status={cluster.removedAt ? 'removed' : cluster.status}
                           tone={cluster.removedAt ? 'idle' : undefined}
                         />
                       </td>
-                      <td className="capitalize">{cluster.endpointAccess}</td>
-                      <td className="numeric">{cluster.nodeCount ?? '—'}</td>
-                      <td className={isStale(cluster.lastSeenAt) ? 'stale' : ''}>
+                      <td
+                        className={`col-seen ${isStale(cluster.lastSeenAt) ? 'stale' : ''}`}
+                      >
                         {relativeTime(cluster.lastSeenAt)}
                       </td>
-                      <td className="actions-cell">
+                      <td className="col-actions actions-cell">
                         <button
                           type="button"
                           className="refresh-button"

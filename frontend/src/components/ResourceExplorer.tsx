@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   deleteResource,
   getResourceManifest,
@@ -14,6 +14,7 @@ import { KubernetesResourceIcon } from './KubernetesResourceIcon'
 import { ResourceGraph } from './ResourceGraph'
 import { ResourceTable } from './ResourceTable'
 import { StatusBadge } from './StatusBadge'
+import { Dialog, DialogClose, DialogDescription, DialogTitle } from './ui/Dialog'
 
 const pollIntervalMs = 15_000
 const viewStorageKey = 'kubeops-resource-view'
@@ -182,23 +183,29 @@ export function ResourceExplorer({ onboardingId, target }: Props) {
         />
       )}
 
-      {pendingDelete && (
-        <div className="confirmation-backdrop" role="presentation">
-          <section
-            className="scale-confirmation"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="delete-resource-title"
-          >
+      <Dialog
+        open={pendingDelete !== null}
+        onOpenChange={(next) => !next && setPendingDelete(null)}
+        backdropClassName="confirmation-backdrop"
+        className="scale-confirmation"
+        alert
+        dismissible={!deleting}
+      >
+        {pendingDelete && (
+          <>
             <p className="section-label">Confirm deletion</p>
-            <h3 id="delete-resource-title">
-              Delete {pendingDelete.kind} {pendingDelete.name}?
-            </h3>
-            <p>
-              This removes the live object from <strong>{target.clusterName}</strong>. It does not
-              change Git, so Argo CD recreates it on the next sync if the application still
-              declares it.
-            </p>
+            <DialogTitle asChild>
+              <h3>
+                Delete {pendingDelete.kind} {pendingDelete.name}?
+              </h3>
+            </DialogTitle>
+            <DialogDescription asChild>
+              <p>
+                This removes the live object from <strong>{target.clusterName}</strong>. It does not
+                change Git, so Argo CD recreates it on the next sync if the application still
+                declares it.
+              </p>
+            </DialogDescription>
             {pendingDelete.kind === 'Namespace' ||
             pendingDelete.kind === 'PersistentVolumeClaim' ? (
               <p className="confirmation-warning">
@@ -220,9 +227,9 @@ export function ResourceExplorer({ onboardingId, target }: Props) {
                 {deleting ? 'Deleting…' : `Delete ${pendingDelete.kind}`}
               </button>
             </div>
-          </section>
-        </div>
-      )}
+          </>
+        )}
+      </Dialog>
     </div>
   )
 }
@@ -254,17 +261,6 @@ function ResourceManifestModal({
   const [manifest, setManifest] = useState('')
   const [manifestError, setManifestError] = useState('')
   const [loading, setLoading] = useState(true)
-  const closeButton = useRef<HTMLButtonElement>(null)
-
-  useEffect(() => {
-    closeButton.current?.focus()
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [onClose])
-
   useEffect(() => {
     const controller = new AbortController()
     setManifest('')
@@ -288,14 +284,13 @@ function ResourceManifestModal({
   }, [node, onboardingId, targetId])
 
   return (
-    <div className="resource-modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section
-        className="resource-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="resource-detail-title"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
+    <Dialog
+      open
+      onOpenChange={(next) => !next && onClose()}
+      backdropClassName="resource-modal-backdrop"
+      className="resource-modal"
+      describedBy={undefined}
+    >
         <header className="resource-modal-header">
           <div className="resource-modal-title">
             <span className="resource-modal-mark" aria-hidden="true">
@@ -303,7 +298,9 @@ function ResourceManifestModal({
             </span>
             <div>
               <p className="section-label">{node.kind} YAML</p>
-              <h2 id="resource-detail-title" title={node.name}>{node.name}</h2>
+              <DialogTitle asChild>
+                <h2 title={node.name}>{node.name}</h2>
+              </DialogTitle>
             </div>
           </div>
         </header>
@@ -346,11 +343,12 @@ function ResourceManifestModal({
               <path d="M3.5 5.5h13M8 3.5h4M5.5 5.5l.7 11h7.6l.7-11M8 8.5v5M12 8.5v5" />
             </svg>
           </button>
-          <button ref={closeButton} type="button" className="ghost-button" onClick={onClose}>
-            Close
-          </button>
+          <DialogClose asChild>
+            <button type="button" className="ghost-button">
+              Close
+            </button>
+          </DialogClose>
         </footer>
-      </section>
-    </div>
+    </Dialog>
   )
 }

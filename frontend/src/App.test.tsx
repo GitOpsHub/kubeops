@@ -167,6 +167,36 @@ describe('App', () => {
     expect(await screen.findByText(/Scaling workers to 5 nodes/)).toBeInTheDocument()
   })
 
+  // Both the drawer and its confirmation used to listen for Escape on `window`,
+  // so one keypress tore down both and the operator lost the whole drawer for
+  // declining a scale. The dialogs are stacked layers now, and Escape is only
+  // delivered to the top one.
+  it('dismisses only the scale confirmation when Escape is pressed inside it', async () => {
+    mockAPI()
+    renderApp()
+    const user = userEvent.setup()
+
+    await user.click(await screen.findByRole('button', { name: /^prod-us-east/ }))
+    await screen.findByRole('dialog', { name: 'prod-us-east' })
+
+    const desiredInput = await screen.findByRole('spinbutton', { name: 'Desired nodes' })
+    await user.clear(desiredInput)
+    await user.type(desiredInput, '5')
+    await user.click(screen.getByRole('button', { name: 'Review scale' }))
+    expect(screen.getByRole('heading', { name: 'Scale workers?' })).toBeInTheDocument()
+
+    await user.keyboard('{Escape}')
+
+    expect(screen.queryByRole('heading', { name: 'Scale workers?' })).not.toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'prod-us-east' })).toBeInTheDocument()
+
+    // And a second Escape, now that the confirmation is gone, closes the drawer.
+    await user.keyboard('{Escape}')
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'prod-us-east' })).not.toBeInTheDocument()
+    })
+  })
+
   it('shows an actionable API failure', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
       Response.json({ error: 'database is unavailable' }, { status: 503 }),

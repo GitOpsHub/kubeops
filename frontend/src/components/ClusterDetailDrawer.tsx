@@ -9,6 +9,7 @@ import {
   scaleNodePool,
 } from '../api/inventory'
 import { KubernetesLogo } from './BrandIcons'
+import { Dialog, DialogClose, DialogDescription, DialogTitle } from './ui/Dialog'
 
 const providerLabels = {
   aws: 'EKS',
@@ -107,7 +108,6 @@ export function ClusterDetailDrawer({
   const [scaleMessage, setScaleMessage] = useState('')
   const [pollTarget, setPollTarget] = useState<PendingScale | null>(null)
   const pollStartedAt = useRef(0)
-  const closeButton = useRef<HTMLButtonElement>(null)
 
   const loadDetails = useCallback(
     async (signal?: AbortSignal, quiet = false) => {
@@ -149,16 +149,8 @@ export function ClusterDetailDrawer({
           setArgoError(error instanceof Error ? error.message : 'Argo CD access is unavailable')
         }
       })
-    closeButton.current?.focus()
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => {
-      controller.abort()
-      window.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [cluster.id, loadDetails, onClose])
+    return () => controller.abort()
+  }, [cluster.id, loadDetails])
 
   useEffect(() => {
     if (!pollTarget) return
@@ -212,29 +204,27 @@ export function ClusterDetailDrawer({
   }
 
   return (
-    <div className="cluster-modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section
+    <>
+      <Dialog
+        open
+        onOpenChange={(next) => !next && onClose()}
+        backdropClassName="cluster-modal-backdrop"
         className="cluster-detail-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="cluster-detail-title"
-        onMouseDown={(event) => event.stopPropagation()}
+        describedBy={undefined}
       >
-        <button
-          ref={closeButton}
-          className="cluster-modal-close"
-          type="button"
-          onClick={onClose}
-          aria-label="Close cluster details"
-        >
-          ×
-        </button>
+        <DialogClose asChild>
+          <button className="cluster-modal-close" type="button" aria-label="Close cluster details">
+            ×
+          </button>
+        </DialogClose>
 
         <header className="cluster-modal-identity">
           <KubernetesLogo className="drawer-kubernetes-logo" />
           <div>
             <p className="section-label">{providerLabels[cluster.provider]}</p>
-            <h2 id="cluster-detail-title">{cluster.name}</h2>
+            <DialogTitle asChild>
+              <h2>{cluster.name}</h2>
+            </DialogTitle>
             <p className="cluster-modal-source">{cluster.sourceName} · {cluster.location}</p>
           </div>
         </header>
@@ -394,43 +384,54 @@ export function ClusterDetailDrawer({
           <code>{cluster.providerResourceId}</code>
         </div>
 
+      </Dialog>
+
+      {/* A sibling of the drawer rather than a child of it. Radix stacks
+          dismissable layers, so Escape here closes only this confirmation —
+          previously both this and the drawer listened on `window`, and one
+          Escape tore down the whole drawer along with the confirmation. */}
+      <Dialog
+        open={pending !== null}
+        onOpenChange={(next) => !next && setPending(null)}
+        backdropClassName="confirmation-backdrop"
+        className="scale-confirmation"
+        alert
+        dismissible={!submitting}
+      >
         {pending && (
-          <div className="confirmation-backdrop" role="presentation">
-            <section
-              className="scale-confirmation"
-              role="alertdialog"
-              aria-modal="true"
-              aria-labelledby="scale-confirmation-title"
-            >
-              <p className="section-label">Review change</p>
-              <h3 id="scale-confirmation-title">Scale {pending.pool.name}?</h3>
-              <div className="scale-delta">
-                <span>{pending.pool.desiredCount}</span>
-                <i aria-hidden="true">→</i>
-                <strong>{pending.desiredCount}</strong>
-              </div>
+          <>
+            <p className="section-label">Review change</p>
+            <DialogTitle asChild>
+              <h3>Scale {pending.pool.name}?</h3>
+            </DialogTitle>
+            <div className="scale-delta">
+              <span>{pending.pool.desiredCount}</span>
+              <i aria-hidden="true">→</i>
+              <strong>{pending.desiredCount}</strong>
+            </div>
+            <DialogDescription asChild>
               <p>
                 This changes the configured capacity for <strong>{cluster.name}</strong> by{' '}
                 {pending.desiredCount - pending.pool.desiredCount} nodes.
               </p>
-              {pending.desiredCount < pending.pool.desiredCount && (
-                <p className="confirmation-warning">Scaling down can evict workloads from removed nodes.</p>
-              )}
-              {pending.pool.autoscaling !== 'disabled' && (
-                <p className="confirmation-warning">
-                  Autoscaling is {pending.pool.autoscaling} and may override this size.
-                </p>
-              )}
-              <div className="confirmation-actions">
-                <button type="button" onClick={() => setPending(null)} disabled={submitting}>Cancel</button>
-                <button className="confirm-scale" type="button" onClick={() => void confirmScale()} disabled={submitting}>
-                  {submitting ? 'Requesting…' : 'Confirm scale'}
-                </button>
-              </div>
-            </section>
-          </div>
+            </DialogDescription>
+            {pending.desiredCount < pending.pool.desiredCount && (
+              <p className="confirmation-warning">Scaling down can evict workloads from removed nodes.</p>
+            )}
+            {pending.pool.autoscaling !== 'disabled' && (
+              <p className="confirmation-warning">
+                Autoscaling is {pending.pool.autoscaling} and may override this size.
+              </p>
+            )}
+            <div className="confirmation-actions">
+              <button type="button" onClick={() => setPending(null)} disabled={submitting}>Cancel</button>
+              <button className="confirm-scale" type="button" onClick={() => void confirmScale()} disabled={submitting}>
+                {submitting ? 'Requesting…' : 'Confirm scale'}
+              </button>
+            </div>
+          </>
         )}
-      </section>
-    </div>
+      </Dialog>
+    </>
   )
 }

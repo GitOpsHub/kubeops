@@ -14,11 +14,14 @@ import {
 } from '../api/onboarding'
 import type { ApplicationEndpoint, AppShellContext } from '../lib/app-shell'
 import { ApplicationManifestsModal } from './ApplicationManifestsModal'
-import { KubernetesLogo, ProviderLogo } from './BrandIcons'
+import { ApplicationTimeline } from './ApplicationTimeline'
+import { ProviderLogo } from './BrandIcons'
 import { DeploymentTargetLogo } from './DeploymentTargetPanel'
 import { ResourceExplorer } from './ResourceExplorer'
 import { StatusBadge } from './StatusBadge'
 import { Tabs } from './Tabs'
+import { Dialog, DialogDescription, DialogTitle } from './ui/Dialog'
+import { Menu, MenuItem } from './ui/Menu'
 
 const pollIntervalMs = 5_000
 
@@ -124,10 +127,6 @@ async function getApplicationReleases(
   )
 }
 
-function formatTimestamp(value: string | null) {
-  return value ? new Date(value).toLocaleString() : 'Not yet'
-}
-
 function BackToApplications() {
   return (
     <Link className="detail-back-button" to="/applications">
@@ -155,6 +154,7 @@ export function ApplicationDetail() {
   const [scaleReplicas, setScaleReplicas] = useState('')
   const [scaleError, setScaleError] = useState('')
   const [confirmingOffboard, setConfirmingOffboard] = useState(false)
+  const [offboardConfirmation, setOffboardConfirmation] = useState('')
   const [activeTab, setActiveTab] = useState('resources')
   const [resourceTargetId, setResourceTargetId] = useState('')
   const [endpoints, setEndpoints] = useState<ApplicationEndpoint[]>([])
@@ -361,29 +361,22 @@ export function ApplicationDetail() {
     )
   }
 
-  if (loading && !record) {
-    return (
-      <section className="application-detail">
-        <div className="table-state" role="status">
-          <span className="loader" aria-hidden="true" />
-          Loading application…
-        </div>
-      </section>
-    )
-  }
-
+  // Nothing to show yet. The view polls, so a failed attempt is a retry in
+  // flight rather than a dead end — it keeps loading and says what went wrong
+  // underneath, instead of flipping between a spinner and an error banner.
   if (!record) {
     return (
       <section className="application-detail">
         <BackToApplications />
-        <div className="error-banner" role="alert">
-          <div>
-            <strong>Application could not be loaded</strong>
-            <span>{error}</span>
-          </div>
-          <button type="button" className="text-button" onClick={() => void load()}>
-            Try again
-          </button>
+        <div className="retry-state" role="status">
+          <span className="loader" aria-hidden="true" />
+          <strong>Loading application…</strong>
+          {error && <span>Last attempt failed: {error}</span>}
+          {!loading && error && (
+            <button type="button" className="text-button" onClick={() => void load()}>
+              Try again
+            </button>
+          )}
         </div>
       </section>
     )
@@ -411,17 +404,19 @@ export function ApplicationDetail() {
         </div>
       )}
 
+      {/* One header instead of three stacked cards: identity and the actions on
+          the first row, everything an operator needs to locate the release on
+          the second. */}
       <header className="detail-header">
-        <div className="detail-identity">
-          <div className="detail-identity-copy">
-            <p className="kicker">GitOps delivery</p>
-            <h1 id="application-heading">{record.name}</h1>
-            <div className="detail-image-version">
-              <ProviderLogo provider="docker" className="detail-image-logo" />
-              <div>
-                <span>Container image</span>
-                <strong className="mono">{record.image || 'Image not reported'}</strong>
-              </div>
+        <div className="detail-headline">
+          <div className="detail-identity">
+            <ProviderLogo provider="docker" className="detail-image-logo" />
+            <div className="detail-identity-copy">
+              <p className="kicker">GitOps delivery</p>
+              <h1 id="application-heading">{record.name}</h1>
+              <strong className="mono detail-image-name" title={record.image}>
+                {record.image || 'Image not reported'}
+              </strong>
             </div>
           </div>
           <div className="detail-primary-actions" aria-label="Application actions">
@@ -429,7 +424,6 @@ export function ApplicationDetail() {
               className="detail-action-state"
               aria-label={`Application sync: ${releaseSyncStatus(record.targets)}`}
             >
-              <span>Release state</span>
               <StatusBadge
                 status={releaseSyncStatus(record.targets)}
                 tone={
@@ -491,82 +485,99 @@ export function ApplicationDetail() {
                 </svg>
                 Scale
               </button>
-            </div>
-          </div>
-          <div className="detail-target-summary" aria-label="Deployment clusters">
-            <p className="section-label">
-              {visibleTargets.length === 1 ? 'Deployment cluster' : 'Deployment clusters'}
-            </p>
-            <div className="detail-target-list">
-              {visibleTargets.length === 0 ? (
-                <span className="detail-target-empty">No clusters assigned</span>
-              ) : (
-                visibleTargets.map((target) => (
-                  <article
-                    className="detail-target-identity"
-                    key={target.id}
-                    aria-label={`Deployment target ${target.clusterName}`}
+              {/* Argo CD keeps delete out of the primary row too: an
+                  irreversible action should not sit one mis-click from Deploy. */}
+              <Menu
+                className="detail-action-menu"
+                trigger={
+                  <button
+                    type="button"
+                    className="ghost-button detail-more-button"
+                    aria-label="More application actions"
                   >
-                    <div className="detail-target-row">
-                      <DeploymentTargetLogo target={target} />
-                      <div>
-                        <span>Cluster</span>
-                        <strong>{target.clusterName}</strong>
-                      </div>
-                    </div>
-                    <div className="detail-target-row">
-                      <span className="detail-namespace-logo" aria-hidden="true">
-                        <KubernetesLogo />
-                      </span>
-                      <div>
-                        <span>Namespace</span>
-                        <strong>{record.namespace}</strong>
-                      </div>
-                    </div>
-                    {target.argoApplicationUrl && (
-                      <a
-                        className="detail-target-argo-link"
-                        href={target.argoApplicationUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        aria-label={`Open ${target.clusterName} in Argo CD`}
-                        title="Open in Argo CD"
-                      >
-                        ↗
-                      </a>
-                    )}
-                  </article>
-                ))
-              )}
+                    <svg viewBox="0 0 16 16" aria-hidden="true">
+                      <circle cx="3" cy="8" r="1.4" />
+                      <circle cx="8" cy="8" r="1.4" />
+                      <circle cx="13" cy="8" r="1.4" />
+                    </svg>
+                  </button>
+                }
+              >
+                <MenuItem
+                  className="menu-item menu-item--danger"
+                  disabled={
+                    action !== null ||
+                    record.status === 'offboarded' ||
+                    record.targets.length === 0
+                  }
+                  onSelect={() => {
+                    setOffboardConfirmation('')
+                    setConfirmingOffboard(true)
+                  }}
+                >
+                  Offboard
+                </MenuItem>
+              </Menu>
             </div>
           </div>
+        </div>
+
+        <div className="detail-context">
+          <div className="detail-target-list" aria-label="Deployment clusters">
+            {visibleTargets.length === 0 ? (
+              <span className="detail-target-empty">No clusters assigned</span>
+            ) : (
+              visibleTargets.map((target) => (
+                <article
+                  className="detail-target-chip"
+                  key={target.id}
+                  aria-label={`Deployment target ${target.clusterName}`}
+                >
+                  <DeploymentTargetLogo target={target} />
+                  <div>
+                    <strong>{target.clusterName}</strong>
+                    <span>{record.namespace}</span>
+                  </div>
+                  {target.argoApplicationUrl && (
+                    <a
+                      className="detail-target-argo-link"
+                      href={target.argoApplicationUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label={`Open ${target.clusterName} in Argo CD`}
+                      title="Open in Argo CD"
+                    >
+                      ↗
+                    </a>
+                  )}
+                </article>
+              ))
+            )}
+          </div>
+
+          <section className="detail-endpoints" aria-label="Application URLs">
+            <span className="section-label">Endpoints</span>
+            {endpoints.length > 0 ? (
+              <nav className="detail-endpoint-links" aria-label="Application endpoints">
+                {endpoints.map((endpoint) => (
+                  <a
+                    key={endpoint.url}
+                    href={endpoint.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={`Open ${endpoint.label}`}
+                  >
+                    {endpoint.label}
+                    <span aria-hidden="true">↗</span>
+                  </a>
+                ))}
+              </nav>
+            ) : (
+              <span className="detail-endpoint-empty">No external URL reported</span>
+            )}
+          </section>
         </div>
       </header>
-
-      <section className="detail-endpoint-bar" aria-label="Application URLs">
-        <div className="detail-endpoint-label">
-          <span className="section-label">Public endpoints</span>
-          <strong>{endpoints.length || '—'}</strong>
-        </div>
-        {endpoints.length > 0 ? (
-          <nav className="detail-endpoint-links" aria-label="Application endpoints">
-            {endpoints.map((endpoint) => (
-              <a
-                key={endpoint.url}
-                href={endpoint.url}
-                target="_blank"
-                rel="noreferrer"
-                title={`Open ${endpoint.label}`}
-              >
-                {endpoint.label}
-                <span aria-hidden="true">↗</span>
-              </a>
-            ))}
-          </nav>
-        ) : (
-          <span className="detail-endpoint-empty">No external URL reported</span>
-        )}
-      </section>
 
       {showingManifests && (
         <ApplicationManifestsModal
@@ -577,28 +588,34 @@ export function ApplicationDetail() {
         />
       )}
 
-      {scaling && (
-        <div className="confirmation-backdrop" role="presentation">
+      <Dialog
+        open={scaling}
+        onOpenChange={(next) => !next && setScaling(false)}
+        backdropClassName="confirmation-backdrop"
+        className="scale-confirmation application-scale-dialog"
+        dismissible={action !== 'scale'}
+      >
+        {record && (
           <form
-            className="scale-confirmation application-scale-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="application-scale-title"
             onSubmit={(event) => {
               event.preventDefault()
               void scalePods()
             }}
           >
             <p className="section-label">GitOps scaling</p>
-            <h3 id="application-scale-title">Scale {record.name} pods</h3>
-            <p>
-              Set the replica count for <strong>{releaseScope(record)}</strong>. The value is
-              committed to GitHub and synchronized to{' '}
-              {record.targets.length === 1
-                ? record.targets[0].clusterName
-                : `${record.targets.length} clusters`}
-              .
-            </p>
+            <DialogTitle asChild>
+              <h3>Scale {record.name} pods</h3>
+            </DialogTitle>
+            <DialogDescription asChild>
+              <p>
+                Set the replica count for <strong>{releaseScope(record)}</strong>. The value is
+                committed to GitHub and synchronized to{' '}
+                {record.targets.length === 1
+                  ? record.targets[0].clusterName
+                  : `${record.targets.length} clusters`}
+                .
+              </p>
+            </DialogDescription>
             <label className="application-scale-field">
               <span>Number of pods</span>
               <input
@@ -639,39 +656,118 @@ export function ApplicationDetail() {
               </button>
             </div>
           </form>
-        </div>
-      )}
+        )}
+      </Dialog>
 
-      {confirmingOffboard && (
-        <section className="offboard-confirmation" aria-labelledby="offboard-heading">
-          <div>
-            <strong id="offboard-heading">Remove this application from every cluster?</strong>
-            <span>
-              Argo CD will delete the application and its managed resources from{' '}
-              {record.targets.length} {record.targets.length === 1 ? 'cluster' : 'clusters'}.
-              The GitHub repository and its values will remain available.
-            </span>
-          </div>
-          <div>
-            <button
-              type="button"
-              className="text-button"
-              disabled={action !== null}
-              onClick={() => setConfirmingOffboard(false)}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="danger-button"
-              disabled={action !== null}
-              onClick={() => void offboard()}
-            >
-              {action === 'offboard' ? 'Offboarding…' : 'Offboard application'}
-            </button>
-          </div>
-        </section>
-      )}
+      <Dialog
+        open={confirmingOffboard}
+        onOpenChange={(next) => !next && setConfirmingOffboard(false)}
+        backdropClassName="confirmation-backdrop"
+        className="offboard-confirmation"
+        alert
+        // The offboard request is irreversible, so the dialog stays put until it
+        // resolves rather than vanishing on a stray Escape mid-flight.
+        dismissible={action === null}
+      >
+        {record && (
+          <>
+            <header className="offboard-confirmation-header">
+              <span className="offboard-confirmation-mark" aria-hidden="true">
+                <svg viewBox="0 0 20 20">
+                  <path d="M10 7v4M10 13.7v.1M8.6 3.2 2.2 14.3a1.6 1.6 0 0 0 1.4 2.4h12.8a1.6 1.6 0 0 0 1.4-2.4L11.4 3.2a1.6 1.6 0 0 0-2.8 0Z" />
+                </svg>
+              </span>
+              <div>
+                <p className="section-label offboard-confirmation-eyebrow">Destructive action</p>
+                <DialogTitle asChild>
+                  <h3>Offboard {record.name}?</h3>
+                </DialogTitle>
+              </div>
+            </header>
+
+            <DialogDescription asChild>
+              <p className="offboard-confirmation-lede">
+                Argo CD deletes <strong>{record.name}</strong> and every resource it manages.
+                This cannot be undone.
+              </p>
+            </DialogDescription>
+
+            <section className="offboard-confirmation-scope">
+              <p className="section-label">
+                Removed from {record.targets.length}{' '}
+                {record.targets.length === 1 ? 'cluster' : 'clusters'}
+              </p>
+              <ul className="offboard-confirmation-targets">
+                {record.targets.map((target) => (
+                  <li key={target.id}>
+                    <DeploymentTargetLogo target={target} />
+                    <span>{target.clusterName}</span>
+                    <small>{target.region}</small>
+                  </li>
+                ))}
+              </ul>
+            </section>
+
+            {/* What survives matters as much as what goes: an operator deciding
+                whether to go ahead needs the reassurance stated, not buried in
+                the paragraph above. */}
+            <p className="offboard-confirmation-kept">
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path d="m3.5 8.5 3 3 6-6.5" />
+              </svg>
+              The GitHub repository and its values will remain available, so the application can
+              be onboarded again.
+            </p>
+
+            {/* Typing the name is the same guard Argo CD puts on deleting an
+                application: it makes the destructive click deliberate rather
+                than muscle memory. */}
+            <label className="offboard-confirmation-field">
+              <span>
+                Type <strong>{record.name}</strong> to confirm
+              </span>
+              <span
+                className={`offboard-confirmation-input ${
+                  offboardConfirmation.trim() === record.name ? 'is-armed' : ''
+                }`}
+              >
+                <input
+                  autoFocus
+                  type="text"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder={record.name}
+                  value={offboardConfirmation}
+                  onChange={(event) => setOffboardConfirmation(event.target.value)}
+                />
+                {offboardConfirmation.trim() === record.name && (
+                  <svg viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="m3.5 8.5 3 3 6-6.5" />
+                  </svg>
+                )}
+              </span>
+            </label>
+
+            <div className="confirmation-actions">
+              <button
+                type="button"
+                disabled={action !== null}
+                onClick={() => setConfirmingOffboard(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="danger-button offboard-confirmation-submit"
+                disabled={action !== null || offboardConfirmation.trim() !== record.name}
+                onClick={() => void offboard()}
+              >
+                {action === 'offboard' ? 'Offboarding…' : 'Offboard application'}
+              </button>
+            </div>
+          </>
+        )}
+      </Dialog>
 
       {(actionMessage || actionError) && (
         <div
@@ -685,11 +781,14 @@ export function ApplicationDetail() {
         </div>
       )}
 
+      {/* One full-width column: the topology needs every pixel, and a 230px
+          rail holding two buttons was not paying for itself. */}
       <div className="detail-body">
-        {releases.length > 0 && (
-          <nav className="region-rail" aria-label="Filter targets by environment and region">
-            <p className="section-label">Deployment scope</p>
-            {releases.map((release) => {
+        <div className="detail-panels">
+          {releases.length > 0 && (
+            <nav className="region-rail" aria-label="Filter targets by environment and region">
+              <span className="section-label">Scope</span>
+              {releases.map((release) => {
               const scope = releaseScope(release)
               const isActive = release.id === record.id
               return (
@@ -705,6 +804,7 @@ export function ApplicationDetail() {
                     setActionMessage('')
                     setActionError('')
                     setConfirmingOffboard(false)
+                    setOffboardConfirmation('')
                     setScaling(false)
                     navigate(`/applications/${release.id}`, { replace: true })
                   }}
@@ -712,12 +812,11 @@ export function ApplicationDetail() {
                   {scope}
                   <small>{release.targets.length}</small>
                 </button>
-              )
-            })}
-          </nav>
-        )}
+                )
+              })}
+            </nav>
+          )}
 
-        <div className="detail-panels">
           <Tabs
             label="Application details"
             activeId={activeTab}
@@ -812,60 +911,7 @@ export function ApplicationDetail() {
               {
                 id: 'timeline',
                 label: 'Timeline',
-                content: (
-                  <div className="timeline">
-                    <div className="timeline-entry">
-                      <span className="timeline-marker" aria-hidden="true" />
-                      <div>
-                        <strong>Onboarded</strong>
-                        <span>{formatTimestamp(record.createdAt)}</span>
-                      </div>
-                    </div>
-                    <div className="timeline-entry">
-                      <span className="timeline-marker" aria-hidden="true" />
-                      <div>
-                        <strong>Last updated</strong>
-                        <span>{formatTimestamp(record.updatedAt)}</span>
-                      </div>
-                    </div>
-                    <div className="timeline-entry">
-                      <span className="timeline-marker" aria-hidden="true" />
-                      <div>
-                        <strong>Completed</strong>
-                        <span>{formatTimestamp(record.completedAt)}</span>
-                      </div>
-                    </div>
-                    {visibleTargets.map((target) => (
-                      <div className="timeline-entry" key={target.id}>
-                        <span className="timeline-marker" aria-hidden="true" />
-                        <div>
-                          <strong>
-                            {target.clusterName} · {target.status}
-                          </strong>
-                          <span>{formatTimestamp(target.updatedAt)}</span>
-                        </div>
-                      </div>
-                    ))}
-                    <section className="application-danger-zone">
-                      <div>
-                        <strong>Offboard application</strong>
-                        <span>Remove managed resources while keeping the GitHub values.</span>
-                      </div>
-                      <button
-                        type="button"
-                        className="danger-button"
-                        disabled={
-                          action !== null ||
-                          record.status === 'offboarded' ||
-                          record.targets.length === 0
-                        }
-                        onClick={() => setConfirmingOffboard(true)}
-                      >
-                        Offboard
-                      </button>
-                    </section>
-                  </div>
-                ),
+                content: <ApplicationTimeline record={record} />,
               },
             ]}
           />
