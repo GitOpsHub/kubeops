@@ -15,7 +15,7 @@
     "@radix-ui/react-dropdown-menu": "^2.1.24",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "react-router-dom": "^7.18.1",
+    "react-router-dom": "^7.18.2",
     "yaml": "^2.9.0"
   },
   "devDependencies": {
