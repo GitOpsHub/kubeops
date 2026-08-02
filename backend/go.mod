@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.43.1
 	github.com/aws/aws-sdk-go-v2/config v1.32.32
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.31
-	github.com/aws/aws-sdk-go-v2/service/eks v1.90.0
+	github.com/aws/aws-sdk-go-v2/service/eks v1.90.1
 	github.com/aws/aws-sdk-go-v2/service/sts v1.45.1
 	github.com/jackc/pgx/v5 v5.10.0
 	golang.org/x/oauth2 v0.36.0
