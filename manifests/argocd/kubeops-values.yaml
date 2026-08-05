@@ -14,6 +14,10 @@ configs:
       p, role:kubeops, applications, sync, */*/*, allow
       p, role:kubeops, applications, delete, */*, allow
       p, role:kubeops, applications, delete, */*/*, allow
+      # Pod logs may contain sensitive data. These rules enable streaming for
+      # KubeOps applications across all Argo CD managed clusters.
+      p, role:kubeops, logs, get, */*, allow
+      p, role:kubeops, logs, get, */*/*, allow
       p, role:kubeops, projects, get, *, allow
       g, kubeops, role:kubeops
 

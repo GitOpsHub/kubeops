@@ -461,7 +461,10 @@ describe('application detail', () => {
       expect.stringContaining('payments-api-abc'),
     ])
 
-    await user.click(screen.getByText('payments-api-1'))
+    await user.click(
+      screen.getByRole('button', { name: 'Actions for ReplicaSet payments-api-1' }),
+    )
+    await user.click(screen.getByRole('menuitem', { name: 'Info' }))
     expect(screen.getByText('apps/v1')).toBeInTheDocument()
 
     // Selecting a resource loads its live definition directly as YAML.
@@ -666,7 +669,7 @@ describe('application detail', () => {
     expect(names()).toEqual(['api-a', 'api-b'])
   })
 
-  it('opens the same YAML modal from a graph card', async () => {
+  it('opens the same YAML modal from the graph card Info action', async () => {
     mockAPI({
       applications: [
         buildApplication({ targets: [buildTarget({ id: 'target-1', region: 'us-east-1' })] }),
@@ -677,7 +680,12 @@ describe('application detail', () => {
     const user = userEvent.setup()
 
     await user.click(await screen.findByRole('tab', { name: 'Kubernetes resources' }))
-    await user.click(await screen.findByRole('button', { name: /payments-api/ }))
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Actions for Deployment payments-api',
+      }),
+    )
+    await user.click(screen.getByRole('menuitem', { name: 'Info' }))
 
     const modal = await screen.findByRole('dialog')
     expect(within(modal).getByRole('heading', { name: 'payments-api' })).toBeInTheDocument()
@@ -696,6 +704,60 @@ describe('application detail', () => {
     expect(
       within(screen.getByRole('alertdialog')).getByText(/recreates it on the next sync/),
     ).toBeInTheDocument()
+  })
+
+  it('shows only Info and Delete when a resource card is clicked', async () => {
+    mockAPI({
+      applications: [
+        buildApplication({ targets: [buildTarget({ id: 'target-1', region: 'us-east-1' })] }),
+      ],
+      resources: [buildResource({ uid: 'uid-dep', kind: 'Deployment', name: 'payments-api' })],
+    })
+    renderApp('/applications/onboarding-1')
+    const user = userEvent.setup()
+
+    await user.click(await screen.findByRole('tab', { name: 'Kubernetes resources' }))
+    const resource = await screen.findByRole('button', {
+      name: 'Actions for Deployment payments-api',
+    })
+
+    await user.click(resource)
+    const menu = screen.getByRole('menu')
+    expect(within(menu).getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+      'Info',
+      'Delete',
+    ])
+    await user.click(within(menu).getByRole('menuitem', { name: 'Delete' }))
+    expect(screen.getByRole('alertdialog')).toHaveTextContent(
+      'Delete Deployment payments-api?',
+    )
+  })
+
+  it('streams live logs from the Pod resource menu', async () => {
+    mockAPI({
+      applications: [
+        buildApplication({ targets: [buildTarget({ id: 'target-1', region: 'us-east-1' })] }),
+      ],
+      resources: [buildResource({ uid: 'uid-pod', kind: 'Pod', name: 'payments-api-abc' })],
+    })
+    renderApp('/applications/onboarding-1')
+    const user = userEvent.setup()
+
+    await user.click(await screen.findByRole('tab', { name: 'Kubernetes resources' }))
+    await user.click(
+      await screen.findByRole('button', { name: 'Actions for Pod payments-api-abc' }),
+    )
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+      'Info',
+      'Logs',
+      'Delete',
+    ])
+    await user.click(screen.getByRole('menuitem', { name: 'Logs' }))
+
+    const logs = await screen.findByLabelText('Live logs for payments-api-abc')
+    expect(logs).toHaveTextContent('server started on :8080')
+    expect(logs).toHaveTextContent('GET /health 200')
+    expect(screen.getByText(/Showing the latest 2 lines/)).toBeInTheDocument()
   })
 
   it('switches between resource, chart, and timeline tabs', async () => {

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/url"
 	"regexp"
@@ -443,6 +444,25 @@ func (s *Service) DeleteResource(
 		"onboarding", onboardingID, "target", targetID,
 		"cluster", target.ClusterName, "kind", ref.Kind, "name", ref.Name)
 	return nil
+}
+
+// PodLogs streams one live Pod through Argo CD. Unlike short resource reads,
+// the caller's context controls this operation so it remains open until the UI
+// closes the viewer.
+func (s *Service) PodLogs(
+	ctx context.Context,
+	onboardingID string,
+	targetID string,
+	ref ResourceRef,
+) (io.ReadCloser, error) {
+	if !strings.EqualFold(ref.Kind, "Pod") {
+		return nil, ValidationError{Message: "logs are available only for Pods"}
+	}
+	target, client, err := s.target(ctx, onboardingID, targetID)
+	if err != nil {
+		return nil, err
+	}
+	return client.PodLogs(ctx, target.ArgoApplication, s.config.ArgoNamespace, ref)
 }
 
 func (s *Service) Scale(

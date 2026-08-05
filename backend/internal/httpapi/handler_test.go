@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -76,7 +77,9 @@ type fakeApplicationOnboarder struct {
 	desiredManifest string
 	resourceErr     error
 	deletedRef      onboarding.ResourceRef
+	logRef          onboarding.ResourceRef
 	resourceTargets []string
+	logStream       string
 }
 
 func (f *fakeApplicationOnboarder) Resources(
@@ -106,6 +109,18 @@ func (f *fakeApplicationOnboarder) DeleteResource(
 ) error {
 	f.deletedRef = ref
 	return f.resourceErr
+}
+func (f *fakeApplicationOnboarder) PodLogs(
+	_ context.Context,
+	_ string,
+	_ string,
+	ref onboarding.ResourceRef,
+) (io.ReadCloser, error) {
+	f.logRef = ref
+	if f.resourceErr != nil {
+		return nil, f.resourceErr
+	}
+	return io.NopCloser(strings.NewReader(f.logStream)), nil
 }
 
 func (f *fakeApplicationOnboarder) Create(
@@ -583,6 +598,40 @@ func TestDeleteApplicationResource(t *testing.T) {
 	}
 }
 
+func TestStreamApplicationPodLogs(t *testing.T) {
+	onboarder := &fakeApplicationOnboarder{logStream: strings.Join([]string{
+		`{"result":{"timeStampStr":"2026-08-04T12:00:00Z","podName":"api-123","content":"ready","last":false}}`,
+		`{"result":{"timeStampStr":"2026-08-04T12:00:01Z","podName":"","content":"","last":true}}`,
+	}, "\n")}
+	handler := NewHandlerWithOnboarding(
+		config.Config{}, &fakeRepository{}, &fakeClusterManager{}, onboarder,
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(
+		http.MethodGet,
+		"/api/application-onboardings/onboarding-1/targets/target-1/resources/logs"+
+			"?version=v1&kind=Pod&namespace=payments&name=api-123",
+		nil,
+	))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d %s", response.Code, response.Body.String())
+	}
+	if response.Header().Get("Content-Type") != "application/x-ndjson; charset=utf-8" {
+		t.Fatalf("unexpected content type: %s", response.Header().Get("Content-Type"))
+	}
+	if onboarder.logRef.Kind != "Pod" || onboarder.logRef.Name != "api-123" {
+		t.Fatalf("unexpected log ref: %#v", onboarder.logRef)
+	}
+	var entry podLogEntry
+	if err := json.Unmarshal(response.Body.Bytes(), &entry); err != nil {
+		t.Fatal(err)
+	}
+	if entry.Content != "ready" || entry.PodName != "api-123" {
+		t.Fatalf("unexpected log entry: %#v", entry)
+	}
+}
+
 // An incomplete reference must not reach Argo CD, where a missing kind or name
 // could match something other than what the caller meant.
 func TestDeleteApplicationResourceRequiresFullReference(t *testing.T) {
@@ -613,6 +662,7 @@ func TestApplicationResourceErrorsMapToStatus(t *testing.T) {
 	}{
 		{name: "missing target", err: onboarding.ErrTargetNotFound, want: http.StatusNotFound},
 		{name: "missing resource", err: onboarding.ErrResourceNotFound, want: http.StatusNotFound},
+		{name: "logs forbidden", err: onboarding.ErrPodLogsForbidden, want: http.StatusForbidden},
 		{name: "argo unreachable", err: errors.New("dial tcp: refused"), want: http.StatusBadGateway},
 	} {
 		t.Run(test.name, func(t *testing.T) {

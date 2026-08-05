@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   deleteResource,
   getResourceManifest,
   getTargetResources,
+  streamPodLogs,
   type ApplicationDeployment,
   type ResourceNode,
   type ResourceRef,
@@ -48,6 +49,7 @@ export function ResourceExplorer({ onboardingId, target }: Props) {
   const [error, setError] = useState('')
   const [selected, setSelected] = useState<ResourceNode | null>(null)
   const [pendingDelete, setPendingDelete] = useState<ResourceNode | null>(null)
+  const [logNode, setLogNode] = useState<ResourceNode | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [notice, setNotice] = useState('')
 
@@ -164,6 +166,8 @@ export function ResourceExplorer({ onboardingId, target }: Props) {
           nodes={nodes}
           selectedUid={selected?.uid}
           onSelect={setSelected}
+          onDelete={setPendingDelete}
+          onLogs={setLogNode}
           label={`Resources on ${target.clusterName}`}
         />
       ) : (
@@ -180,6 +184,15 @@ export function ResourceExplorer({ onboardingId, target }: Props) {
             setPendingDelete(selected)
             setSelected(null)
           }}
+        />
+      )}
+
+      {logNode && (
+        <PodLogsModal
+          node={logNode}
+          onboardingId={onboardingId}
+          targetId={target.id}
+          onClose={() => setLogNode(null)}
         />
       )}
 
@@ -231,6 +244,100 @@ export function ResourceExplorer({ onboardingId, target }: Props) {
         )}
       </Dialog>
     </div>
+  )
+}
+
+type PodLogsModalProps = {
+  node: ResourceNode
+  onboardingId: string
+  targetId: string
+  onClose: () => void
+}
+
+function PodLogsModal({ node, onboardingId, targetId, onClose }: PodLogsModalProps) {
+  const [lines, setLines] = useState<string[]>([])
+  const [state, setState] = useState<'connecting' | 'live' | 'ended' | 'error'>('connecting')
+  const [error, setError] = useState('')
+  const outputRef = useRef<HTMLPreElement | null>(null)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    void streamPodLogs(
+      onboardingId,
+      targetId,
+      toRef(node),
+      (entry) => {
+        const prefix = entry.timestamp ? `${entry.timestamp} ` : ''
+        setLines((current) => [...current, `${prefix}${entry.content ?? ''}`].slice(-2000))
+        setState('live')
+      },
+      controller.signal,
+    )
+      .then(() => {
+        if (!controller.signal.aborted) setState('ended')
+      })
+      .catch((streamError) => {
+        if (streamError instanceof DOMException && streamError.name === 'AbortError') return
+        setError(streamError instanceof Error ? streamError.message : 'Pod logs are unavailable')
+        setState('error')
+      })
+    return () => controller.abort()
+  }, [node, onboardingId, targetId])
+
+  useEffect(() => {
+    const output = outputRef.current
+    if (output) output.scrollTop = output.scrollHeight
+  }, [lines])
+
+  const stateLabel =
+    state === 'connecting' ? 'Connecting' : state === 'live' ? 'Live' : state === 'ended' ? 'Ended' : 'Error'
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(next) => !next && onClose()}
+      backdropClassName="resource-modal-backdrop"
+      className="pod-logs-modal"
+      describedBy={undefined}
+    >
+      <header className="pod-logs-header">
+        <div>
+          <p className="section-label">Pod log stream</p>
+          <DialogTitle asChild>
+            <h2 title={node.name}>{node.name}</h2>
+          </DialogTitle>
+          <span className="pod-logs-namespace">{node.namespace || 'default'}</span>
+        </div>
+        <span className={`pod-logs-state pod-logs-state--${state}`}>
+          <i aria-hidden="true" />
+          {stateLabel}
+        </span>
+      </header>
+
+      <div className="pod-logs-output-wrap">
+        {state === 'connecting' && lines.length === 0 && (
+          <div className="pod-logs-empty" role="status">Connecting to the Pod…</div>
+        )}
+        {state === 'error' && (
+          <div className="pod-logs-error" role="alert">{error}</div>
+        )}
+        <pre ref={outputRef} className="pod-logs-output" aria-label={`Live logs for ${node.name}`}>
+          {lines.join('\n')}
+        </pre>
+      </div>
+
+      <footer className="pod-logs-footer">
+        <span>Showing the latest {lines.length.toLocaleString()} lines</span>
+        <div>
+          <button type="button" className="ghost-button" onClick={() => setLines([])}>
+            Clear
+          </button>
+          <DialogClose asChild>
+            <button type="button" className="primary-button">Close</button>
+          </DialogClose>
+        </div>
+      </footer>
+    </Dialog>
   )
 }
 
