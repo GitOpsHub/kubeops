@@ -1,0 +1,814 @@
+/*
+ * Small-screen composition.
+ *
+ * The desktop UI is deliberately dense: operators need to compare clusters and
+ * release state at a glance. On phones the same information becomes a vertical
+ * incident notebook. Primary identity and state stay visible; secondary facts
+ * move into compact rows or contained horizontal scrollports. Nothing is
+ * allowed to widen the page itself.
+ */
+
+html,
+body,
+#root {
+  max-width: 100%;
+}
+
+.app-shell,
+.dashboard-content,
+.dashboard-content > *,
+.page-heading,
+.section-heading,
+.table-frame,
+.table-scroll {
+  min-width: 0;
+}
+
+.fleet-page,
+.applications-page,
+.application-detail,
+.onboarding-workspace,
+.provider-console,
+.lower-grid,
+.lower-grid > div {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.provider-selector,
+.detail-target-list,
+.detail-endpoint-links,
+.detail-panels > .tablist,
+.target-cluster-table-wrap,
+.table-scroll {
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 720px) {
+  /* Four header regions become two intentional rows instead of creating an
+     anonymous grid row whose width depends on the current status copy. */
+  .topbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: 52px 48px;
+    gap: 0 var(--space-3);
+    padding: 0 max(var(--space-4), env(safe-area-inset-right)) 0
+      max(var(--space-4), env(safe-area-inset-left));
+  }
+
+  .header-brand {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+    padding: 0;
+    min-height: 44px;
+  }
+
+  .primary-nav {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: stretch;
+    gap: 0;
+    min-width: 0;
+  }
+
+  .primary-nav-link {
+    flex: 1 1 50%;
+    justify-content: center;
+    min-height: 48px;
+    padding-inline: var(--space-1);
+  }
+
+  .topbar-context {
+    display: none;
+  }
+
+  .topbar-actions {
+    grid-column: 2;
+    grid-row: 1;
+    justify-content: flex-end;
+    min-width: 0;
+    padding: 0;
+  }
+
+  .topbar .sync-readout {
+    min-height: 40px;
+  }
+
+  .theme-toggle {
+    width: 40px;
+    height: 40px;
+  }
+
+  .dashboard-content {
+    padding-right: max(var(--space-4), env(safe-area-inset-right));
+    padding-bottom: max(var(--space-6), env(safe-area-inset-bottom));
+    padding-left: max(var(--space-4), env(safe-area-inset-left));
+  }
+
+  .page-heading,
+  .section-heading {
+    align-items: stretch;
+  }
+
+  .page-heading > *,
+  .section-heading > * {
+    min-width: 0;
+  }
+
+  .heading-actions,
+  .heading-actions > .primary-button,
+  .applications-page > .page-heading .primary-button {
+    width: 100%;
+  }
+
+  .primary-button,
+  .ghost-button,
+  .danger-button,
+  input[type='text'],
+  input[type='search'],
+  input[type='number'],
+  select {
+    min-height: 44px;
+  }
+
+  .tab,
+  .target-switch-item,
+  .view-toggle button,
+  .detail-action-buttons > button,
+  .detail-back-button,
+  .onboarding-back {
+    min-height: 44px;
+  }
+
+  .skip-link,
+  .status-summary-chip,
+  .application-name,
+  .detail-target-argo-link,
+  .region-rail-item {
+    min-height: 44px;
+  }
+
+  .application-name,
+  .detail-target-argo-link {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .pagination-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    width: 100%;
+  }
+
+  .pagination-controls label {
+    min-width: 0;
+    margin-right: 0;
+  }
+
+  .pagination-controls select,
+  .pagination-controls button {
+    min-height: 44px;
+  }
+
+  .pagination-controls select {
+    min-width: 68px;
+  }
+
+  .filter-bar,
+  .filter-bar > label,
+  .filter-bar select,
+  .global-search,
+  .provider-search {
+    width: 100%;
+    max-width: none;
+  }
+
+  .error-banner,
+  .success-banner {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .cluster-modal-close {
+    width: 44px;
+    height: 44px;
+  }
+
+  .cluster-detail-modal button,
+  .cluster-detail-modal a,
+  .resource-modal button,
+  .resource-modal a,
+  .application-manifests-modal button,
+  .application-manifests-modal a,
+  .pod-logs-modal button,
+  .pod-logs-modal a {
+    min-height: 44px;
+  }
+
+  .cluster-detail-modal,
+  .resource-modal,
+  .application-manifests-modal,
+  .pod-logs-modal {
+    max-width: 100%;
+    max-height: calc(100dvh - 24px);
+  }
+
+  .confirmation-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .confirmation-actions button {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 480px) {
+  body {
+    font-size: var(--text-sm);
+  }
+
+  h1,
+  .page-heading h1 {
+    font-size: clamp(1.65rem, 9vw, var(--text-2xl));
+  }
+
+  .dashboard-content {
+    gap: var(--space-5);
+  }
+
+  .fleet-stats {
+    display: grid;
+    gap: var(--space-3);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .fleet-metric:last-child:nth-child(odd) {
+    grid-column: auto;
+  }
+
+  .provider-selector {
+    margin-inline: calc(var(--space-4) * -1);
+    padding-inline: var(--space-4);
+    scrollbar-width: none;
+  }
+
+  .provider-selector::-webkit-scrollbar {
+    display: none;
+  }
+
+  .provider-button {
+    min-height: 48px;
+    padding: var(--space-2) var(--space-3);
+  }
+
+  /* Fleet inventory becomes a scan-friendly stack. The row remains clickable,
+     while the visible Details control preserves an explicit affordance. */
+  .inventory-section .table-scroll,
+  .inventory-section table,
+  .inventory-section tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .inventory-section thead {
+    display: none;
+  }
+
+  .inventory-section tbody > tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-2) var(--space-3);
+    padding: var(--space-3);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .inventory-section tbody > tr:last-child {
+    border-bottom: 0;
+  }
+
+  .inventory-section tbody > tr > td {
+    width: auto;
+    padding: 0;
+    border: 0;
+  }
+
+  .inventory-section .col-cluster {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .inventory-section .col-location {
+    display: block;
+    grid-column: 1;
+    grid-row: 2;
+    padding-left: 32px;
+  }
+
+  .inventory-section .col-health {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: center;
+    width: auto;
+  }
+
+  .inventory-section .col-actions {
+    grid-column: 2;
+    grid-row: 2;
+    align-self: end;
+    width: auto;
+  }
+
+  .inventory-section .refresh-button {
+    min-height: 44px;
+  }
+
+  .cluster-name,
+  .cluster-name > span:last-child,
+  .location-cell {
+    width: 100%;
+    min-width: 0;
+  }
+
+  /* The application index follows the same mobile grammar: identity, status,
+     and expansion remain on the card; detailed reconciliation is inside it. */
+  .applications-page .delta-legend {
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  .applications-page .table-scroll,
+  .applications-table,
+  .applications-table > tbody {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .applications-table > thead {
+    display: none;
+  }
+
+  .applications-table > tbody > tr:not(.expanded-row) {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr) auto;
+    align-items: center;
+    min-width: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .applications-table > tbody > tr:not(.expanded-row) > td {
+    width: auto;
+    padding: var(--space-3) var(--space-2);
+    border: 0;
+  }
+
+  .applications-table .expander-cell {
+    grid-column: 1;
+    padding-left: var(--space-2);
+  }
+
+  .applications-table .col-app {
+    grid-column: 2;
+    min-width: 0;
+  }
+
+  .applications-table .col-status {
+    grid-column: 3;
+  }
+
+  .applications-page .col-platform,
+  .applications-page .col-scope,
+  .applications-page .col-delivery,
+  .applications-page .col-recon {
+    display: none;
+  }
+
+  .row-expander {
+    width: 44px;
+    height: 44px;
+  }
+
+  .applications-table > tbody > .expanded-row,
+  .applications-table > tbody > .expanded-row > td {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .application-targets {
+    max-width: 100%;
+    padding: var(--space-3);
+    overflow-x: auto;
+  }
+
+  .application-target-table {
+    min-width: 640px;
+  }
+
+  .application-filter-panel,
+  .onboarding-form,
+  .detail-header {
+    padding: var(--space-3);
+  }
+
+  .application-detail {
+    gap: var(--space-3);
+  }
+
+  .detail-back-button {
+    padding-inline: 0;
+    background: transparent;
+    border-color: transparent;
+  }
+
+  .detail-back-button:hover {
+    background: transparent;
+  }
+
+  .detail-identity {
+    align-items: center;
+  }
+
+  .detail-image-logo {
+    width: 42px;
+    height: 42px;
+  }
+
+  .detail-title-row {
+    flex-wrap: wrap;
+  }
+
+  .detail-title-row .status-badge {
+    padding-inline: var(--space-2);
+  }
+
+  .detail-headline,
+  .detail-primary-actions {
+    gap: var(--space-3);
+  }
+
+  .detail-primary-actions {
+    display: block;
+  }
+
+  .detail-action-buttons > button {
+    min-height: 48px;
+  }
+
+  .detail-more-button {
+    gap: var(--space-2);
+  }
+
+  .detail-more-label {
+    display: inline;
+  }
+
+  .detail-action-menu .menu-item {
+    min-height: 44px;
+  }
+
+  .detail-image-name {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .detail-target-chip {
+    width: 100%;
+    max-width: none;
+  }
+
+  .detail-target-argo-link {
+    width: 44px;
+  }
+
+  .detail-context {
+    display: grid;
+    gap: 0;
+  }
+
+  .detail-targets,
+  .detail-endpoints {
+    display: grid;
+    gap: var(--space-2);
+    grid-template-columns: 72px minmax(0, 1fr);
+    align-items: center;
+    width: 100%;
+  }
+
+  .detail-targets {
+    padding-bottom: var(--space-3);
+  }
+
+  .detail-endpoints {
+    padding: var(--space-3) 0 0;
+  }
+
+  .detail-target-list,
+  .detail-endpoint-links {
+    width: 100%;
+  }
+
+  .detail-endpoint-links a {
+    min-height: 44px;
+  }
+
+  .region-rail {
+    display: grid;
+    gap: var(--space-2);
+    justify-self: stretch;
+    overflow: visible;
+    width: 100%;
+  }
+
+  .region-rail-options {
+    width: 100%;
+    padding-bottom: 2px;
+  }
+
+  .detail-panels > .tablist {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    justify-self: stretch;
+    width: 100%;
+    scrollbar-width: none;
+  }
+
+  .detail-panels > .tablist::-webkit-scrollbar {
+    display: none;
+  }
+
+  .detail-panels > .tablist .tab {
+    min-height: 44px;
+    padding-inline: var(--space-3);
+    line-height: 1.25;
+    text-align: center;
+    white-space: normal;
+  }
+
+  .view-toggle {
+    display: flex;
+    width: 100%;
+  }
+
+  .view-toggle button {
+    flex: 1 1 50%;
+  }
+
+  .graph-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .graph-toolbar-summary {
+    display: flex;
+    gap: var(--space-2);
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .graph-toolbar-summary span + span {
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .graph-scroll {
+    min-height: 300px;
+    max-height: 440px;
+  }
+
+  .fact-list,
+  .timeline {
+    padding: var(--space-3);
+  }
+
+  /* The target picker stops pretending to be a six-column spreadsheet. Each
+     cluster is a labelled card with a full-size checkbox target. */
+  .target-cluster-table-wrap,
+  .target-cluster-table,
+  .target-cluster-table tbody {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .target-cluster-table thead {
+    display: none;
+  }
+
+  .target-cluster-table tbody {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-2);
+  }
+
+  .target-cluster-table tbody tr {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr);
+    gap: 2px var(--space-2);
+    padding: var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+
+  .target-cluster-table tbody tr:last-child td,
+  .target-cluster-table td {
+    padding: 2px 0;
+    border: 0;
+    white-space: normal;
+  }
+
+  .target-cluster-table .target-select-column {
+    grid-column: 1;
+    grid-row: 1 / span 5;
+    width: 44px;
+    padding: 0;
+  }
+
+  .target-checkbox {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    cursor: pointer;
+  }
+
+  .target-cluster-table .target-checkbox input {
+    width: 20px;
+    height: 20px;
+  }
+
+  .target-cluster-table td:nth-child(n + 2) {
+    grid-column: 2;
+    min-width: 0;
+  }
+
+  .target-cluster-table td:nth-child(2) {
+    grid-row: 1;
+  }
+
+  .target-cluster-table td:nth-child(3) {
+    grid-row: 2;
+    color: var(--text-muted);
+    font-size: var(--text-2xs);
+  }
+
+  .target-cluster-table td:nth-child(4),
+  .target-cluster-table td:nth-child(5) {
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+  }
+
+  .target-cluster-table td:nth-child(4)::before {
+    content: 'Location · ';
+    font-family: var(--font-sans);
+  }
+
+  .target-cluster-table td:nth-child(5)::before {
+    content: 'Kubernetes · ';
+    font-family: var(--font-sans);
+  }
+
+  .target-cluster-table td:nth-child(6) {
+    margin-top: var(--space-1);
+  }
+
+  .onboarding-form > .primary-button {
+    width: 100%;
+  }
+
+  .cluster-modal-backdrop,
+  .resource-modal-backdrop,
+  .confirmation-backdrop {
+    padding: var(--space-2);
+  }
+
+  .cluster-detail-modal,
+  .resource-modal,
+  .application-manifests-modal,
+  .pod-logs-modal {
+    max-height: calc(100dvh - 16px);
+    border-radius: var(--radius-sm);
+  }
+
+  .cluster-detail-modal {
+    gap: var(--space-3);
+    width: min(520px, 100%);
+    max-height: min(82dvh, 760px);
+    padding: 0 var(--space-3) max(var(--space-3), env(safe-area-inset-bottom));
+    border-radius: var(--radius-lg);
+  }
+
+  .cluster-modal-backdrop {
+    place-items: end center;
+  }
+
+  .cluster-modal-identity {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    margin-inline: calc(var(--space-3) * -1);
+    padding: var(--space-3);
+    background: color-mix(in srgb, var(--canvas) 94%, transparent);
+    backdrop-filter: blur(8px);
+  }
+
+  .cluster-modal-identity h2 {
+    font-size: var(--text-lg);
+  }
+
+  .operations-section {
+    gap: var(--space-2);
+    padding: var(--space-3);
+  }
+
+  .overview-grid,
+  .network-grid {
+    gap: var(--space-2) var(--space-3);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .node-pool-card {
+    gap: var(--space-2);
+    padding: var(--space-3);
+  }
+
+  .pool-facts {
+    display: grid;
+    gap: var(--space-2);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .pool-facts strong {
+    overflow-wrap: anywhere;
+    font-size: var(--text-xs);
+  }
+
+  .scale-control {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .scale-control input {
+    width: 100%;
+  }
+
+  .confirmation-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 360px) {
+  .header-brand {
+    justify-content: flex-start;
+    width: 44px;
+  }
+
+  .header-brand strong {
+    display: none;
+  }
+
+  .primary-nav {
+    justify-self: stretch;
+    justify-content: flex-end;
+  }
+
+  .fleet-stats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .fleet-metric:last-child:nth-child(odd) {
+    grid-column: auto;
+  }
+
+  .pagination-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pagination-controls label {
+    grid-column: 1 / -1;
+    justify-content: space-between;
+  }
+
+  .pagination-controls button {
+    width: 100%;
+  }
+
+  .detail-action-buttons {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .detail-more-button {
+    width: 100%;
+  }
+}

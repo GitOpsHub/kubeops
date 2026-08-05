@@ -28,10 +28,8 @@
 }
 
 .cluster-modal-close {
-  position: absolute;
-  top: var(--space-4);
-  right: var(--space-4);
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   width: 30px;
@@ -51,11 +49,12 @@
 }
 
 .cluster-modal-identity {
-  display: flex;
+  display: grid;
   gap: var(--space-3);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   grid-column: 1 / -1;
   align-items: center;
-  padding: 0 var(--space-7) var(--space-4) 0;
+  padding: 0 0 var(--space-4);
   border-bottom: 1px solid var(--border);
 }
 
@@ -141,6 +140,11 @@
   overflow-wrap: anywhere;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
+}
+
+.network-summary {
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
 }
 
 /* Node pools ----------------------------------------------------------- */

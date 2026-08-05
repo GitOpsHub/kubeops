@@ -379,12 +379,14 @@ export function ApplicationOnboardingForm() {
                       key={cluster.id}
                     >
                       <td className="target-select-column">
-                        <input
-                          type="checkbox"
-                          aria-label={`Select ${cluster.name}`}
-                          checked={selectedSet.has(cluster.id)}
-                          onChange={() => toggleCluster(cluster.id)}
-                        />
+                        <label className="target-checkbox">
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${cluster.name}`}
+                            checked={selectedSet.has(cluster.id)}
+                            onChange={() => toggleCluster(cluster.id)}
+                          />
+                        </label>
                       </td>
                       <td>
                         <strong className="target-cluster-name">{cluster.name}</strong>
