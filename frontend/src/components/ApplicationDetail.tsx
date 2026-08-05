@@ -413,28 +413,30 @@ export function ApplicationDetail() {
             <ProviderLogo provider="docker" className="detail-image-logo" />
             <div className="detail-identity-copy">
               <p className="kicker">GitOps delivery</p>
-              <h1 id="application-heading">{record.name}</h1>
+              <div className="detail-title-row">
+                <h1 id="application-heading">{record.name}</h1>
+                <div
+                  className="detail-action-state"
+                  aria-label={`Application sync: ${releaseSyncStatus(record.targets)}`}
+                >
+                  <StatusBadge
+                    status={releaseSyncStatus(record.targets)}
+                    tone={
+                      releaseSyncStatus(record.targets) === 'Synced'
+                        ? 'ok'
+                        : releaseSyncStatus(record.targets) === 'Out of Sync'
+                          ? 'warn'
+                          : 'idle'
+                    }
+                  />
+                </div>
+              </div>
               <strong className="mono detail-image-name" title={record.image}>
                 {record.image || 'Image not reported'}
               </strong>
             </div>
           </div>
           <div className="detail-primary-actions" aria-label="Application actions">
-            <div
-              className="detail-action-state"
-              aria-label={`Application sync: ${releaseSyncStatus(record.targets)}`}
-            >
-              <StatusBadge
-                status={releaseSyncStatus(record.targets)}
-                tone={
-                  releaseSyncStatus(record.targets) === 'Synced'
-                    ? 'ok'
-                    : releaseSyncStatus(record.targets) === 'Out of Sync'
-                      ? 'warn'
-                      : 'idle'
-                }
-              />
-            </div>
             <div className="detail-action-buttons">
               <button
                 type="button"
@@ -500,6 +502,7 @@ export function ApplicationDetail() {
                       <circle cx="8" cy="8" r="1.4" />
                       <circle cx="13" cy="8" r="1.4" />
                     </svg>
+                    <span className="detail-more-label">More</span>
                   </button>
                 }
               >
@@ -523,37 +526,40 @@ export function ApplicationDetail() {
         </div>
 
         <div className="detail-context">
-          <div className="detail-target-list" aria-label="Deployment clusters">
-            {visibleTargets.length === 0 ? (
-              <span className="detail-target-empty">No clusters assigned</span>
-            ) : (
-              visibleTargets.map((target) => (
-                <article
-                  className="detail-target-chip"
-                  key={target.id}
-                  aria-label={`Deployment target ${target.clusterName}`}
-                >
-                  <DeploymentTargetLogo target={target} />
-                  <div>
-                    <strong>{target.clusterName}</strong>
-                    <span>{record.namespace}</span>
-                  </div>
-                  {target.argoApplicationUrl && (
-                    <a
-                      className="detail-target-argo-link"
-                      href={target.argoApplicationUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      aria-label={`Open ${target.clusterName} in Argo CD`}
-                      title="Open in Argo CD"
-                    >
-                      ↗
-                    </a>
-                  )}
-                </article>
-              ))
-            )}
-          </div>
+          <section className="detail-targets" aria-label="Deployment clusters">
+            <span className="section-label">Target</span>
+            <div className="detail-target-list">
+              {visibleTargets.length === 0 ? (
+                <span className="detail-target-empty">No clusters assigned</span>
+              ) : (
+                visibleTargets.map((target) => (
+                  <article
+                    className="detail-target-chip"
+                    key={target.id}
+                    aria-label={`Deployment target ${target.clusterName}`}
+                  >
+                    <DeploymentTargetLogo target={target} />
+                    <div>
+                      <strong>{target.clusterName}</strong>
+                      <span>{record.namespace}</span>
+                    </div>
+                    {target.argoApplicationUrl && (
+                      <a
+                        className="detail-target-argo-link"
+                        href={target.argoApplicationUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        aria-label={`Open ${target.clusterName} in Argo CD`}
+                        title="Open in Argo CD"
+                      >
+                        ↗
+                      </a>
+                    )}
+                  </article>
+                ))
+              )}
+            </div>
+          </section>
 
           <section className="detail-endpoints" aria-label="Application URLs">
             <span className="section-label">Endpoints</span>
@@ -791,32 +797,34 @@ export function ApplicationDetail() {
           {releases.length > 0 && (
             <nav className="region-rail" aria-label="Filter targets by environment and region">
               <span className="section-label">Scope</span>
-              {releases.map((release) => {
-              const scope = releaseScope(release)
-              const isActive = release.id === record.id
-              return (
-                <button
-                  key={release.id}
-                  type="button"
-                  className={`region-rail-item ${isActive ? 'is-active' : ''}`}
-                  aria-current={isActive ? 'true' : undefined}
-                  aria-label={`View ${scope} release`}
-                  onClick={() => {
-                    setSelectedReleaseId(release.id)
-                    setResourceTargetId('')
-                    setActionMessage('')
-                    setActionError('')
-                    setConfirmingOffboard(false)
-                    setOffboardConfirmation('')
-                    setScaling(false)
-                    navigate(`/applications/${release.id}`, { replace: true })
-                  }}
-                >
-                  {scope}
-                  <small>{release.targets.length}</small>
-                </button>
-                )
-              })}
+              <div className="region-rail-options">
+                {releases.map((release) => {
+                  const scope = releaseScope(release)
+                  const isActive = release.id === record.id
+                  return (
+                    <button
+                      key={release.id}
+                      type="button"
+                      className={`region-rail-item ${isActive ? 'is-active' : ''}`}
+                      aria-current={isActive ? 'true' : undefined}
+                      aria-label={`View ${scope} release`}
+                      onClick={() => {
+                        setSelectedReleaseId(release.id)
+                        setResourceTargetId('')
+                        setActionMessage('')
+                        setActionError('')
+                        setConfirmingOffboard(false)
+                        setOffboardConfirmation('')
+                        setScaling(false)
+                        navigate(`/applications/${release.id}`, { replace: true })
+                      }}
+                    >
+                      {scope}
+                      <small>{release.targets.length}</small>
+                    </button>
+                  )
+                })}
+              </div>
             </nav>
           )}
 

@@ -35,6 +35,12 @@ function displayed(value: NetworkFact['value']) {
   return value || 'Not reported'
 }
 
+function isReported(value: NetworkFact['value']) {
+  if (Array.isArray(value)) return value.length > 0
+  if (typeof value === 'string') return value.trim().length > 0
+  return value !== undefined
+}
+
 function networkFacts(details: ClusterDetails): NetworkFact[] {
   const common: NetworkFact[] = [
     { label: 'API endpoint', value: details.networking.endpointAccess },
@@ -203,6 +209,11 @@ export function ClusterDetailDrawer({
     setPending({ pool, desiredCount: value })
   }
 
+  const connectivityFacts = details ? networkFacts(details) : []
+  const reportedConnectivityFacts = connectivityFacts.filter((fact) => isReported(fact.value))
+  const unreportedConnectivityCount =
+    connectivityFacts.length - reportedConnectivityFacts.length
+
   return (
     <>
       <Dialog
@@ -212,12 +223,6 @@ export function ClusterDetailDrawer({
         className="cluster-detail-modal"
         describedBy={undefined}
       >
-        <DialogClose asChild>
-          <button className="cluster-modal-close" type="button" aria-label="Close cluster details">
-            ×
-          </button>
-        </DialogClose>
-
         <header className="cluster-modal-identity">
           <KubernetesLogo className="drawer-kubernetes-logo" />
           <div>
@@ -227,6 +232,11 @@ export function ClusterDetailDrawer({
             </DialogTitle>
             <p className="cluster-modal-source">{cluster.sourceName} · {cluster.location}</p>
           </div>
+          <DialogClose asChild>
+            <button className="cluster-modal-close" type="button" aria-label="Close cluster details">
+              ×
+            </button>
+          </DialogClose>
         </header>
 
         <section
@@ -341,15 +351,22 @@ export function ClusterDetailDrawer({
             </div>
             <span className="read-only-badge">Read only</span>
           </div>
-          {details ? (
-            <dl className="network-grid">
-              {networkFacts(details).map((fact) => (
-                <div key={fact.label}>
-                  <dt>{fact.label}</dt>
-                  <dd>{displayed(fact.value)}</dd>
-                </div>
-              ))}
-            </dl>
+          {details && reportedConnectivityFacts.length > 0 ? (
+            <>
+              <dl className="network-grid">
+                {reportedConnectivityFacts.map((fact) => (
+                  <div key={fact.label}>
+                    <dt>{fact.label}</dt>
+                    <dd>{displayed(fact.value)}</dd>
+                  </div>
+                ))}
+              </dl>
+              {unreportedConnectivityCount > 0 && (
+                <p className="network-summary">
+                  {unreportedConnectivityCount} additional fields were not reported.
+                </p>
+              )}
+            </>
           ) : (
             <div className="drawer-state">Networking details are unavailable.</div>
           )}
