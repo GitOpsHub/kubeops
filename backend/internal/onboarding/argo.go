@@ -22,6 +22,7 @@ var (
 	ErrApplicationConflict = errors.New("Argo CD application already exists")
 	ErrApplicationNotFound = errors.New("Argo CD application not found")
 	ErrResourceNotFound    = errors.New("Kubernetes resource not found")
+	ErrPodLogsForbidden    = errors.New("Argo CD Pod log access is not configured")
 )
 
 type ApplicationSpec struct {
@@ -95,6 +96,7 @@ type ArgoClient interface {
 	ResourceManifest(context.Context, string, string, ResourceRef) (string, error)
 	DesiredResourceManifest(context.Context, string, string, ResourceRef) (string, error)
 	DeleteResource(context.Context, string, string, ResourceRef) error
+	PodLogs(context.Context, string, string, ResourceRef) (io.ReadCloser, error)
 }
 
 type HTTPArgoClient struct {
@@ -536,6 +538,54 @@ func (c *HTTPArgoClient) DeleteResource(
 		return argoAPIError{status: response.StatusCode}
 	}
 	return nil
+}
+
+// PodLogs opens Argo CD's server-streaming log endpoint. A client copy without
+// an overall timeout is intentional: the request context owns the lifetime of
+// a live stream, while the shared client timeout still protects ordinary API
+// calls.
+func (c *HTTPArgoClient) PodLogs(
+	ctx context.Context,
+	name, argoNamespace string,
+	ref ResourceRef,
+) (io.ReadCloser, error) {
+	query := url.Values{
+		"appNamespace": []string{argoNamespace},
+		"namespace":    []string{ref.Namespace},
+		"follow":       []string{"true"},
+		"tailLines":    []string{"200"},
+	}
+	endpoint := c.serverURL + "/api/v1/applications/" + url.PathEscape(name) +
+		"/pods/" + url.PathEscape(ref.Name) + "/logs?" + query.Encode()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Authorization", "Bearer "+c.token)
+	request.Header.Set("Accept", "application/json")
+
+	streamClient := *c.client
+	streamClient.Timeout = 0
+	response, err := streamClient.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	if response.StatusCode == http.StatusNotFound {
+		defer response.Body.Close()
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+		return nil, ErrResourceNotFound
+	}
+	if response.StatusCode == http.StatusForbidden {
+		defer response.Body.Close()
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+		return nil, ErrPodLogsForbidden
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		defer response.Body.Close()
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+		return nil, argoAPIError{status: response.StatusCode}
+	}
+	return response.Body, nil
 }
 
 func resourceQuery(argoNamespace string, ref ResourceRef) url.Values {

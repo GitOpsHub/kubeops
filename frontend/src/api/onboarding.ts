@@ -263,6 +263,56 @@ export async function deleteResource(
   }
 }
 
+export type PodLogEntry = {
+  timestamp?: string
+  podName?: string
+  content?: string
+  error?: string
+}
+
+/** Follows the backend's newline-delimited Pod log stream until it ends or the
+ * caller aborts. Partial network chunks are buffered so one JSON entry is
+ * never parsed before its newline arrives. */
+export async function streamPodLogs(
+  onboardingId: string,
+  targetId: string,
+  ref: ResourceRef,
+  onEntry: (entry: PodLogEntry) => void,
+  signal: AbortSignal,
+) {
+  const url =
+    `${apiBaseUrl}${resourcePath(onboardingId, targetId)}/logs?${resourceQuery(ref)}`
+  const response = await fetch(url, { signal })
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { error?: string }
+    throw new ApiError(
+      body.error || `Request failed with status ${response.status}`,
+      response.status,
+    )
+  }
+  if (!response.body) throw new Error('The Pod log stream is unavailable')
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffered = ''
+  const consume = (line: string) => {
+    if (!line.trim()) return
+    const entry = JSON.parse(line) as PodLogEntry
+    if (entry.error) throw new Error(entry.error)
+    onEntry(entry)
+  }
+
+  while (true) {
+    const { done, value } = await reader.read()
+    buffered += decoder.decode(value, { stream: !done })
+    const lines = buffered.split('\n')
+    buffered = lines.pop() ?? ''
+    for (const line of lines) consume(line)
+    if (done) break
+  }
+  consume(buffered)
+}
+
 export function syncApplicationOnboarding(id: string) {
   return request<ApplicationOnboarding>(
     `/application-onboardings/${encodeURIComponent(id)}/sync`,

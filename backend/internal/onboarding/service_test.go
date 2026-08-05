@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"io"
 	"net/url"
 	"strings"
 	"testing"
@@ -175,6 +176,7 @@ type fakeArgoClient struct {
 	desiredErr      error
 	resourceErr     error
 	deletedResource ResourceRef
+	logStream       string
 }
 
 type fakeValuesRepositoryManager struct {
@@ -286,6 +288,16 @@ func (f *fakeArgoClient) DeleteResource(
 	f.deletedResource = ref
 	return f.resourceErr
 }
+func (f *fakeArgoClient) PodLogs(
+	_ context.Context,
+	_, _ string,
+	_ ResourceRef,
+) (io.ReadCloser, error) {
+	if f.resourceErr != nil {
+		return nil, f.resourceErr
+	}
+	return io.NopCloser(strings.NewReader(f.logStream)), nil
+}
 
 func TestResourceManifestsAllowsControllerGeneratedResourceWithoutDesiredObject(t *testing.T) {
 	target := model.ApplicationDeployment{
@@ -319,6 +331,18 @@ func TestResourceManifestsAllowsControllerGeneratedResourceWithoutDesiredObject(
 	}
 	if comparison.LiveManifest != client.manifest || comparison.DesiredManifest != "" {
 		t.Fatalf("unexpected comparison: %#v", comparison)
+	}
+}
+
+func TestPodLogsRejectsNonPodResource(t *testing.T) {
+	service := &Service{}
+	_, err := service.PodLogs(
+		context.Background(), "onboarding-1", "target-1",
+		ResourceRef{Version: "v1", Kind: "Service", Name: "api"},
+	)
+	var validationError ValidationError
+	if !errors.As(err, &validationError) {
+		t.Fatalf("expected validation error, got %v", err)
 	}
 }
 

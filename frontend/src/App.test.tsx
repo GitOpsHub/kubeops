@@ -45,6 +45,18 @@ describe('App', () => {
     expect(within(topbarActions as HTMLElement).getByText('Synced')).toBeInTheDocument()
   })
 
+  it('shows discovered clusters as active in the inventory health column', async () => {
+    mockAPI({ clusterStatus: 'succeeded' })
+    renderApp()
+
+    const cluster = await screen.findByRole('button', { name: /^prod-us-east/ })
+    const row = cluster.closest('tr')
+
+    expect(row).not.toBeNull()
+    expect(within(row as HTMLElement).getByText('active')).toBeInTheDocument()
+    expect(within(row as HTMLElement).queryByText('succeeded')).not.toBeInTheDocument()
+  })
+
   it('filters and searches within a selected cloud provider', async () => {
     const { fetchMock } = mockAPI()
     renderApp()

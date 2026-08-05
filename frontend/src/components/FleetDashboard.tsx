@@ -415,7 +415,7 @@ export function FleetDashboard() {
                       <td className="col-nodes numeric">{cluster.nodeCount ?? '—'}</td>
                       <td className="col-health">
                         <StatusBadge
-                          status={cluster.removedAt ? 'removed' : cluster.status}
+                          status={cluster.removedAt ? 'removed' : 'active'}
                           tone={cluster.removedAt ? 'idle' : undefined}
                         />
                       </td>

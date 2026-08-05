@@ -1,9 +1,11 @@
 package httpapi
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -50,6 +52,7 @@ type ApplicationOnboarder interface {
 		onboarding.ResourceRef,
 	) (onboarding.ResourceManifestComparison, error)
 	DeleteResource(context.Context, string, string, onboarding.ResourceRef) error
+	PodLogs(context.Context, string, string, onboarding.ResourceRef) (io.ReadCloser, error)
 }
 
 type API struct {
@@ -112,6 +115,10 @@ func newHandler(
 	mux.HandleFunc(
 		"GET /api/application-onboardings/{id}/targets/{targetId}/resources/manifest",
 		api.applicationResourceManifest,
+	)
+	mux.HandleFunc(
+		"GET /api/application-onboardings/{id}/targets/{targetId}/resources/logs",
+		api.applicationPodLogs,
 	)
 	mux.HandleFunc(
 		"DELETE /api/application-onboardings/{id}/targets/{targetId}/resources",
@@ -434,6 +441,8 @@ func (api *API) writeResourceError(w http.ResponseWriter, err error, action stri
 	case errors.Is(err, onboarding.ErrResourceNotFound),
 		errors.Is(err, onboarding.ErrApplicationNotFound):
 		writeError(w, http.StatusNotFound, "resource not found in Argo CD")
+	case errors.Is(err, onboarding.ErrPodLogsForbidden):
+		writeError(w, http.StatusForbidden, "Pod log access is not configured in Argo CD")
 	case errors.As(err, &validationError):
 		writeError(w, http.StatusUnprocessableEntity, validationError.Message)
 	default:
@@ -492,6 +501,84 @@ func (api *API) deleteApplicationResource(w http.ResponseWriter, r *http.Request
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type podLogEntry struct {
+	Timestamp string `json:"timestamp,omitempty"`
+	PodName   string `json:"podName,omitempty"`
+	Content   string `json:"content,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+// applicationPodLogs converts Argo CD's grpc-gateway stream envelopes into
+// stable newline-delimited entries for the browser. Each encoded line is
+// flushed immediately so the UI follows the running Pod rather than waiting
+// for the response to finish.
+func (api *API) applicationPodLogs(w http.ResponseWriter, r *http.Request) {
+	if api.onboarder == nil {
+		writeError(w, http.StatusServiceUnavailable, "application onboarding is not available")
+		return
+	}
+	ref, ok := resourceRef(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "kind, name, and version are required")
+		return
+	}
+	stream, err := api.onboarder.PodLogs(
+		r.Context(), r.PathValue("id"), r.PathValue("targetId"), ref,
+	)
+	if err != nil {
+		api.writeResourceError(w, err, "stream Pod logs")
+		return
+	}
+	defer stream.Close()
+
+	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-store")
+	w.Header().Set("X-Accel-Buffering", "no")
+	encoder := json.NewEncoder(w)
+	flusher, _ := w.(http.Flusher)
+	scanner := bufio.NewScanner(stream)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		var frame struct {
+			Result *struct {
+				Timestamp string `json:"timeStampStr"`
+				PodName   string `json:"podName"`
+				Content   string `json:"content"`
+				Last      bool   `json:"last"`
+			} `json:"result"`
+			Error *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &frame); err != nil {
+			continue
+		}
+		if frame.Error != nil {
+			_ = encoder.Encode(podLogEntry{Error: frame.Error.Message})
+			if flusher != nil {
+				flusher.Flush()
+			}
+			return
+		}
+		if frame.Result == nil || frame.Result.Last {
+			continue
+		}
+		if err := encoder.Encode(podLogEntry{
+			Timestamp: frame.Result.Timestamp,
+			PodName:   frame.Result.PodName,
+			Content:   frame.Result.Content,
+		}); err != nil {
+			return
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	if err := scanner.Err(); err != nil && !aborted(r) {
+		slog.Warn("read Pod log stream", "error", err)
+	}
 }
 
 func (api *API) applicationOnboardingDefaults(w http.ResponseWriter, _ *http.Request) {

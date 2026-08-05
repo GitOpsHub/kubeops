@@ -63,6 +63,7 @@ export function buildApplication(
 export type MockState = {
   applications: ApplicationOnboarding[]
   argoAccessStatus: number
+  clusterStatus: string
   resources: ResourceNode[]
   manifest: string
   desiredManifest: string
@@ -95,6 +96,7 @@ export function mockAPI(initial: Partial<MockState> = {}) {
   const state: MockState = {
     applications: initial.applications ?? [],
     argoAccessStatus: initial.argoAccessStatus ?? 200,
+    clusterStatus: initial.clusterStatus ?? 'active',
     resources: initial.resources ?? [],
     manifest: initial.manifest ?? '{"kind":"Deployment"}',
     desiredManifest:
@@ -111,6 +113,23 @@ export function mockAPI(initial: Partial<MockState> = {}) {
     const resourceRoute = path.match(
       /^\/application-onboardings\/([^/]+)\/targets\/([^/]+)\/resources(\/manifest)?$/,
     )
+    if (path.endsWith('/resources/logs')) {
+      return new Response(
+        [
+          JSON.stringify({
+            timestamp: '2026-08-04T12:00:00Z',
+            podName: query.get('name'),
+            content: 'server started on :8080',
+          }),
+          JSON.stringify({
+            timestamp: '2026-08-04T12:00:01Z',
+            podName: query.get('name'),
+            content: 'GET /health 200',
+          }),
+        ].join('\n') + '\n',
+        { headers: { 'Content-Type': 'application/x-ndjson' } },
+      )
+    }
     if (resourceRoute) {
       const [, , , manifestSuffix] = resourceRoute
       if (init?.method === 'DELETE') {
@@ -275,7 +294,7 @@ export function mockAPI(initial: Partial<MockState> = {}) {
 
     if (path === '/clusters/cluster-1/details') {
       return Response.json({
-        cluster: buildCluster(),
+        cluster: buildCluster(state.clusterStatus),
         capability: { canScaleNodes: true },
         nodePools: [
           {
@@ -309,7 +328,7 @@ export function mockAPI(initial: Partial<MockState> = {}) {
 
     if (path === '/clusters') {
       return Response.json({
-        items: [buildCluster()],
+        items: [buildCluster(state.clusterStatus)],
         total: 1,
         page: 1,
         pageSize: 25,
@@ -390,7 +409,7 @@ export function mockAPI(initial: Partial<MockState> = {}) {
   return { fetchMock, state }
 }
 
-function buildCluster() {
+function buildCluster(status = 'active') {
   return {
     id: 'cluster-1',
     sourceId: 'aws-platform',
@@ -400,7 +419,7 @@ function buildCluster() {
     name: 'prod-us-east',
     location: 'us-east-1',
     kubernetesVersion: '1.34',
-    status: 'active',
+    status,
     endpointAccess: 'private',
     nodeCount: 12,
     metadata: { platformVersion: 'eks.8' },

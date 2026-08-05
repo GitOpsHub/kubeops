@@ -432,6 +432,20 @@
   width: min(460px, 100%);
 }
 
+.application-scale-form {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.application-scale-copy {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.application-scale-form .confirmation-actions {
+  margin-top: var(--space-1);
+}
+
 .application-scale-field {
   display: grid;
   gap: var(--space-2);

@@ -9,22 +9,24 @@ import {
 } from '../lib/resource-graph'
 import { age } from '../lib/resource-tree'
 import { KubernetesResourceIcon } from './KubernetesResourceIcon'
+import { Menu, MenuItem } from './ui/Menu'
 
 const zoomStep = 0.1
 const minZoom = 0.4
 const maxZoom = 1.6
-/* A graph shrunk far enough to fit is a graph nobody can read. Opening the view
-   stops at the point where a resource name is still legible and lets the rest
-   scroll; pressing Fit is an explicit request to see everything, so that one
-   goes all the way down to `minZoom`. */
-const minAutoZoom = 0.7
+/* Auto-fit uses the full supported zoom range so the complete topology stays
+   inside both viewport axes. Operators can still zoom in for dense graphs. */
+const minAutoZoom = minZoom
 /** Matches the `.graph-scroll` padding, so "fit" leaves the same gutter. */
 const canvasPadding = 24
+const canvasBottomPadding = 56
 
 type Props = {
   nodes: ResourceNode[]
   selectedUid?: string
   onSelect: (node: ResourceNode) => void
+  onDelete: (node: ResourceNode) => void
+  onLogs: (node: ResourceNode) => void
   label: string
 }
 
@@ -73,7 +75,7 @@ function SyncMark({ status }: { status: string }) {
  * Cards remain ordinary buttons so the canvas is keyboard navigable and not a
  * black box to assistive technology.
  */
-export function ResourceGraph({ nodes, selectedUid, onSelect, label }: Props) {
+export function ResourceGraph({ nodes, selectedUid, onSelect, onDelete, onLogs, label }: Props) {
   const [zoom, setZoom] = useState(1)
   // Once the operator picks a zoom, the canvas stops re-fitting itself on every
   // resize — otherwise their choice would be undone by a sidebar opening.
@@ -83,16 +85,26 @@ export function ResourceGraph({ nodes, selectedUid, onSelect, label }: Props) {
   const layout = layoutResourceGraph(nodes)
   const resourceCount = layout.nodes.filter((node) => !node.virtual).length
   const layoutWidth = layout.width
+  const layoutHeight = layout.height
+  const healthyCount = layout.nodes.filter(
+    (node) => !node.virtual && healthTone(node.healthStatus) === 'healthy',
+  ).length
 
   const fit = useCallback(
     (floor = minZoom) => {
       const viewport = scrollRef.current
-      if (!viewport || layoutWidth === 0) return
-      const available = viewport.clientWidth - canvasPadding * 2
+      if (!viewport || layoutWidth === 0 || layoutHeight === 0) return
+      const availableWidth = viewport.clientWidth - canvasPadding * 2
+      const availableHeight = viewport.clientHeight - canvasPadding - canvasBottomPadding
       // Never magnifies: a two-node graph blown up to fill the panel looks broken.
-      setZoom(Math.max(floor, clamp(Math.min(1, available / layoutWidth))))
+      setZoom(
+        Math.max(
+          floor,
+          clamp(Math.min(1, availableWidth / layoutWidth, availableHeight / layoutHeight)),
+        ),
+      )
     },
-    [layoutWidth],
+    [layoutHeight, layoutWidth],
   )
 
   // The graph is often wider than the panel, so it opens fitted rather than
@@ -119,10 +131,14 @@ export function ResourceGraph({ nodes, selectedUid, onSelect, label }: Props) {
   return (
     <div className="graph-shell">
       <div className="graph-toolbar">
-        <strong>Kubernetes topology</strong>
-        <span className="quiet-note">
-          {resourceCount} {resourceCount === 1 ? 'resource' : 'resources'}
-        </span>
+        <div className="graph-toolbar-title">
+          <span className="graph-toolbar-kicker">Live dependency map</span>
+          <strong>Kubernetes topology</strong>
+        </div>
+        <div className="graph-toolbar-summary" aria-label={`${healthyCount} of ${resourceCount} resources healthy`}>
+          <span><i className="graph-summary-dot" />{healthyCount} healthy</span>
+          <span>{resourceCount} {resourceCount === 1 ? 'resource' : 'resources'}</span>
+        </div>
       </div>
 
       <div className="graph-viewport">
@@ -141,6 +157,20 @@ export function ResourceGraph({ nodes, selectedUid, onSelect, label }: Props) {
                 transform: `scale(${zoom})`,
               }}
             >
+              <div className="graph-lanes" aria-hidden="true">
+                {layout.lanes.map((lane) => (
+                  <div
+                    className="graph-lane"
+                    key={lane.id}
+                    style={{ left: lane.x, width: cardWidth, height: layout.height }}
+                  >
+                    <span className="graph-lane-label">
+                      <i>{String(Number(lane.id) + 1).padStart(2, '0')}</i>
+                      {lane.label}
+                    </span>
+                  </div>
+                ))}
+              </div>
               <svg
                 className="graph-edges"
                 width={layout.width}
@@ -248,17 +278,44 @@ export function ResourceGraph({ nodes, selectedUid, onSelect, label }: Props) {
                           className={className}
                           aria-label={`External load balancer ${node.name}`}
                         >
-                          {content}
+                          <div className="graph-card-primary">{content}</div>
                         </article>
                       ) : (
-                        <button
-                          type="button"
-                          className={className}
-                          aria-pressed={selectedUid === node.uid}
-                          onClick={() => onSelect(node)}
-                        >
-                          {content}
-                        </button>
+                        <article className={className}>
+                          <Menu
+                            className="graph-resource-menu"
+                            trigger={
+                              <button
+                                type="button"
+                                className="graph-card-primary"
+                                aria-label={`Actions for ${node.kind} ${node.name}`}
+                              >
+                                {content}
+                              </button>
+                            }
+                          >
+                            <MenuItem
+                              className="menu-item graph-resource-menu-item"
+                              onSelect={() => onSelect(node)}
+                            >
+                              Info
+                            </MenuItem>
+                            {node.kind.toLowerCase() === 'pod' && (
+                              <MenuItem
+                                className="menu-item graph-resource-menu-item"
+                                onSelect={() => onLogs(node)}
+                              >
+                                Logs
+                              </MenuItem>
+                            )}
+                            <MenuItem
+                              className="menu-item menu-item--danger graph-resource-menu-item"
+                              onSelect={() => onDelete(node)}
+                            >
+                              Delete
+                            </MenuItem>
+                          </Menu>
+                        </article>
                       )}
                     </li>
                   )

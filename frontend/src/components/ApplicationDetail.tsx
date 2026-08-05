@@ -597,25 +597,28 @@ export function ApplicationDetail() {
       >
         {record && (
           <form
+            className="application-scale-form"
             onSubmit={(event) => {
               event.preventDefault()
               void scalePods()
             }}
           >
-            <p className="section-label">GitOps scaling</p>
-            <DialogTitle asChild>
-              <h3>Scale {record.name} pods</h3>
-            </DialogTitle>
-            <DialogDescription asChild>
-              <p>
-                Set the replica count for <strong>{releaseScope(record)}</strong>. The value is
-                committed to GitHub and synchronized to{' '}
-                {record.targets.length === 1
-                  ? record.targets[0].clusterName
-                  : `${record.targets.length} clusters`}
-                .
-              </p>
-            </DialogDescription>
+            <div className="application-scale-copy">
+              <p className="section-label">GitOps scaling</p>
+              <DialogTitle asChild>
+                <h3>Scale {record.name} pods</h3>
+              </DialogTitle>
+              <DialogDescription asChild>
+                <p>
+                  Set the replica count for <strong>{releaseScope(record)}</strong>. The value is
+                  committed to GitHub and synchronized to{' '}
+                  {record.targets.length === 1
+                    ? record.targets[0].clusterName
+                    : `${record.targets.length} clusters`}
+                  .
+                </p>
+              </DialogDescription>
+            </div>
             <label className="application-scale-field">
               <span>Number of pods</span>
               <input
