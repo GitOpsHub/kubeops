@@ -27,11 +27,12 @@ type fakeRepository struct {
 	filter     model.ClusterFilter
 	cluster    model.Cluster
 	clusterErr error
+	sources    []model.SourceSummary
 }
 
 func (f *fakeRepository) Ready(context.Context) error { return f.readyErr }
 func (f *fakeRepository) ListSources(context.Context) ([]model.SourceSummary, error) {
-	return []model.SourceSummary{}, f.listErr
+	return f.sources, f.listErr
 }
 func (f *fakeRepository) ListClusters(_ context.Context, filter model.ClusterFilter) (model.ClusterPage, error) {
 	f.filter = filter
@@ -62,6 +63,23 @@ type fakeClusterManager struct {
 	desired     int32
 }
 
+type fakeSourceSyncer struct {
+	sourceID string
+	trigger  string
+	run      model.SyncRun
+	err      error
+}
+
+func (f *fakeSourceSyncer) Sync(
+	_ context.Context,
+	sourceID string,
+	trigger string,
+) (model.SyncRun, error) {
+	f.sourceID = sourceID
+	f.trigger = trigger
+	return f.run, f.err
+}
+
 type fakeApplicationOnboarder struct {
 	input      onboarding.CreateInput
 	filter     model.ApplicationOnboardingFilter
@@ -80,6 +98,11 @@ type fakeApplicationOnboarder struct {
 	logRef          onboarding.ResourceRef
 	resourceTargets []string
 	logStream       string
+	reconcileCalls  int
+}
+
+func (f *fakeApplicationOnboarder) Reconcile(context.Context) {
+	f.reconcileCalls++
 }
 
 func (f *fakeApplicationOnboarder) Resources(
@@ -245,7 +268,9 @@ func TestReadinessFailure(t *testing.T) {
 
 func TestClusterFilters(t *testing.T) {
 	repository := &fakeRepository{}
-	handler := NewHandler(config.Config{}, repository)
+	handler := NewHandler(config.Config{CloudSources: []model.CloudSource{{
+		ID: "aws-platform", Provider: model.ProviderAWS, Enabled: true,
+	}}}, repository)
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/clusters?provider=aws&page=2&pageSize=10&search=prod", nil)
 	handler.ServeHTTP(response, request)
@@ -256,6 +281,34 @@ func TestClusterFilters(t *testing.T) {
 	if repository.filter.Provider != "aws" || repository.filter.Page != 2 ||
 		repository.filter.PageSize != 10 || repository.filter.Search != "prod" {
 		t.Fatalf("unexpected filter: %#v", repository.filter)
+	}
+	if len(repository.filter.SourceIDs) != 1 || repository.filter.SourceIDs[0] != "aws-platform" {
+		t.Fatalf("expected configured source scope, got %#v", repository.filter.SourceIDs)
+	}
+}
+
+func TestSourcesHideRecordsMissingFromRuntimeConfiguration(t *testing.T) {
+	repository := &fakeRepository{sources: []model.SourceSummary{
+		{CloudSource: model.CloudSource{ID: "gcp-production", Enabled: true}},
+		{CloudSource: model.CloudSource{ID: "docker-local", Enabled: true}},
+	}}
+	handler := NewHandler(config.Config{CloudSources: []model.CloudSource{{
+		ID: "gcp-production", Provider: model.ProviderGCP, Enabled: true,
+	}}}, repository)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/cloud-sources", nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", response.Code)
+	}
+	var body struct {
+		Items []model.SourceSummary `json:"items"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Items) != 1 || body.Items[0].ID != "gcp-production" {
+		t.Fatalf("unexpected visible sources: %#v", body.Items)
 	}
 }
 
@@ -290,6 +343,28 @@ func TestQueueSyncConflict(t *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/cloud-sources/aws-platform/sync", nil))
 	if response.Code != http.StatusConflict {
 		t.Fatalf("expected status 409, got %d", response.Code)
+	}
+}
+
+func TestManualSyncCompletesInsideRequestWhenSyncerIsConfigured(t *testing.T) {
+	repository := &fakeRepository{}
+	sourceSyncer := &fakeSourceSyncer{run: model.SyncRun{
+		ID: "run-1", SourceID: "gcp-platform", Trigger: "manual", Status: "succeeded",
+	}}
+	handler := NewHandlerWithOnboarding(
+		config.Config{}, repository, nil, nil, sourceSyncer,
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(
+		response,
+		httptest.NewRequest(http.MethodPost, "/api/cloud-sources/gcp-platform/sync", nil),
+	)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", response.Code)
+	}
+	if sourceSyncer.sourceID != "gcp-platform" || sourceSyncer.trigger != "manual" {
+		t.Fatalf("unexpected sync call: %#v", sourceSyncer)
 	}
 }
 
@@ -704,6 +779,9 @@ func TestListApplicationOnboardingsPaging(t *testing.T) {
 	if onboarder.filter.Page != 3 || onboarder.filter.PageSize != 5 ||
 		onboarder.filter.Search != "Pay Ments" || onboarder.filter.Status != "healthy" {
 		t.Fatalf("unexpected filter: %#v", onboarder.filter)
+	}
+	if onboarder.reconcileCalls != 1 {
+		t.Fatalf("expected request-driven reconciliation, got %d calls", onboarder.reconcileCalls)
 	}
 	var page model.ApplicationOnboardingPage
 	if err := json.NewDecoder(response.Body).Decode(&page); err != nil {

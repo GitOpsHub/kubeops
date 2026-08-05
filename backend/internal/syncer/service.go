@@ -2,7 +2,9 @@ package syncer
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -20,11 +22,15 @@ type Service struct {
 
 type Repository interface {
 	RecoverRunningSyncs(context.Context) error
-	QueueAll(context.Context, string) error
+	RecoverRequestDrivenSyncs(context.Context) error
+	QueueAll(context.Context, string, []string) error
+	StartSync(context.Context, string, string) (model.SyncRun, error)
 	ClaimNextSync(context.Context) (*model.SyncRun, error)
 	CompleteSync(context.Context, model.SyncRun, []model.Cluster) error
 	FailSync(context.Context, model.SyncRun, string) error
 }
+
+var ErrSourceUnavailable = errors.New("cloud source is not enabled in configuration")
 
 func New(
 	store Repository,
@@ -54,11 +60,15 @@ func (s *Service) Start(ctx context.Context) {
 	}
 }
 
+func (s *Service) PrepareRequestDriven(ctx context.Context) error {
+	return s.store.RecoverRequestDrivenSyncs(ctx)
+}
+
 func (s *Service) initialize(ctx context.Context) error {
 	if err := s.store.RecoverRunningSyncs(ctx); err != nil {
 		return err
 	}
-	return s.store.QueueAll(ctx, "startup")
+	return s.store.QueueAll(ctx, "startup", s.sourceIDs())
 }
 
 func (s *Service) schedule(ctx context.Context) {
@@ -69,11 +79,57 @@ func (s *Service) schedule(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := s.store.QueueAll(ctx, "scheduled"); err != nil {
+			if err := s.store.QueueAll(ctx, "scheduled", s.sourceIDs()); err != nil {
 				slog.Error("queue scheduled syncs", "error", err)
 			}
 		}
 	}
+}
+
+func (s *Service) sourceIDs() []string {
+	ids := make([]string, 0, len(s.sources))
+	for id, source := range s.sources {
+		if source.Enabled {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// Sync executes a manual discovery inside the caller's request. This is the
+// durable execution path for serverless deployments, where a queued goroutine
+// may be suspended as soon as the HTTP response is returned.
+func (s *Service) Sync(ctx context.Context, sourceID, trigger string) (model.SyncRun, error) {
+	source, ok := s.sources[sourceID]
+	if !ok || !source.Enabled {
+		return model.SyncRun{}, ErrSourceUnavailable
+	}
+	run, err := s.store.StartSync(ctx, sourceID, trigger)
+	if err != nil {
+		return model.SyncRun{}, err
+	}
+
+	syncCtx, cancel := context.WithTimeout(ctx, 4*time.Minute)
+	defer cancel()
+	clusters, discoverErr := s.providers.Discover(syncCtx, source)
+	completedAt := time.Now()
+	run.CompletedAt = &completedAt
+	if discoverErr != nil {
+		message := sanitizeError(discoverErr)
+		if err := s.store.FailSync(context.WithoutCancel(ctx), run, message); err != nil {
+			return model.SyncRun{}, err
+		}
+		run.Status = "failed"
+		run.Error = message
+		return run, nil
+	}
+	if err := s.store.CompleteSync(context.WithoutCancel(ctx), run, clusters); err != nil {
+		return model.SyncRun{}, err
+	}
+	run.Status = "succeeded"
+	run.DiscoveredCount = len(clusters)
+	return run, nil
 }
 
 func (s *Service) work(ctx context.Context, worker int) {
@@ -98,7 +154,7 @@ func (s *Service) runNext(ctx context.Context, worker int) error {
 	}
 	source, ok := s.sources[run.SourceID]
 	if !ok || !source.Enabled {
-		return s.store.FailSync(ctx, *run, "cloud source is not enabled in configuration")
+		return s.store.FailSync(ctx, *run, ErrSourceUnavailable.Error())
 	}
 
 	slog.Info("discovering clusters", "worker", worker, "source", source.ID, "provider", source.Provider)

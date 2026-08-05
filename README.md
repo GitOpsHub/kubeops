@@ -133,6 +133,20 @@ local URLs and paths with production values. At minimum it requires
 create that variable manually. Environment variable changes require a new
 deployment.
 
+Vercel automatically disables the continuous inventory and onboarding workers.
+Manual inventory syncs execute completely inside the initiating HTTP request.
+Because ignored local YAML files are not available in a Git deployment, set
+`CLOUD_SOURCES_YAML` and `ARGO_TARGETS_YAML` to the contents of their respective
+configuration files, and set `GLOBAL_HELM_DEFAULT_VALUES_YAML` when the chart
+defaults file is outside the backend project root. Keep the token variables
+referenced by `ARGO_TARGETS_YAML` as separate encrypted environment variables.
+Only configure cloud and Argo CD endpoints reachable from Vercel; Docker Desktop,
+Minikube, localhost URLs, and local kubeconfig files cannot be used there.
+
+Set `BACKGROUND_WORKERS=true` only on an always-running backend. Such a worker
+must use the same authoritative source configuration as the API, and local
+development should use a separate database from production.
+
 GitHub Actions runs tests for pull requests and creates production deployments
 for pushes to `main`, after both test jobs pass. Create a GitHub Actions
 environment named `production`, then add these environment secrets under

@@ -16,6 +16,7 @@ import (
 	"github.com/GitOpsHub/kubeops/backend/internal/onboarding"
 	"github.com/GitOpsHub/kubeops/backend/internal/provider"
 	"github.com/GitOpsHub/kubeops/backend/internal/store"
+	"github.com/GitOpsHub/kubeops/backend/internal/syncer"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -55,11 +56,20 @@ type ApplicationOnboarder interface {
 	PodLogs(context.Context, string, string, onboarding.ResourceRef) (io.ReadCloser, error)
 }
 
+type SourceSyncer interface {
+	Sync(context.Context, string, string) (model.SyncRun, error)
+}
+
+type ApplicationReconciler interface {
+	Reconcile(context.Context)
+}
+
 type API struct {
 	config    config.Config
 	store     Repository
 	manager   ClusterManager
 	onboarder ApplicationOnboarder
+	syncer    SourceSyncer
 }
 
 func NewHandler(cfg config.Config, repository Repository, managers ...ClusterManager) http.Handler {
@@ -67,7 +77,7 @@ func NewHandler(cfg config.Config, repository Repository, managers ...ClusterMan
 	if len(managers) > 0 && managers[0] != nil {
 		manager = managers[0]
 	}
-	return newHandler(cfg, repository, manager, nil)
+	return newHandler(cfg, repository, manager, nil, nil)
 }
 
 func NewHandlerWithOnboarding(
@@ -75,11 +85,16 @@ func NewHandlerWithOnboarding(
 	repository Repository,
 	manager ClusterManager,
 	onboarder ApplicationOnboarder,
+	sourceSyncers ...SourceSyncer,
 ) http.Handler {
 	if manager == nil {
 		manager = provider.ManagementRegistry{}
 	}
-	return newHandler(cfg, repository, manager, onboarder)
+	var sourceSyncer SourceSyncer
+	if len(sourceSyncers) > 0 {
+		sourceSyncer = sourceSyncers[0]
+	}
+	return newHandler(cfg, repository, manager, onboarder, sourceSyncer)
 }
 
 func newHandler(
@@ -87,8 +102,12 @@ func newHandler(
 	repository Repository,
 	manager ClusterManager,
 	onboarder ApplicationOnboarder,
+	sourceSyncer SourceSyncer,
 ) http.Handler {
-	api := &API{config: cfg, store: repository, manager: manager, onboarder: onboarder}
+	api := &API{
+		config: cfg, store: repository, manager: manager,
+		onboarder: onboarder, syncer: sourceSyncer,
+	}
 	mux := http.NewServeMux()
 	// {$} matches only the bare root so unknown paths still fall through to 404.
 	mux.HandleFunc("GET /{$}", api.health)
@@ -150,6 +169,23 @@ func (api *API) source(id string) (model.CloudSource, bool) {
 		}
 	}
 	return model.CloudSource{}, false
+}
+
+func (api *API) configuredSourceIDs() []string {
+	ids := make([]string, 0, len(api.config.CloudSources))
+	for _, source := range api.config.CloudSources {
+		ids = append(ids, source.ID)
+	}
+	return ids
+}
+
+func (api *API) reconcileApplications(ctx context.Context) {
+	if api.config.BackgroundWorkers || api.onboarder == nil {
+		return
+	}
+	if reconciler, ok := api.onboarder.(ApplicationReconciler); ok {
+		reconciler.Reconcile(ctx)
+	}
 }
 
 func (api *API) operationalCluster(w http.ResponseWriter, r *http.Request) (model.CloudSource, model.Cluster, bool) {
@@ -297,6 +333,7 @@ func (api *API) clusters(w http.ResponseWriter, r *http.Request) {
 	filter := model.ClusterFilter{
 		Provider:       strings.ToLower(query.Get("provider")),
 		SourceID:       query.Get("source"),
+		SourceIDs:      api.configuredSourceIDs(),
 		Status:         strings.ToLower(query.Get("status")),
 		Search:         strings.TrimSpace(query.Get("search")),
 		IncludeRemoved: query.Get("includeRemoved") == "true",
@@ -339,7 +376,17 @@ func (api *API) sources(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "unable to list cloud sources")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": sources})
+	configured := make(map[string]struct{}, len(api.config.CloudSources))
+	for _, source := range api.config.CloudSources {
+		configured[source.ID] = struct{}{}
+	}
+	visible := make([]model.SourceSummary, 0, len(sources))
+	for _, source := range sources {
+		if _, ok := configured[source.ID]; ok {
+			visible = append(visible, source)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": visible})
 }
 
 func (api *API) syncRuns(w http.ResponseWriter, r *http.Request) {
@@ -348,7 +395,9 @@ func (api *API) syncRuns(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "limit must be between 1 and 200")
 		return
 	}
-	runs, err := api.store.ListSyncRuns(r.Context(), limit)
+	// Fetch a wider window before applying runtime configuration scoping so stale
+	// runs from a previous deployment cannot crowd configured sources out.
+	runs, err := api.store.ListSyncRuns(r.Context(), 200)
 	if err != nil {
 		if aborted(r) {
 			return
@@ -357,13 +406,44 @@ func (api *API) syncRuns(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "unable to list sync runs")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": runs})
+	configured := make(map[string]struct{}, len(api.config.CloudSources))
+	for _, source := range api.config.CloudSources {
+		configured[source.ID] = struct{}{}
+	}
+	visible := make([]model.SyncRun, 0, limit)
+	for _, run := range runs {
+		if _, ok := configured[run.SourceID]; !ok {
+			continue
+		}
+		visible = append(visible, run)
+		if len(visible) == limit {
+			break
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": visible})
 }
 
 func (api *API) queueSync(w http.ResponseWriter, r *http.Request) {
 	sourceID := strings.TrimSpace(r.PathValue("id"))
 	if sourceID == "" {
 		writeError(w, http.StatusBadRequest, "cloud source id is required")
+		return
+	}
+	if api.syncer != nil {
+		run, err := api.syncer.Sync(r.Context(), sourceID, "manual")
+		switch {
+		case errors.Is(err, syncer.ErrSourceUnavailable):
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		case errors.Is(err, store.ErrSyncAlreadyActive):
+			writeError(w, http.StatusConflict, "a sync is already active for this cloud source")
+			return
+		case err != nil:
+			slog.Error("run manual sync", "source", sourceID, "error", err)
+			writeError(w, http.StatusInternalServerError, "unable to run cloud source sync")
+			return
+		}
+		writeJSON(w, http.StatusOK, run)
 		return
 	}
 	run, err := api.store.QueueSync(r.Context(), sourceID, "manual")
@@ -627,6 +707,7 @@ func (api *API) applicationOnboardings(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+	api.reconcileApplications(r.Context())
 	page, err := api.onboarder.List(r.Context(), filter)
 	if err != nil {
 		if aborted(r) {
@@ -649,6 +730,7 @@ func (api *API) applicationOnboarding(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "application onboarding id is required")
 		return
 	}
+	api.reconcileApplications(r.Context())
 	item, err := api.onboarder.Get(r.Context(), id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "application onboarding not found")

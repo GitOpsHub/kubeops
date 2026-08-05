@@ -65,6 +65,43 @@ func TestLoadUsesPlatformPort(t *testing.T) {
 	}
 }
 
+func TestLoadUsesInlineCloudSourcesOnVercel(t *testing.T) {
+	t.Setenv("VERCEL", "1")
+	t.Setenv("BACKGROUND_WORKERS", "")
+	t.Setenv("CLOUD_SOURCES_FILE", filepath.Join(t.TempDir(), "missing.yaml"))
+	t.Setenv("CLOUD_SOURCES_YAML", `sources:
+  - id: gcp-production
+    provider: gcp
+    name: Production GCP
+    scope_id: production-project
+    regions: [us-east1]
+    enabled: true
+`)
+
+	cfg, err := Load(filepath.Join(t.TempDir(), "missing.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BackgroundWorkers {
+		t.Fatal("Vercel should default to request-driven execution")
+	}
+	if len(cfg.CloudSources) != 1 || cfg.CloudSources[0].ID != "gcp-production" {
+		t.Fatalf("unexpected inline cloud sources: %#v", cfg.CloudSources)
+	}
+}
+
+func TestBackgroundWorkersCanBeExplicitlyEnabled(t *testing.T) {
+	t.Setenv("VERCEL", "1")
+	t.Setenv("BACKGROUND_WORKERS", "true")
+	enabled, err := backgroundWorkersEnabled()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !enabled {
+		t.Fatal("expected explicit worker setting to win")
+	}
+}
+
 func TestLoadPrefersExplicitBackendPort(t *testing.T) {
 	t.Setenv("BACKEND_HOST", "0.0.0.0")
 	t.Setenv("BACKEND_PORT", "9090")

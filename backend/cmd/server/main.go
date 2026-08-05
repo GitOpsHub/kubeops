@@ -54,14 +54,21 @@ func main() {
 		cfg.SyncInterval,
 		cfg.SyncWorkers,
 	)
-	syncService.Start(ctx)
+	if cfg.BackgroundWorkers {
+		syncService.Start(ctx)
+	} else if err := syncService.PrepareRequestDriven(ctx); err != nil {
+		slog.Error("prepare request-driven cluster syncs", "error", err)
+		os.Exit(1)
+	}
 
 	onboardingService, err := onboarding.NewService(repository, cfg.Onboarding)
 	if err != nil {
 		slog.Error("initialize application onboarding", "error", err)
 		os.Exit(1)
 	}
-	onboardingService.Start(ctx)
+	if cfg.BackgroundWorkers {
+		onboardingService.Start(ctx)
+	}
 
 	clusterManagers := provider.ManagementRegistry{
 		model.ProviderAWS:   provider.AWS{},
@@ -72,11 +79,11 @@ func main() {
 	server := &http.Server{
 		Addr: cfg.Address(),
 		Handler: httpapi.NewHandlerWithOnboarding(
-			cfg, repository, clusterManagers, onboardingService,
+			cfg, repository, clusterManagers, onboardingService, syncService,
 		),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		WriteTimeout:      5 * time.Minute,
 		IdleTimeout:       60 * time.Second,
 	}
 
@@ -86,6 +93,7 @@ func main() {
 			"environment", cfg.Environment,
 			"sources", len(cfg.CloudSources),
 			"sync_interval", cfg.SyncInterval,
+			"background_workers", cfg.BackgroundWorkers,
 		)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("serve API", "error", err)

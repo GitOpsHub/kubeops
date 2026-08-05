@@ -127,7 +127,7 @@ export function FleetDashboard() {
       await queueSourceSync(item.id)
       await loadDashboard(undefined, true)
     } catch (refreshError) {
-      setError(refreshError instanceof Error ? refreshError.message : 'Sync could not be queued')
+      setError(refreshError instanceof Error ? refreshError.message : 'Sync could not be completed')
     } finally {
       setRefreshing('')
     }
@@ -519,7 +519,7 @@ export function FleetDashboard() {
                     onClick={() => void refreshSource(item)}
                     disabled={!item.enabled || refreshing === item.id}
                   >
-                    {refreshing === item.id ? 'Queueing…' : 'Sync now'}
+                    {refreshing === item.id ? 'Syncing…' : 'Sync now'}
                   </button>
                 </article>
               ))
