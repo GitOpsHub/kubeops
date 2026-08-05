@@ -16,6 +16,7 @@ type fakeStore struct {
 	failed        string
 	startupCalls  []string
 	recoverError  error
+	requestError  error
 	queueAllError error
 }
 
@@ -23,9 +24,18 @@ func (f *fakeStore) RecoverRunningSyncs(context.Context) error {
 	f.startupCalls = append(f.startupCalls, "recover")
 	return f.recoverError
 }
-func (f *fakeStore) QueueAll(_ context.Context, trigger string) error {
+func (f *fakeStore) RecoverRequestDrivenSyncs(context.Context) error {
+	f.startupCalls = append(f.startupCalls, "recover-request")
+	return f.requestError
+}
+func (f *fakeStore) QueueAll(_ context.Context, trigger string, sourceIDs []string) error {
 	f.startupCalls = append(f.startupCalls, "queue:"+trigger)
 	return f.queueAllError
+}
+func (f *fakeStore) StartSync(_ context.Context, sourceID, trigger string) (model.SyncRun, error) {
+	return model.SyncRun{
+		ID: "manual-run", SourceID: sourceID, Trigger: trigger, Status: "running",
+	}, nil
 }
 func (f *fakeStore) ClaimNextSync(context.Context) (*model.SyncRun, error) {
 	run := f.run
@@ -114,6 +124,17 @@ func TestInitializeDoesNotQueueWhenRecoveryFails(t *testing.T) {
 	}
 }
 
+func TestPrepareRequestDrivenOnlyRecoversOrphanedWork(t *testing.T) {
+	repository := &fakeStore{}
+	service := New(repository, nil, nil, 5*time.Minute, 1)
+	if err := service.PrepareRequestDriven(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(repository.startupCalls) != 1 || repository.startupCalls[0] != "recover-request" {
+		t.Fatalf("unexpected preparation calls: %#v", repository.startupCalls)
+	}
+}
+
 func TestRunNextKeepsFailureSanitized(t *testing.T) {
 	repository := &fakeStore{run: &model.SyncRun{ID: "run", SourceID: "aws"}}
 	service := New(
@@ -129,5 +150,33 @@ func TestRunNextKeepsFailureSanitized(t *testing.T) {
 	}
 	if repository.failed != "request failed token=[redacted]" {
 		t.Fatalf("unexpected sanitized error: %q", repository.failed)
+	}
+}
+
+func TestSyncRunsDiscoveryInsideRequest(t *testing.T) {
+	repository := &fakeStore{}
+	service := New(
+		repository,
+		provider.Registry{"gcp": fakeDiscoverer{provider: "gcp"}},
+		[]model.CloudSource{{
+			ID: "gcp", Provider: "gcp", Name: "GCP", ScopeID: "project", Enabled: true,
+		}},
+		5*time.Minute,
+		1,
+	)
+
+	run, err := service.Sync(context.Background(), "gcp", "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != "succeeded" || run.DiscoveredCount != 1 || len(repository.completed) != 1 {
+		t.Fatalf("unexpected sync result: %#v, clusters: %#v", run, repository.completed)
+	}
+}
+
+func TestSyncRejectsSourceMissingFromRuntimeConfiguration(t *testing.T) {
+	service := New(&fakeStore{}, nil, nil, 5*time.Minute, 1)
+	if _, err := service.Sync(context.Background(), "stale-source", "manual"); !errors.Is(err, ErrSourceUnavailable) {
+		t.Fatalf("expected unavailable source error, got %v", err)
 	}
 }

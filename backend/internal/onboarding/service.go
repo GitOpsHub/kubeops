@@ -750,7 +750,7 @@ func (s *Service) Defaults() Defaults {
 
 func (s *Service) Start(ctx context.Context) {
 	go func() {
-		s.reconcile(ctx)
+		s.Reconcile(ctx)
 		ticker := time.NewTicker(s.config.PollInterval)
 		defer ticker.Stop()
 		for {
@@ -758,13 +758,16 @@ func (s *Service) Start(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				s.reconcile(ctx)
+				s.Reconcile(ctx)
 			}
 		}
 	}()
 }
 
-func (s *Service) reconcile(ctx context.Context) {
+// Reconcile refreshes active deployment state from Argo CD. Continuous
+// backends call it on a ticker; request-driven runtimes call it while serving
+// application reads.
+func (s *Service) Reconcile(ctx context.Context) {
 	targets, err := s.store.ListActiveApplicationDeployments(ctx)
 	if err != nil {
 		slog.Error("list active application deployments", "error", err)

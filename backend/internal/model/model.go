@@ -60,8 +60,11 @@ type Cluster struct {
 }
 
 type ClusterFilter struct {
-	Provider       string
-	SourceID       string
+	Provider string
+	SourceID string
+	// SourceIDs is nil when callers do not want configuration scoping. An empty,
+	// non-nil slice intentionally matches no clusters.
+	SourceIDs      []string
 	Status         string
 	Search         string
 	IncludeRemoved bool

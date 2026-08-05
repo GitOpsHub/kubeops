@@ -199,6 +199,14 @@ func (s *Store) ListClusters(ctx context.Context, filter model.ClusterFilter) (m
 	}
 	add("c.provider", filter.Provider)
 	add("c.source_id", filter.SourceID)
+	if filter.SourceIDs != nil {
+		if len(filter.SourceIDs) == 0 {
+			clauses = append(clauses, "FALSE")
+		} else {
+			args = append(args, filter.SourceIDs)
+			clauses = append(clauses, fmt.Sprintf("c.source_id = ANY($%d)", len(args)))
+		}
+	}
 	add("c.status", filter.Status)
 	if filter.Search != "" {
 		args = append(args, "%"+strings.ToLower(filter.Search)+"%")
@@ -372,6 +380,27 @@ func (s *Store) QueueSync(ctx context.Context, sourceID, trigger string) (model.
 	return run, nil
 }
 
+// StartSync creates a run that is already owned by the current request. Unlike
+// QueueSync, it cannot be claimed by a background worker between the insert and
+// provider discovery, which makes manual syncs safe on request-driven runtimes.
+func (s *Store) StartSync(ctx context.Context, sourceID, trigger string) (model.SyncRun, error) {
+	var run model.SyncRun
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO sync_runs (source_id, trigger, status, started_at)
+		SELECT id, $2, 'running', NOW() FROM cloud_sources WHERE id = $1 AND enabled
+		RETURNING id::text, source_id, trigger, status, queued_at, started_at`,
+		sourceID, trigger,
+	).Scan(&run.ID, &run.SourceID, &run.Trigger, &run.Status, &run.QueuedAt, &run.StartedAt)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
+			return model.SyncRun{}, ErrSyncAlreadyActive
+		}
+		return model.SyncRun{}, err
+	}
+	return run, nil
+}
+
 func (s *Store) RecoverRunningSyncs(ctx context.Context) error {
 	const message = "sync interrupted by backend restart"
 	_, err := s.pool.Exec(ctx, `
@@ -388,7 +417,30 @@ func (s *Store) RecoverRunningSyncs(ctx context.Context) error {
 	return err
 }
 
-func (s *Store) QueueAll(ctx context.Context, trigger string) error {
+// RecoverRequestDrivenSyncs clears work that has no background worker to own it.
+// A running request gets a grace period longer than provider discovery's timeout,
+// so a cold start in another replica cannot interrupt valid in-flight work.
+func (s *Store) RecoverRequestDrivenSyncs(ctx context.Context) error {
+	const message = "sync interrupted before request-driven execution"
+	_, err := s.pool.Exec(ctx, `
+		WITH interrupted AS (
+			UPDATE sync_runs
+			SET status = 'failed', error = $1, completed_at = NOW()
+			WHERE status = 'queued'
+			   OR (status = 'running' AND started_at < NOW() - INTERVAL '5 minutes')
+			RETURNING source_id
+		)
+		UPDATE cloud_sources
+		SET last_sync_status = 'failed', last_sync_at = NOW(),
+			last_sync_error = $1, updated_at = NOW()
+		WHERE id IN (SELECT source_id FROM interrupted)`, message)
+	return err
+}
+
+func (s *Store) QueueAll(ctx context.Context, trigger string, sourceIDs []string) error {
+	if len(sourceIDs) == 0 {
+		return nil
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -407,11 +459,11 @@ func (s *Store) QueueAll(ctx context.Context, trigger string) error {
 		INSERT INTO sync_runs (source_id, trigger)
 		SELECT s.id, $1
 		FROM cloud_sources s
-		WHERE s.enabled
+		WHERE s.enabled AND s.id = ANY($2)
 		  AND NOT EXISTS (
 			SELECT 1 FROM sync_runs r
 			WHERE r.source_id = s.id AND r.status IN ('queued', 'running')
-		  )`, trigger); err != nil {
+		  )`, trigger, sourceIDs); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

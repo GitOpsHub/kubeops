@@ -23,6 +23,7 @@ type Config struct {
 	Port              string
 	CORSAllowedOrigin string
 	DatabaseURL       string
+	BackgroundWorkers bool
 	SyncInterval      time.Duration
 	SyncWorkers       int
 	CloudSourcesFile  string
@@ -96,8 +97,17 @@ func Load(envFile string) (Config, error) {
 	}
 
 	sourcesFile := valueOrDefault("CLOUD_SOURCES_FILE", "../config/cloud-sources.yaml")
-	sources, err := loadCloudSources(sourcesFile)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	var sources []model.CloudSource
+	if inline := strings.TrimSpace(os.Getenv("CLOUD_SOURCES_YAML")); inline != "" {
+		sources, err = parseCloudSources([]byte(inline))
+	} else {
+		sources, err = loadCloudSources(sourcesFile)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return Config{}, err
+		}
+	}
+	backgroundWorkers, err := backgroundWorkersEnabled()
+	if err != nil {
 		return Config{}, err
 	}
 
@@ -112,12 +122,28 @@ func Load(envFile string) (Config, error) {
 		Port:              backendPort(),
 		CORSAllowedOrigin: valueOrDefault("CORS_ALLOWED_ORIGIN", "http://localhost:5173"),
 		DatabaseURL:       valueOrDefault("DATABASE_URL", "postgres://kubeops:kubeops@127.0.0.1:5432/kubeops?sslmode=disable"),
+		BackgroundWorkers: backgroundWorkers,
 		SyncInterval:      syncInterval,
 		SyncWorkers:       workers,
 		CloudSourcesFile:  sourcesFile,
 		CloudSources:      sources,
 		Onboarding:        onboarding,
 	}, nil
+}
+
+func backgroundWorkersEnabled() (bool, error) {
+	value := strings.TrimSpace(os.Getenv("BACKGROUND_WORKERS"))
+	if value == "" {
+		// Vercel may suspend or replace a process after any request. Long-running
+		// tickers therefore cannot own durable work there; manual requests execute
+		// their work synchronously instead.
+		return os.Getenv("VERCEL") == "", nil
+	}
+	enabled, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("BACKGROUND_WORKERS must be true or false")
+	}
+	return enabled, nil
 }
 
 func backendPort() string {
@@ -147,9 +173,14 @@ func loadOnboardingConfig() (OnboardingConfig, error) {
 	}
 
 	targetsFile := valueOrDefault("ARGO_TARGETS_FILE", "../config/argo-targets.yaml")
-	targets, err := loadArgoTargets(targetsFile)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return OnboardingConfig{}, err
+	var targets []ArgoTarget
+	if inline := strings.TrimSpace(os.Getenv("ARGO_TARGETS_YAML")); inline != "" {
+		targets, err = parseArgoTargets([]byte(inline))
+	} else {
+		targets, err = loadArgoTargets(targetsFile)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return OnboardingConfig{}, err
+		}
 	}
 	credentialKey, err := loadArgoCredentialKey(targets)
 	if err != nil {
@@ -164,9 +195,12 @@ func loadOnboardingConfig() (OnboardingConfig, error) {
 		return OnboardingConfig{}, err
 	}
 	defaultsFile := valueOrDefault("GLOBAL_HELM_DEFAULT_VALUES_FILE", "../charts/kubeops/values.yaml")
-	defaultsYAML, err := os.ReadFile(defaultsFile)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return OnboardingConfig{}, fmt.Errorf("read global Helm defaults: %w", err)
+	defaultsYAML := []byte(os.Getenv("GLOBAL_HELM_DEFAULT_VALUES_YAML"))
+	if len(defaultsYAML) == 0 {
+		defaultsYAML, err = os.ReadFile(defaultsFile)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return OnboardingConfig{}, fmt.Errorf("read global Helm defaults: %w", err)
+		}
 	}
 	visibility := valueOrDefault("GITHUB_REPO_VISIBILITY", "private")
 	if visibility != "private" && visibility != "public" {
@@ -217,6 +251,10 @@ func loadArgoTargets(path string) ([]ArgoTarget, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseArgoTargets(content)
+}
+
+func parseArgoTargets(content []byte) ([]ArgoTarget, error) {
 	var document struct {
 		Targets []ArgoTarget `yaml:"targets"`
 	}
@@ -339,7 +377,10 @@ func loadCloudSources(path string) ([]model.CloudSource, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseCloudSources(content)
+}
 
+func parseCloudSources(content []byte) ([]model.CloudSource, error) {
 	var document struct {
 		Sources []model.CloudSource `yaml:"sources"`
 	}

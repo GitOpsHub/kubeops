@@ -850,7 +850,7 @@ func TestReconcileMarksSyncedHealthyApplicationHealthy(t *testing.T) {
 		clients: map[string]ArgoClient{targetKey("aws", "arn:cluster/prod"): client},
 	}
 
-	service.reconcile(context.Background())
+	service.Reconcile(context.Background())
 
 	if repository.updates[target.ID].Status != "healthy" {
 		t.Fatalf("unexpected update: %#v", repository.updates[target.ID])
@@ -881,7 +881,7 @@ func TestReconcileTimesOutOnAttemptNotTargetAge(t *testing.T) {
 		clients: map[string]ArgoClient{targetKey("aws", "arn:cluster/prod"): client},
 	}
 
-	service.reconcile(context.Background())
+	service.Reconcile(context.Background())
 
 	if update := repository.updates[target.ID]; update.Status != "healthy" {
 		t.Fatalf("stale target age timed out a fresh attempt: %#v", update)
@@ -909,7 +909,7 @@ func TestReconcileTimesOutExhaustedAttempt(t *testing.T) {
 		clients: map[string]ArgoClient{targetKey("aws", "arn:cluster/prod"): client},
 	}
 
-	service.reconcile(context.Background())
+	service.Reconcile(context.Background())
 
 	update := repository.updates[target.ID]
 	if update.Status != "failed" ||
@@ -989,7 +989,7 @@ func TestReconcileDoesNotRaceApplicationCreation(t *testing.T) {
 		clients: map[string]ArgoClient{targetKey("aws", "arn:cluster/prod"): client},
 	}
 
-	service.reconcile(context.Background())
+	service.Reconcile(context.Background())
 
 	if len(repository.updates) != 0 {
 		t.Fatalf("creation result was overwritten by reconciliation: %#v", repository.updates)
