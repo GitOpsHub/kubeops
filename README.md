@@ -169,6 +169,8 @@ every credential refresh.
 
 Enable **Secure Backend Access with OIDC Federation** in the Vercel project
 settings, then register the same issuer, subject, and audience with each cloud.
+[docs/oidc-federation.md](docs/oidc-federation.md) is the step-by-step runbook
+for all three clouds, with worked examples and troubleshooting.
 
 | Claim | Value |
 | --- | --- |
@@ -184,8 +186,8 @@ rather than the provider-recommended one.
 | Cloud | Trust setup | Source fields | Permissions |
 | --- | --- | --- | --- |
 | AWS | Create an IAM OIDC identity provider for the issuer, then a role whose trust policy allows `sts:AssumeRoleWithWebIdentity` with `StringEquals` conditions on both `<issuer-host>:aud` and `<issuer-host>:sub` | `role_arn` | `eks:ListClusters`, `eks:DescribeCluster`, `eks:ListNodegroups`, `eks:DescribeNodegroup`; add `eks:UpdateNodegroupConfig` to scale |
-| Google | Create a workload identity pool and an OIDC provider: **Issuer URL** as above, **Allowed audiences** set to `https://vercel.com/<team-slug>` (not *Default audience*, which would require a custom `aud`), and the attribute mapping `google.subject = assertion.sub`. Then grant the pool principal `principal://iam.googleapis.com/projects/<project-number>/locations/global/workloadIdentityPools/<pool>/subject/<sub>` the Workload Identity User role on the target service account | `workload_identity_provider`, `impersonate_service_account` | Service account needs `roles/container.viewer`; `roles/container.developer` to scale |
-| Azure | On an app registration or user-assigned managed identity, add a federated credential with scenario **Other**, **Issuer** as above, **Subject identifier** set to the exact `sub`, and **Audience** set to `https://vercel.com/<team-slug>`. Azure does not support partial claim matching, so add one credential per environment | `tenant_id`, `client_id` | `Reader` on the subscription; `Azure Kubernetes Service Contributor` to scale |
+| Google | Create a workload identity pool and an OIDC provider: **Issuer URL** as above, **Allowed audiences** set to `https://vercel.com/<team-slug>` (not *Default audience*, which would require a custom `aud`), and the attribute mapping `google.subject = assertion.sub`. Then grant the pool principal `principal://iam.googleapis.com/projects/<project-number>/locations/global/workloadIdentityPools/<pool>/subject/<sub>` the Workload Identity User role on the target service account | `workload_identity_provider`, `impersonate_service_account` | Service account needs `roles/container.clusterViewer`; there is no GCP scaling path |
+| Azure | On an app registration or user-assigned managed identity, add a federated credential with scenario **Other**, **Issuer** as above, **Subject identifier** set to the exact `sub`, and **Audience** set to `https://vercel.com/<team-slug>`. Azure does not support partial claim matching, so add one credential per environment | `tenant_id`, `client_id` | `Reader` on the subscription; `Azure Kubernetes Service Agent Pool Manager Role` to scale |
 
 `workload_identity_provider` is the pool provider's full resource name,
 `//iam.googleapis.com/projects/<project-number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>`.
