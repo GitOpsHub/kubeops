@@ -5,19 +5,21 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v9"
+	"github.com/GitOpsHub/kubeops/backend/internal/cloudauth"
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
 )
 
-type Azure struct{}
+// Azure discovers and manages AKS clusters. Identity, when set, presents an
+// OIDC token as a client assertion so no client secret is needed.
+type Azure struct {
+	Identity cloudauth.TokenSource
+}
 
-func (Azure) Discover(ctx context.Context, source model.CloudSource) ([]model.Cluster, error) {
-	credential, err := azidentity.NewDefaultAzureCredential(&azidentity.DefaultAzureCredentialOptions{
-		TenantID: source.TenantID,
-	})
+func (a Azure) Discover(ctx context.Context, source model.CloudSource) ([]model.Cluster, error) {
+	credential, err := cloudauth.AzureCredential(ctx, a.Identity, source)
 	if err != nil {
-		return nil, fmt.Errorf("load Azure credentials: %w", err)
+		return nil, err
 	}
 	client, err := armcontainerservice.NewManagedClustersClient(source.ScopeID, credential, nil)
 	if err != nil {

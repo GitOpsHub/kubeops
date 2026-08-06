@@ -5,14 +5,17 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/GitOpsHub/kubeops/backend/internal/cloudauth"
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
 	"gopkg.in/yaml.v3"
 )
@@ -28,7 +31,23 @@ type Config struct {
 	SyncWorkers       int
 	CloudSourcesFile  string
 	CloudSources      []model.CloudSource
+	CloudIdentity     CloudIdentityConfig
 	Onboarding        OnboardingConfig
+}
+
+// CloudIdentityConfig selects how KubeOps proves its identity to cloud
+// providers. Federation replaces static provider keys with a short-lived OIDC
+// token minted by the deployment platform on every invocation.
+type CloudIdentityConfig struct {
+	// Mode is auto, vercel, or off. auto federates when the platform supplies an
+	// identity token and otherwise falls back to the provider SDK default
+	// credential chain, which is what makes local development work unchanged.
+	Mode string
+	// Audience is the aud claim the platform stamps into the token. It is not
+	// used to mint the token: Vercel can only issue a custom audience through its
+	// npm helper, so every cloud trust policy has to accept the default value
+	// instead. It is recorded so startup can report which value that is.
+	Audience string
 }
 
 type ArgoTarget struct {
@@ -86,6 +105,9 @@ func Load(envFile string) (Config, error) {
 	if err := loadEnvFile(envFile); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return Config{}, err
 	}
+	if err := materializeGoogleCredentials(); err != nil {
+		return Config{}, err
+	}
 
 	syncInterval, err := time.ParseDuration(valueOrDefault("SYNC_INTERVAL", "5m"))
 	if err != nil {
@@ -116,6 +138,11 @@ func Load(envFile string) (Config, error) {
 		return Config{}, err
 	}
 
+	cloudIdentity, err := loadCloudIdentityConfig()
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		Environment:       valueOrDefault("APP_ENV", "development"),
 		Host:              valueOrDefault("BACKEND_HOST", "127.0.0.1"),
@@ -127,8 +154,46 @@ func Load(envFile string) (Config, error) {
 		SyncWorkers:       workers,
 		CloudSourcesFile:  sourcesFile,
 		CloudSources:      sources,
+		CloudIdentity:     cloudIdentity,
 		Onboarding:        onboarding,
 	}, nil
+}
+
+func loadCloudIdentityConfig() (CloudIdentityConfig, error) {
+	mode := strings.ToLower(strings.TrimSpace(valueOrDefault("CLOUD_IDENTITY_MODE", cloudauth.ModeAuto)))
+	switch mode {
+	case cloudauth.ModeAuto, cloudauth.ModeVercel, cloudauth.ModeOff:
+	default:
+		return CloudIdentityConfig{}, fmt.Errorf("CLOUD_IDENTITY_MODE must be auto, vercel, or off")
+	}
+	return CloudIdentityConfig{
+		Mode:     mode,
+		Audience: strings.TrimSpace(os.Getenv("CLOUD_IDENTITY_AUDIENCE")),
+	}, nil
+}
+
+// materializeGoogleCredentials writes inline Google credentials to disk because
+// google.FindDefaultCredentials only accepts GOOGLE_APPLICATION_CREDENTIALS as a
+// filesystem path. Serverless platforms deliver secrets as environment variables
+// and mount a read-only filesystem apart from the temporary directory, so the
+// document has to land there before any GKE client is built. Both service account
+// keys and Workload Identity Federation external account configurations qualify.
+func materializeGoogleCredentials() error {
+	inline := strings.TrimSpace(os.Getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON"))
+	if inline == "" {
+		return nil
+	}
+	if !json.Valid([]byte(inline)) {
+		return errors.New("GOOGLE_APPLICATION_CREDENTIALS_JSON must contain valid JSON")
+	}
+	path := filepath.Join(os.TempDir(), "kubeops-google-credentials.json")
+	if err := os.WriteFile(path, []byte(inline), 0o600); err != nil {
+		return fmt.Errorf("write Google credentials: %w", err)
+	}
+	if err := os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", path); err != nil {
+		return fmt.Errorf("set GOOGLE_APPLICATION_CREDENTIALS: %w", err)
+	}
+	return nil
 }
 
 func backgroundWorkersEnabled() (bool, error) {
@@ -406,7 +471,62 @@ func parseCloudSources(content []byte) ([]model.CloudSource, error) {
 			return nil, fmt.Errorf("duplicate cloud source id %q", source.ID)
 		}
 		seen[source.ID] = struct{}{}
+
+		if err := validateFederation(*source); err != nil {
+			return nil, err
+		}
 	}
 
 	return document.Sources, nil
+}
+
+// validateFederation rejects workload identity settings that would silently do
+// nothing, because a misconfigured source otherwise degrades to the default
+// credential chain and fails much later with an opaque provider error.
+func validateFederation(source model.CloudSource) error {
+	if source.WorkloadIdentityProvider != "" {
+		if source.Provider != model.ProviderGCP {
+			return fmt.Errorf(
+				"cloud source %q sets workload_identity_provider, which only applies to gcp",
+				source.ID,
+			)
+		}
+		if source.ImpersonateServiceAccount == "" {
+			return fmt.Errorf(
+				"cloud source %q sets workload_identity_provider and must also set impersonate_service_account",
+				source.ID,
+			)
+		}
+	}
+	if source.ClientID != "" {
+		if source.Provider != model.ProviderAzure {
+			return fmt.Errorf("cloud source %q sets client_id, which only applies to azure", source.ID)
+		}
+		if source.TenantID == "" {
+			return fmt.Errorf("cloud source %q sets client_id and must also set tenant_id", source.ID)
+		}
+	}
+	return nil
+}
+
+// FederationMode reports how a source will authenticate, for startup logging.
+func (c Config) FederationMode(source model.CloudSource) string {
+	if c.CloudIdentity.Mode == cloudauth.ModeOff || cloudauth.Resolve(c.CloudIdentity.Mode) == nil {
+		return "default-chain"
+	}
+	switch source.Provider {
+	case model.ProviderAWS:
+		if source.RoleARN != "" {
+			return "federated"
+		}
+	case model.ProviderGCP:
+		if source.WorkloadIdentityProvider != "" {
+			return "federated"
+		}
+	case model.ProviderAzure:
+		if source.ClientID != "" {
+			return "federated"
+		}
+	}
+	return "default-chain"
 }

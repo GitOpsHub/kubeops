@@ -7,33 +7,22 @@ import (
 
 	"cloud.google.com/go/container/apiv1"
 	"cloud.google.com/go/container/apiv1/containerpb"
+	"github.com/GitOpsHub/kubeops/backend/internal/cloudauth"
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
-	"golang.org/x/oauth2/google"
-	"google.golang.org/api/impersonate"
-	"google.golang.org/api/option"
 )
 
-type GCP struct{}
+// GCP discovers and manages GKE clusters. Identity, when set, federates an OIDC
+// token through Workload Identity Federation so no service account key is
+// needed.
+type GCP struct {
+	Identity cloudauth.TokenSource
+}
 
-func newGCPClient(ctx context.Context, source model.CloudSource) (*container.ClusterManagerClient, error) {
-	options := make([]option.ClientOption, 0, 1)
-	if source.ImpersonateServiceAccount != "" {
-		credentials, err := google.FindDefaultCredentials(ctx, "https://www.googleapis.com/auth/cloud-platform")
-		if err != nil {
-			return nil, fmt.Errorf("load Google credentials: %w", err)
-		}
-		tokenSource, err := impersonate.CredentialsTokenSource(ctx, impersonate.CredentialsConfig{
-			TargetPrincipal: source.ImpersonateServiceAccount,
-			Scopes:          []string{"https://www.googleapis.com/auth/cloud-platform"},
-			Subject:         "",
-			Delegates:       nil,
-		}, option.WithCredentials(credentials))
-		if err != nil {
-			return nil, fmt.Errorf("impersonate Google service account: %w", err)
-		}
-		options = append(options, option.WithTokenSource(tokenSource))
+func (g GCP) client(ctx context.Context, source model.CloudSource) (*container.ClusterManagerClient, error) {
+	options, err := cloudauth.GCPClientOptions(ctx, g.Identity, source)
+	if err != nil {
+		return nil, err
 	}
-
 	client, err := container.NewClusterManagerClient(ctx, options...)
 	if err != nil {
 		return nil, fmt.Errorf("create GKE client: %w", err)
@@ -41,8 +30,8 @@ func newGCPClient(ctx context.Context, source model.CloudSource) (*container.Clu
 	return client, nil
 }
 
-func (GCP) Discover(ctx context.Context, source model.CloudSource) ([]model.Cluster, error) {
-	client, err := newGCPClient(ctx, source)
+func (g GCP) Discover(ctx context.Context, source model.CloudSource) ([]model.Cluster, error) {
+	client, err := g.client(ctx, source)
 	if err != nil {
 		return nil, err
 	}

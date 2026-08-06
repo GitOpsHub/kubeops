@@ -7,15 +7,13 @@ import (
 	"strings"
 
 	"cloud.google.com/go/container/apiv1/containerpb"
-	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v9"
+	"github.com/GitOpsHub/kubeops/backend/internal/cloudauth"
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
-	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
 var (
@@ -91,25 +89,27 @@ func validateDesired(pool model.NodePool, desired int32) error {
 	return nil
 }
 
-func awsClient(ctx context.Context, source model.CloudSource, region string) (*eks.Client, error) {
-	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region), awsconfig.WithRetryMaxAttempts(5))
+func (a AWS) client(ctx context.Context, source model.CloudSource, region string) (*eks.Client, error) {
+	cfg, err := cloudauth.AWSConfig(ctx, a.Identity, source, region)
 	if err != nil {
-		return nil, fmt.Errorf("load AWS credentials: %w", err)
-	}
-	if source.RoleARN != "" {
-		cfg.Credentials = aws.NewCredentialsCache(
-			stscreds.NewAssumeRoleProvider(sts.NewFromConfig(cfg), source.RoleARN),
-		)
+		return nil, err
 	}
 	return eks.NewFromConfig(cfg), nil
 }
 
-func (AWS) Details(
+// credential builds the Azure credential for a source. Discover, Details, and
+// ScaleNodePool previously built it separately, which meant a change to how
+// Azure authenticates had to be made in three places.
+func (a Azure) credential(ctx context.Context, source model.CloudSource) (azcore.TokenCredential, error) {
+	return cloudauth.AzureCredential(ctx, a.Identity, source)
+}
+
+func (a AWS) Details(
 	ctx context.Context,
 	source model.CloudSource,
 	cluster model.Cluster,
 ) (model.ClusterDetails, error) {
-	client, err := awsClient(ctx, source, cluster.Location)
+	client, err := a.client(ctx, source, cluster.Location)
 	if err != nil {
 		return model.ClusterDetails{}, err
 	}
@@ -203,14 +203,14 @@ func normalizeEKSNodePool(group *ekstypes.Nodegroup) model.NodePool {
 	return pool
 }
 
-func (AWS) ScaleNodePool(
+func (a AWS) ScaleNodePool(
 	ctx context.Context,
 	source model.CloudSource,
 	cluster model.Cluster,
 	poolID string,
 	desired int32,
 ) (model.ScaleResult, error) {
-	client, err := awsClient(ctx, source, cluster.Location)
+	client, err := a.client(ctx, source, cluster.Location)
 	if err != nil {
 		return model.ScaleResult{}, err
 	}
@@ -302,12 +302,12 @@ func gkePool(clusterName string, value *containerpb.NodePool, autopilot bool) mo
 	return pool
 }
 
-func (GCP) Details(
+func (g GCP) Details(
 	ctx context.Context,
 	source model.CloudSource,
 	cluster model.Cluster,
 ) (model.ClusterDetails, error) {
-	client, err := newGCPClient(ctx, source)
+	client, err := g.client(ctx, source)
 	if err != nil {
 		return model.ClusterDetails{}, err
 	}
@@ -363,14 +363,14 @@ func (GCP) Details(
 	return details, nil
 }
 
-func (GCP) ScaleNodePool(
+func (g GCP) ScaleNodePool(
 	ctx context.Context,
 	source model.CloudSource,
 	cluster model.Cluster,
 	poolID string,
 	desired int32,
 ) (model.ScaleResult, error) {
-	client, err := newGCPClient(ctx, source)
+	client, err := g.client(ctx, source)
 	if err != nil {
 		return model.ScaleResult{}, err
 	}
@@ -452,7 +452,7 @@ func azurePool(value *armcontainerservice.ManagedClusterAgentPoolProfile) model.
 	return pool
 }
 
-func (Azure) Details(
+func (a Azure) Details(
 	ctx context.Context,
 	source model.CloudSource,
 	cluster model.Cluster,
@@ -461,9 +461,9 @@ func (Azure) Details(
 	if err != nil {
 		return model.ClusterDetails{}, err
 	}
-	credential, err := azidentity.NewDefaultAzureCredential(&azidentity.DefaultAzureCredentialOptions{TenantID: source.TenantID})
+	credential, err := a.credential(ctx, source)
 	if err != nil {
-		return model.ClusterDetails{}, fmt.Errorf("load Azure credentials: %w", err)
+		return model.ClusterDetails{}, err
 	}
 	client, err := armcontainerservice.NewManagedClustersClient(source.ScopeID, credential, nil)
 	if err != nil {
@@ -537,7 +537,7 @@ func enumString[T ~string](value *T) string {
 	return strings.ToLower(string(*value))
 }
 
-func (Azure) ScaleNodePool(
+func (a Azure) ScaleNodePool(
 	ctx context.Context,
 	source model.CloudSource,
 	cluster model.Cluster,
@@ -548,9 +548,9 @@ func (Azure) ScaleNodePool(
 	if err != nil {
 		return model.ScaleResult{}, err
 	}
-	credential, err := azidentity.NewDefaultAzureCredential(&azidentity.DefaultAzureCredentialOptions{TenantID: source.TenantID})
+	credential, err := a.credential(ctx, source)
 	if err != nil {
-		return model.ScaleResult{}, fmt.Errorf("load Azure credentials: %w", err)
+		return model.ScaleResult{}, err
 	}
 	client, err := armcontainerservice.NewAgentPoolsClient(source.ScopeID, credential, nil)
 	if err != nil {
