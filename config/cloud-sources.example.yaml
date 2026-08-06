@@ -5,6 +5,8 @@ sources:
     scope_id: "123456789012"
     regions: [us-east-1, us-west-2]
     enabled: false
+    # Assumed from the ambient credentials locally, and assumed through
+    # AssumeRoleWithWebIdentity wherever the platform supplies an OIDC token.
     role_arn: arn:aws:iam::123456789012:role/KubeOpsInventory
 
   - id: gcp-platform
@@ -14,6 +16,9 @@ sources:
     regions: ["-"]
     enabled: false
     impersonate_service_account: kubeops@example-project.iam.gserviceaccount.com
+    # Federates the deployment's OIDC token instead of using a service account
+    # key. Requires impersonate_service_account above.
+    # workload_identity_provider: //iam.googleapis.com/projects/000000000000/locations/global/workloadIdentityPools/kubeops/providers/vercel
 
   - id: azure-platform
     provider: azure
@@ -22,6 +27,9 @@ sources:
     regions: ["*"]
     enabled: false
     tenant_id: 00000000-0000-0000-0000-000000000000
+    # App registration with a federated identity credential. Set it to present
+    # the deployment's OIDC token instead of a client secret.
+    # client_id: 11111111-1111-1111-1111-111111111111
 
   - id: docker-local
     provider: docker

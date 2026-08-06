@@ -30,6 +30,13 @@ type CloudSource struct {
 	TenantID                  string   `json:"-" yaml:"tenant_id,omitempty"`
 	KubeconfigPath            string   `json:"-" yaml:"kubeconfig_path,omitempty"`
 	Contexts                  []string `json:"-" yaml:"contexts,omitempty"`
+	// ClientID names the Azure app registration whose federated identity
+	// credential trusts this deployment's OIDC issuer.
+	ClientID string `json:"-" yaml:"client_id,omitempty"`
+	// WorkloadIdentityProvider is the full resource name of the Google workload
+	// identity pool provider that trusts this deployment's OIDC issuer, in the
+	// form //iam.googleapis.com/projects/N/locations/global/workloadIdentityPools/POOL/providers/PROVIDER.
+	WorkloadIdentityProvider string `json:"-" yaml:"workload_identity_provider,omitempty"`
 }
 
 type SourceSummary struct {

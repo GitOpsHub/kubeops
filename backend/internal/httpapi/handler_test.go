@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GitOpsHub/kubeops/backend/internal/cloudauth"
 	"github.com/GitOpsHub/kubeops/backend/internal/config"
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
 	"github.com/GitOpsHub/kubeops/backend/internal/onboarding"
@@ -885,5 +886,34 @@ func TestAbortedRequestsAreNotServerErrors(t *testing.T) {
 	}
 	if logged.Len() != 0 {
 		t.Fatalf("client cancellation was logged as an error: %s", logged.String())
+	}
+}
+
+func TestIdentityTokenMiddlewareCarriesTheHeaderIntoContext(t *testing.T) {
+	var got string
+	var present bool
+	handler := withIdentityToken(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got, present = cloudauth.TokenFromContext(r.Context())
+	}))
+
+	request := httptest.NewRequest(http.MethodGet, "/api/clusters", nil)
+	request.Header.Set(cloudauth.VercelOIDCTokenHeader, "header-token")
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+
+	if !present || got != "header-token" {
+		t.Fatalf("token = %q present = %t, want the header value", got, present)
+	}
+}
+
+func TestIdentityTokenMiddlewarePassesThroughWithoutAHeader(t *testing.T) {
+	var present bool
+	handler := withIdentityToken(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		_, present = cloudauth.TokenFromContext(r.Context())
+	}))
+
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/clusters", nil))
+
+	if present {
+		t.Fatal("no identity token should be registered when the header is absent")
 	}
 }

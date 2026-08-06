@@ -5,6 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/GitOpsHub/kubeops/backend/internal/cloudauth"
+	"github.com/GitOpsHub/kubeops/backend/internal/model"
 )
 
 func TestLoadReadsEnvironmentFile(t *testing.T) {
@@ -192,5 +195,199 @@ func TestLoadArgoTargetsResolvesUIAccess(t *testing.T) {
 	if len(targets) != 1 || targets[0].Password != "login-password" ||
 		targets[0].UIURL != "https://localhost:18081" || len(key) != 32 {
 		t.Fatalf("unexpected UI access configuration: %#v", targets)
+	}
+}
+
+func TestLoadWritesInlineGoogleCredentials(t *testing.T) {
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS_JSON", `{"type":"service_account","project_id":"example"}`)
+
+	if _, err := Load(filepath.Join(t.TempDir(), "missing.env")); err != nil {
+		t.Fatal(err)
+	}
+
+	path := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
+	if path == "" {
+		t.Fatal("expected GOOGLE_APPLICATION_CREDENTIALS to point at the written document")
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != `{"type":"service_account","project_id":"example"}` {
+		t.Fatalf("unexpected credentials content: %s", content)
+	}
+}
+
+func TestLoadRejectsMalformedGoogleCredentials(t *testing.T) {
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS_JSON", "not-json")
+
+	if _, err := Load(filepath.Join(t.TempDir(), "missing.env")); err == nil {
+		t.Fatal("expected malformed inline Google credentials to fail")
+	}
+}
+
+func TestLoadLeavesGoogleCredentialsAloneWhenNoInlineValue(t *testing.T) {
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/var/run/secrets/gcp.json")
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS_JSON", "")
+
+	if _, err := Load(filepath.Join(t.TempDir(), "missing.env")); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); got != "/var/run/secrets/gcp.json" {
+		t.Fatalf("unexpected credentials path: %s", got)
+	}
+}
+
+func TestLoadCloudIdentityDefaultsToAuto(t *testing.T) {
+	t.Setenv("CLOUD_IDENTITY_MODE", "")
+	t.Setenv("CLOUD_IDENTITY_AUDIENCE", "https://vercel.com/gitopshub")
+
+	cfg, err := Load(filepath.Join(t.TempDir(), "missing.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CloudIdentity.Mode != cloudauth.ModeAuto {
+		t.Fatalf("mode = %q, want auto", cfg.CloudIdentity.Mode)
+	}
+	if cfg.CloudIdentity.Audience != "https://vercel.com/gitopshub" {
+		t.Fatalf("unexpected audience %q", cfg.CloudIdentity.Audience)
+	}
+}
+
+func TestLoadRejectsUnknownCloudIdentityMode(t *testing.T) {
+	t.Setenv("CLOUD_IDENTITY_MODE", "workload")
+	if _, err := Load(filepath.Join(t.TempDir(), "missing.env")); err == nil {
+		t.Fatal("expected an unknown identity mode to be rejected")
+	}
+}
+
+func TestParseCloudSourcesRejectsIncompleteFederation(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{
+			name: "gcp provider without impersonation",
+			content: `sources:
+  - id: gcp-platform
+    provider: gcp
+    name: GCP
+    scope_id: example-project
+    workload_identity_provider: //iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p/providers/v
+`,
+		},
+		{
+			name: "workload identity provider on a non-gcp source",
+			content: `sources:
+  - id: aws-platform
+    provider: aws
+    name: AWS
+    scope_id: "123456789012"
+    workload_identity_provider: //iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p/providers/v
+`,
+		},
+		{
+			name: "azure client id without a tenant",
+			content: `sources:
+  - id: azure-platform
+    provider: azure
+    name: Azure
+    scope_id: 00000000-0000-0000-0000-000000000000
+    client_id: 11111111-1111-1111-1111-111111111111
+`,
+		},
+		{
+			name: "client id on a non-azure source",
+			content: `sources:
+  - id: gcp-platform
+    provider: gcp
+    name: GCP
+    scope_id: example-project
+    client_id: 11111111-1111-1111-1111-111111111111
+`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := parseCloudSources([]byte(test.content)); err == nil {
+				t.Fatal("expected incomplete federation settings to be rejected")
+			}
+		})
+	}
+}
+
+func TestParseCloudSourcesAcceptsFederation(t *testing.T) {
+	sources, err := parseCloudSources([]byte(`sources:
+  - id: gcp-platform
+    provider: gcp
+    name: GCP
+    scope_id: example-project
+    workload_identity_provider: //iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p/providers/v
+    impersonate_service_account: kubeops@example-project.iam.gserviceaccount.com
+  - id: azure-platform
+    provider: azure
+    name: Azure
+    scope_id: 00000000-0000-0000-0000-000000000000
+    tenant_id: 00000000-0000-0000-0000-000000000000
+    client_id: 11111111-1111-1111-1111-111111111111
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sources[0].WorkloadIdentityProvider == "" || sources[1].ClientID == "" {
+		t.Fatalf("federation settings were dropped: %#v", sources)
+	}
+}
+
+func TestFederationModeReportsCredentialPath(t *testing.T) {
+	t.Setenv(cloudauth.VercelOIDCTokenEnv, "jwt")
+	federating := Config{CloudIdentity: CloudIdentityConfig{Mode: cloudauth.ModeAuto}}
+
+	tests := []struct {
+		name   string
+		cfg    Config
+		source model.CloudSource
+		want   string
+	}{
+		{
+			name:   "aws with a role federates",
+			cfg:    federating,
+			source: model.CloudSource{Provider: model.ProviderAWS, RoleARN: "arn:aws:iam::1:role/KubeOps"},
+			want:   "federated",
+		},
+		{
+			name:   "aws without a role falls back",
+			cfg:    federating,
+			source: model.CloudSource{Provider: model.ProviderAWS},
+			want:   "default-chain",
+		},
+		{
+			name:   "azure with a client id federates",
+			cfg:    federating,
+			source: model.CloudSource{Provider: model.ProviderAzure, ClientID: "client"},
+			want:   "federated",
+		},
+		{
+			name:   "off wins over a configured source",
+			cfg:    Config{CloudIdentity: CloudIdentityConfig{Mode: cloudauth.ModeOff}},
+			source: model.CloudSource{Provider: model.ProviderAWS, RoleARN: "arn:aws:iam::1:role/KubeOps"},
+			want:   "default-chain",
+		},
+		{
+			name:   "local providers never federate",
+			cfg:    federating,
+			source: model.CloudSource{Provider: model.ProviderDocker},
+			want:   "default-chain",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := test.cfg.FederationMode(test.source); got != test.want {
+				t.Fatalf("FederationMode = %q, want %q", got, test.want)
+			}
+		})
 	}
 }

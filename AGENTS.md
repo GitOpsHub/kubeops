@@ -10,6 +10,19 @@ KubeOps is a monorepo for Kubernetes application onboarding and multi-cloud/loca
 
 Keep business logic out of React components and HTTP handlers. UI code should use an API client; handlers should delegate to services.
 
+## Cloud Authentication
+
+`backend/internal/cloudauth` is the only place that builds cloud provider credentials. Provider code in `backend/internal/provider` must call `cloudauth.AWSConfig`, `cloudauth.GCPClientOptions`, or `cloudauth.AzureCredential` rather than constructing an SDK credential directly, so federation and the fallback chain stay in one place.
+
+Two rules follow from how the identity token is delivered:
+
+- **Never cache the token.** It is short-lived and re-issued per invocation. Read it through a `cloudauth.TokenSource` on every credential refresh.
+- **Always thread the request context.** Deployed serverless functions carry the token in the `x-vercel-oidc-token` request header, which `withIdentityToken` moves into the request context. A cloud call made with `context.Background()` silently falls back to the SDK default credential chain instead of failing, so the regression is invisible until a deployment cannot see any clusters.
+
+Sources opt into federation per provider: `role_arn` (AWS), `workload_identity_provider` plus `impersonate_service_account` (GCP), `tenant_id` plus `client_id` (Azure). Credential-bearing fields on `model.CloudSource` are tagged `json:"-"` and must stay that way — the inventory API is unauthenticated.
+
+Never add a static cloud credential to configuration, tests, or fixtures. See the README's *Keyless cloud access* section for the cloud-side trust setup.
+
 ## Build, Test, and Development Commands
 
 Run these commands from the repository root:
@@ -33,6 +46,8 @@ Run `gofmt` on all Go code. Use short, lowercase Go package names and exported P
 ## Testing Guidelines
 
 Add tests for new behavior and regressions. Prefer user-visible React assertions and table-driven Go tests. Mock cluster access; tests must not depend on a developer’s active Kubernetes context. Run both suites for API-spanning changes.
+
+Tests must not reach a cloud provider. When asserting on credentials, inspect the constructed provider — for example `aws.CredentialsCache.IsCredentialsProvider` — rather than calling `Retrieve`, which issues a real STS request.
 
 ## Commit & Pull Request Guidelines
 

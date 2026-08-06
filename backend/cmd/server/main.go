@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/GitOpsHub/kubeops/backend/internal/cloudauth"
 	"github.com/GitOpsHub/kubeops/backend/internal/config"
 	"github.com/GitOpsHub/kubeops/backend/internal/httpapi"
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
@@ -41,12 +42,28 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Resolved once: the source reads the platform's identity token on every
+	// credential refresh, so it stays valid across invocations without being
+	// rebuilt. A nil source means the provider SDK default chains are used.
+	identity := cloudauth.Resolve(cfg.CloudIdentity.Mode)
+	for _, source := range cfg.CloudSources {
+		if !source.Enabled {
+			continue
+		}
+		slog.Info("cloud source credentials",
+			"source", source.ID,
+			"provider", source.Provider,
+			"mode", cfg.FederationMode(source),
+			"audience", cfg.CloudIdentity.Audience,
+		)
+	}
+
 	syncService := syncer.New(
 		repository,
 		provider.Registry{
-			model.ProviderAWS:      provider.AWS{},
-			model.ProviderGCP:      provider.GCP{},
-			model.ProviderAzure:    provider.Azure{},
+			model.ProviderAWS:      provider.AWS{Identity: identity},
+			model.ProviderGCP:      provider.GCP{Identity: identity},
+			model.ProviderAzure:    provider.Azure{Identity: identity},
 			model.ProviderDocker:   provider.LocalKubernetes{Provider: model.ProviderDocker},
 			model.ProviderMinikube: provider.LocalKubernetes{Provider: model.ProviderMinikube},
 		},
@@ -71,9 +88,9 @@ func main() {
 	}
 
 	clusterManagers := provider.ManagementRegistry{
-		model.ProviderAWS:   provider.AWS{},
-		model.ProviderGCP:   provider.GCP{},
-		model.ProviderAzure: provider.Azure{},
+		model.ProviderAWS:   provider.AWS{Identity: identity},
+		model.ProviderGCP:   provider.GCP{Identity: identity},
+		model.ProviderAzure: provider.Azure{Identity: identity},
 	}
 
 	server := &http.Server{

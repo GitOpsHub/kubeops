@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/GitOpsHub/kubeops/backend/internal/cloudauth"
 	"github.com/GitOpsHub/kubeops/backend/internal/config"
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
 	"github.com/GitOpsHub/kubeops/backend/internal/onboarding"
@@ -152,7 +153,26 @@ func newHandler(
 	} else {
 		mux.Handle(argoProxyPrefix, proxy)
 	}
-	return withCORS(withRequestLog(mux), cfg.CORSAllowedOrigin)
+	return withCORS(withRequestLog(withIdentityToken(mux)), cfg.CORSAllowedOrigin)
+}
+
+// withIdentityToken carries the platform's OIDC identity token from the request
+// into the context, where the cloud credential builders read it. A deployed
+// serverless function receives the token this way on every invocation and never
+// in its environment, so without this the backend would silently fall back to
+// the provider SDK default chains in production.
+//
+// The header is injected by the platform, not by the browser: the CORS policy
+// above never allows it through, so a caller cannot supply its own.
+func withIdentityToken(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := r.Header.Get(cloudauth.VercelOIDCTokenHeader)
+		if token == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(cloudauth.WithToken(r.Context(), token)))
+	})
 }
 
 // aborted reports whether the client gave up on the request. The UI cancels

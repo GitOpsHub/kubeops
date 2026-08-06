@@ -5,25 +5,22 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/GitOpsHub/kubeops/backend/internal/cloudauth"
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
-	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
-type AWS struct{}
+// AWS discovers and manages EKS clusters. Identity, when set, federates an OIDC
+// token into the source's IAM role so no static access key is needed.
+type AWS struct {
+	Identity cloudauth.TokenSource
+}
 
-func (AWS) Discover(ctx context.Context, source model.CloudSource) ([]model.Cluster, error) {
-	base, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRetryMaxAttempts(5))
+func (a AWS) Discover(ctx context.Context, source model.CloudSource) ([]model.Cluster, error) {
+	base, err := cloudauth.AWSConfig(ctx, a.Identity, source, "")
 	if err != nil {
-		return nil, fmt.Errorf("load AWS credentials: %w", err)
-	}
-	if source.RoleARN != "" {
-		base.Credentials = aws.NewCredentialsCache(
-			stscreds.NewAssumeRoleProvider(sts.NewFromConfig(base), source.RoleARN),
-		)
+		return nil, err
 	}
 
 	clusters := make([]model.Cluster, 0)

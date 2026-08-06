@@ -60,12 +60,21 @@ chart. Set `GITHUB_REPOSITORY_USERNAME` to the GitHub username associated with
 that token. The setup intentionally does not copy a broad GitHub CLI credential
 into either cluster.
 
-Set the desired sources to `enabled: true`. Authentication uses each provider’s standard credential chain:
+Set the desired sources to `enabled: true`. Locally, authentication uses each provider’s standard credential chain:
 
 - AWS default credentials, optionally assuming `role_arn`
 - Google Application Default Credentials, optionally impersonating a service account
 - Azure `DefaultAzureCredential`, optionally scoped with `tenant_id`
 - Docker Desktop, kind, k3d, and Minikube through the configured kubeconfig
+
+Deployed environments federate an OIDC token into a cloud role instead, so no
+provider key is stored — see [Keyless cloud access](#keyless-cloud-access). The
+fallback above is what keeps local development working unchanged. To exercise the
+federated path locally, run `vercel env pull` and copy the `VERCEL_OIDC_TOKEN` it
+writes into `.env.local` across to `.env`, which is the file the backend reads.
+Development tokens are valid for twelve hours, and their `sub` ends in
+`:environment:development`, so the cloud trust policies need an entry for that
+environment too.
 
 Local providers default to `~/.kube/config`. Docker discovery recognizes `docker-desktop`, `docker-for-desktop`, `kind-*`, and `k3d-*` contexts; Minikube recognizes `minikube`, `minikube-*`, and Minikube certificate paths. Set `contexts` explicitly when profiles use custom names.
 
@@ -142,6 +151,96 @@ defaults file is outside the backend project root. Keep the token variables
 referenced by `ARGO_TARGETS_YAML` as separate encrypted environment variables.
 Only configure cloud and Argo CD endpoints reachable from Vercel; Docker Desktop,
 Minikube, localhost URLs, and local kubeconfig files cannot be used there.
+
+Every provider named by an enabled source also needs a way to authenticate,
+because the provider SDKs fall back to local `aws`, `gcloud`, and `az` profiles
+that do not exist on Vercel. An enabled source that cannot authenticate leaves
+the fleet view empty and fails its syncs. The supported answer is OIDC workload
+identity federation, described below; long-lived provider keys still work but
+should be treated as a migration path rather than a destination.
+
+### Keyless cloud access
+
+Vercel mints a short-lived OIDC identity token for every deployment and
+invocation. KubeOps exchanges it for temporary provider credentials, so each
+cloud grants access to a **role** that trusts the Vercel issuer instead of to a
+secret stored in the environment. Nothing is cached: the token is re-read on
+every credential refresh.
+
+Enable **Secure Backend Access with OIDC Federation** in the Vercel project
+settings, then register the same issuer, subject, and audience with each cloud.
+
+| Claim | Value |
+| --- | --- |
+| `iss` | `https://oidc.vercel.com/<team-slug>` in **team** issuer mode, or `https://oidc.vercel.com` in **global** mode. The project's OIDC settings decide which. |
+| `sub` | `owner:<team-slug>:project:<project-name>:environment:production`. Register a second trust entry for `environment:preview` if preview deployments must reach the clouds. |
+| `aud` | `https://vercel.com/<team-slug>`. |
+
+KubeOps presents the **default audience** to all three clouds. Vercel can mint a
+token with a custom `aud`, but only through the `@vercel/oidc` npm helper, which
+a Go backend cannot use — so configure each cloud to accept the default value
+rather than the provider-recommended one.
+
+| Cloud | Trust setup | Source fields | Permissions |
+| --- | --- | --- | --- |
+| AWS | Create an IAM OIDC identity provider for the issuer, then a role whose trust policy allows `sts:AssumeRoleWithWebIdentity` with `StringEquals` conditions on both `<issuer-host>:aud` and `<issuer-host>:sub` | `role_arn` | `eks:ListClusters`, `eks:DescribeCluster`, `eks:ListNodegroups`, `eks:DescribeNodegroup`; add `eks:UpdateNodegroupConfig` to scale |
+| Google | Create a workload identity pool and an OIDC provider: **Issuer URL** as above, **Allowed audiences** set to `https://vercel.com/<team-slug>` (not *Default audience*, which would require a custom `aud`), and the attribute mapping `google.subject = assertion.sub`. Then grant the pool principal `principal://iam.googleapis.com/projects/<project-number>/locations/global/workloadIdentityPools/<pool>/subject/<sub>` the Workload Identity User role on the target service account | `workload_identity_provider`, `impersonate_service_account` | Service account needs `roles/container.viewer`; `roles/container.developer` to scale |
+| Azure | On an app registration or user-assigned managed identity, add a federated credential with scenario **Other**, **Issuer** as above, **Subject identifier** set to the exact `sub`, and **Audience** set to `https://vercel.com/<team-slug>`. Azure does not support partial claim matching, so add one credential per environment | `tenant_id`, `client_id` | `Reader` on the subscription; `Azure Kubernetes Service Contributor` to scale |
+
+`workload_identity_provider` is the pool provider's full resource name,
+`//iam.googleapis.com/projects/<project-number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>`.
+
+Set `CLOUD_IDENTITY_MODE` to `auto` (the default) to federate whenever the
+platform supplies a token and otherwise fall back to the SDK default chains,
+`vercel` to always use Vercel's token, or `off` to disable federation entirely.
+Set `CLOUD_IDENTITY_AUDIENCE` to the audience above; it is reported in the
+startup log so a trust policy mismatch is visible without a failed sync. Each
+enabled source also logs whether it resolved to `federated` or `default-chain`.
+
+Once federation is verified, delete `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+`AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, and `GOOGLE_APPLICATION_CREDENTIALS_JSON`
+from the Vercel project.
+
+#### Where the token comes from
+
+The token reaches the backend by two different routes, and both are handled:
+
+- **Deployed functions** receive it as the `x-vercel-oidc-token` **request
+  header**. `VERCEL_OIDC_TOKEN` is *not* set at runtime. `withIdentityToken` in
+  `backend/internal/httpapi/handler.go` moves the header into the request
+  context, and the credential builders read it from there. This is why the
+  handler chain matters: a code path that reaches a cloud provider without a
+  request context falls back to the default chain.
+- **Builds and local development** receive it as the `VERCEL_OIDC_TOKEN`
+  environment variable, which is what `vercel env pull` writes.
+
+Token lifetimes are set by Vercel: one hour for build tokens, two hours for
+`preview` and `production` function tokens, and twelve hours for `development`
+tokens.
+
+Because background workers have no request context, they can only federate from
+the environment variable. That is consistent with `BACKGROUND_WORKERS`
+defaulting to off on Vercel — syncs there run inside a request, which carries
+the header.
+
+### Static credentials (fallback)
+
+Sources without federation configured use each provider's standard credential
+chain, which on Vercel means these variables.
+
+| Provider | Variables |
+| --- | --- |
+| AWS | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` |
+| Azure | `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` |
+| Google | `GOOGLE_APPLICATION_CREDENTIALS_JSON` |
+
+Google's SDK reads credentials from a file rather than an environment variable,
+so the backend writes `GOOGLE_APPLICATION_CREDENTIALS_JSON` to the temporary
+directory at startup and points `GOOGLE_APPLICATION_CREDENTIALS` at it. Set it to
+a service account key or to a Workload Identity Federation external account
+configuration. Leave the variable unset to keep an externally provided
+`GOOGLE_APPLICATION_CREDENTIALS` path in effect; sources that set
+`workload_identity_provider` bypass this file entirely.
 
 Set `BACKGROUND_WORKERS=true` only on an always-running backend. Such a worker
 must use the same authoritative source configuration as the API, and local
