@@ -111,3 +111,33 @@ func TestLocalKubernetesDiscovery(t *testing.T) {
 		t.Fatalf("unexpected node status: %#v", cluster)
 	}
 }
+
+// A pinned context that has vanished is a deleted local cluster, not a broken
+// setup: discovery reports it absent so the syncer can mark it removed, rather
+// than failing and leaving the phantom cluster active forever.
+func TestLocalKubernetesDiscoverySkipsDeletedPinnedContexts(t *testing.T) {
+	kubeconfigPath := filepath.Join(t.TempDir(), "config")
+	if err := clientcmd.WriteToFile(clientcmdapi.Config{
+		Clusters:       map[string]*clientcmdapi.Cluster{},
+		AuthInfos:      map[string]*clientcmdapi.AuthInfo{},
+		Contexts:       map[string]*clientcmdapi.Context{},
+		CurrentContext: "",
+	}, kubeconfigPath); err != nil {
+		t.Fatal(err)
+	}
+
+	clusters, err := (LocalKubernetes{Provider: model.ProviderMinikube}).Discover(
+		context.Background(),
+		model.CloudSource{
+			ID: "minikube-local", Provider: model.ProviderMinikube, Name: "Minikube",
+			ScopeID: "local", KubeconfigPath: kubeconfigPath, Enabled: true,
+			Contexts: []string{"minikube"},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(clusters) != 0 {
+		t.Fatalf("expected no clusters for a deleted context, got %#v", clusters)
+	}
+}

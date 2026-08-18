@@ -53,10 +53,16 @@ func selectedContexts(
 	providerName string,
 ) ([]string, error) {
 	if len(source.Contexts) > 0 {
-		contexts := append([]string(nil), source.Contexts...)
-		for _, name := range contexts {
-			if _, exists := config.Contexts[name]; !exists {
-				return nil, fmt.Errorf("kubeconfig context %q does not exist", name)
+		// A pinned context missing from a kubeconfig that otherwise loaded is
+		// how a deleted local cluster looks — `minikube delete` and Docker
+		// Desktop resets erase the context. Failing the sync here would keep
+		// the phantom cluster active in the inventory forever; reporting it
+		// absent lets the syncer mark it removed, and recreating the cluster
+		// restores it on the next sync.
+		contexts := make([]string, 0, len(source.Contexts))
+		for _, name := range source.Contexts {
+			if _, exists := config.Contexts[name]; exists {
+				contexts = append(contexts, name)
 			}
 		}
 		sort.Strings(contexts)
