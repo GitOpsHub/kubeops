@@ -29,10 +29,16 @@ type Config struct {
 	BackgroundWorkers bool
 	SyncInterval      time.Duration
 	SyncWorkers       int
-	CloudSourcesFile  string
-	CloudSources      []model.CloudSource
-	CloudIdentity     CloudIdentityConfig
-	Onboarding        OnboardingConfig
+	// CronSecret authorizes POST /api/cloud-sources/sync, the endpoint an
+	// external scheduler (Vercel Cron) calls to pull every enabled source on a
+	// schedule when BACKGROUND_WORKERS is off. Empty disables the endpoint,
+	// since an unauthenticated bulk-sync trigger would be abusable on an API
+	// that otherwise has no authentication.
+	CronSecret       string
+	CloudSourcesFile string
+	CloudSources     []model.CloudSource
+	CloudIdentity    CloudIdentityConfig
+	Onboarding       OnboardingConfig
 }
 
 // CloudIdentityConfig selects how KubeOps proves its identity to cloud
@@ -152,6 +158,7 @@ func Load(envFile string) (Config, error) {
 		BackgroundWorkers: backgroundWorkers,
 		SyncInterval:      syncInterval,
 		SyncWorkers:       workers,
+		CronSecret:        strings.TrimSpace(os.Getenv("CRON_SECRET")),
 		CloudSourcesFile:  sourcesFile,
 		CloudSources:      sources,
 		CloudIdentity:     cloudIdentity,

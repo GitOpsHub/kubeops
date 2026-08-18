@@ -10,6 +10,7 @@ import (
 
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
 	"github.com/GitOpsHub/kubeops/backend/internal/provider"
+	"github.com/GitOpsHub/kubeops/backend/internal/store"
 )
 
 type Service struct {
@@ -130,6 +131,27 @@ func (s *Service) Sync(ctx context.Context, sourceID, trigger string) (model.Syn
 	run.Status = "succeeded"
 	run.DiscoveredCount = len(clusters)
 	return run, nil
+}
+
+// SyncAll runs Sync for every enabled source in turn, inside the caller's
+// request. It is the durable, request-driven equivalent of the scheduler's
+// ticker for deployments where BACKGROUND_WORKERS is off (Vercel): an
+// external scheduler (e.g. Vercel Cron) hits an endpoint that calls this
+// instead of a user pressing "Sync now" per source. A source's discovery
+// error does not stop the remaining sources from being attempted.
+func (s *Service) SyncAll(ctx context.Context, trigger string) ([]model.SyncRun, error) {
+	runs := make([]model.SyncRun, 0, len(s.sources))
+	for _, sourceID := range s.sourceIDs() {
+		run, err := s.Sync(ctx, sourceID, trigger)
+		if err != nil {
+			if errors.Is(err, store.ErrSyncAlreadyActive) {
+				continue
+			}
+			return runs, err
+		}
+		runs = append(runs, run)
+	}
+	return runs, nil
 }
 
 func (s *Service) work(ctx context.Context, worker int) {

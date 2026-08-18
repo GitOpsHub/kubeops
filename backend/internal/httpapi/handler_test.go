@@ -65,10 +65,14 @@ type fakeClusterManager struct {
 }
 
 type fakeSourceSyncer struct {
-	sourceID string
-	trigger  string
-	run      model.SyncRun
-	err      error
+	sourceID   string
+	trigger    string
+	run        model.SyncRun
+	err        error
+	allTrigger string
+	allRuns    []model.SyncRun
+	allErr     error
+	allCalled  int
 }
 
 func (f *fakeSourceSyncer) Sync(
@@ -79,6 +83,12 @@ func (f *fakeSourceSyncer) Sync(
 	f.sourceID = sourceID
 	f.trigger = trigger
 	return f.run, f.err
+}
+
+func (f *fakeSourceSyncer) SyncAll(_ context.Context, trigger string) ([]model.SyncRun, error) {
+	f.allCalled++
+	f.allTrigger = trigger
+	return f.allRuns, f.allErr
 }
 
 type fakeApplicationOnboarder struct {
@@ -366,6 +376,64 @@ func TestManualSyncCompletesInsideRequestWhenSyncerIsConfigured(t *testing.T) {
 	}
 	if sourceSyncer.sourceID != "gcp-platform" || sourceSyncer.trigger != "manual" {
 		t.Fatalf("unexpected sync call: %#v", sourceSyncer)
+	}
+}
+
+func TestCronSyncRequiresConfiguredSecret(t *testing.T) {
+	handler := NewHandlerWithOnboarding(
+		config.Config{}, &fakeRepository{}, nil, nil, &fakeSourceSyncer{},
+	)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/cloud-sources/sync", nil)
+	request.Header.Set("Authorization", "Bearer anything")
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status 503, got %d", response.Code)
+	}
+}
+
+func TestCronSyncRejectsWrongSecret(t *testing.T) {
+	handler := NewHandlerWithOnboarding(
+		config.Config{CronSecret: "correct-secret"}, &fakeRepository{}, nil, nil, &fakeSourceSyncer{},
+	)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/cloud-sources/sync", nil)
+	request.Header.Set("Authorization", "Bearer wrong-secret")
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401, got %d", response.Code)
+	}
+}
+
+func TestCronSyncRunsAllSourcesWithMatchingSecret(t *testing.T) {
+	sourceSyncer := &fakeSourceSyncer{allRuns: []model.SyncRun{
+		{ID: "run-1", SourceID: "aws-platform", Trigger: "cron", Status: "succeeded"},
+		{ID: "run-2", SourceID: "gcp-platform", Trigger: "cron", Status: "succeeded"},
+	}}
+	handler := NewHandlerWithOnboarding(
+		config.Config{CronSecret: "correct-secret"}, &fakeRepository{}, nil, nil, sourceSyncer,
+	)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/cloud-sources/sync", nil)
+	request.Header.Set("Authorization", "Bearer correct-secret")
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", response.Code)
+	}
+	if sourceSyncer.allCalled != 1 || sourceSyncer.allTrigger != "cron" {
+		t.Fatalf("unexpected sync call: %#v", sourceSyncer)
+	}
+	var body struct {
+		Items []model.SyncRun `json:"items"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Items) != 2 {
+		t.Fatalf("expected 2 runs, got %#v", body.Items)
 	}
 }
 

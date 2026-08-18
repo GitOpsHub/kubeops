@@ -144,6 +144,20 @@ deployment.
 
 Vercel automatically disables the continuous inventory and onboarding workers.
 Manual inventory syncs execute completely inside the initiating HTTP request.
+To keep the fleet view current without a person pressing "Sync now," set
+`CRON_SECRET` on the backend project and deploy — `backend/vercel.json`
+schedules a Vercel Cron job that calls `GET /api/cloud-sources/sync` (bulk
+pull of every enabled source) on the interval in its `schedule` field,
+authenticated with the `Authorization: Bearer $CRON_SECRET` header Vercel
+sends automatically to cron invocations. Leaving `CRON_SECRET` unset disables
+the endpoint (`503`), since an unauthenticated bulk-sync trigger would be
+abusable on an API that otherwise has no authentication. The default schedule
+(`0 3 * * *`, once daily) fits Vercel's Hobby plan, which allows at most one
+run per day; Pro and Enterprise plans allow much finer schedules (down to
+every minute), so tighten the `schedule` cron expression if the plan allows
+it. Background-worker deployments (`BACKGROUND_WORKERS=true`, the default off
+Vercel) already pull on `SYNC_INTERVAL` via their own ticker and don't need
+the cron job.
 Because ignored local YAML files are not available in a Git deployment, set
 `CLOUD_SOURCES_YAML` and `ARGO_TARGETS_YAML` to the contents of their respective
 configuration files, and set `GLOBAL_HELM_DEFAULT_VALUES_YAML` when the chart
