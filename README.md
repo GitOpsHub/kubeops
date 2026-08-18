@@ -152,11 +152,12 @@ authenticated with the `Authorization: Bearer $CRON_SECRET` header Vercel
 sends automatically to cron invocations. Leaving `CRON_SECRET` unset disables
 the endpoint (`503`), since an unauthenticated bulk-sync trigger would be
 abusable on an API that otherwise has no authentication. The default schedule
-(every 10 minutes) requires a Pro or Enterprise plan; Hobby plans are limited
-to one run per day, so adjust the `schedule` cron expression to match your
-plan. Background-worker deployments (`BACKGROUND_WORKERS=true`, the default
-off Vercel) already pull on `SYNC_INTERVAL` via their own ticker and don't
-need the cron job.
+(`0 3 * * *`, once daily) fits Vercel's Hobby plan, which allows at most one
+run per day; Pro and Enterprise plans allow much finer schedules (down to
+every minute), so tighten the `schedule` cron expression if the plan allows
+it. Background-worker deployments (`BACKGROUND_WORKERS=true`, the default off
+Vercel) already pull on `SYNC_INTERVAL` via their own ticker and don't need
+the cron job.
 Because ignored local YAML files are not available in a Git deployment, set
 `CLOUD_SOURCES_YAML` and `ARGO_TARGETS_YAML` to the contents of their respective
 configuration files, and set `GLOBAL_HELM_DEFAULT_VALUES_YAML` when the chart
