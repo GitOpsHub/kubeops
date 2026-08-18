@@ -4,5 +4,11 @@
     "env": {
       "GO_BUILD_FLAGS": "-ldflags '-s -w'"
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cloud-sources/sync",
+      "schedule": "*/10 * * * *"
+    }
+  ]
 }

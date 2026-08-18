@@ -174,6 +174,37 @@ func TestSyncRunsDiscoveryInsideRequest(t *testing.T) {
 	}
 }
 
+func TestSyncAllRunsEveryEnabledSource(t *testing.T) {
+	repository := &fakeStore{}
+	service := New(
+		repository,
+		provider.Registry{
+			"gcp": fakeDiscoverer{provider: "gcp"},
+			"aws": fakeDiscoverer{provider: "aws"},
+		},
+		[]model.CloudSource{
+			{ID: "gcp", Provider: "gcp", Name: "GCP", ScopeID: "project", Enabled: true},
+			{ID: "aws", Provider: "aws", Name: "AWS", ScopeID: "account", Enabled: true},
+			{ID: "disabled", Provider: "aws", Name: "Disabled", ScopeID: "account", Enabled: false},
+		},
+		5*time.Minute,
+		1,
+	)
+
+	runs, err := service.SyncAll(context.Background(), "cron")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("expected 2 runs, got %#v", runs)
+	}
+	for _, run := range runs {
+		if run.Trigger != "cron" || run.Status != "succeeded" {
+			t.Fatalf("unexpected run: %#v", run)
+		}
+	}
+}
+
 func TestSyncRejectsSourceMissingFromRuntimeConfiguration(t *testing.T) {
 	service := New(&fakeStore{}, nil, nil, 5*time.Minute, 1)
 	if _, err := service.Sync(context.Background(), "stale-source", "manual"); !errors.Is(err, ErrSourceUnavailable) {

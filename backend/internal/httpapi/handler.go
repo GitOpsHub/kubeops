@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bufio"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
@@ -59,6 +60,7 @@ type ApplicationOnboarder interface {
 
 type SourceSyncer interface {
 	Sync(context.Context, string, string) (model.SyncRun, error)
+	SyncAll(context.Context, string) ([]model.SyncRun, error)
 }
 
 type ApplicationReconciler interface {
@@ -121,6 +123,10 @@ func newHandler(
 	mux.HandleFunc("GET /api/cloud-sources", api.sources)
 	mux.HandleFunc("GET /api/sync-runs", api.syncRuns)
 	mux.HandleFunc("POST /api/cloud-sources/{id}/sync", api.queueSync)
+	// Vercel Cron always invokes with GET; POST stays available for any other
+	// scheduler that presents the same bearer secret.
+	mux.HandleFunc("GET /api/cloud-sources/sync", api.cronSync)
+	mux.HandleFunc("POST /api/cloud-sources/sync", api.cronSync)
 	mux.HandleFunc("POST /api/application-onboardings", api.createApplicationOnboarding)
 	mux.HandleFunc("GET /api/application-onboardings", api.applicationOnboardings)
 	mux.HandleFunc("GET /api/application-onboardings/defaults", api.applicationOnboardingDefaults)
@@ -477,6 +483,37 @@ func (api *API) queueSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, run)
+}
+
+// cronSync pulls every enabled cloud source once, driven by an external
+// scheduler (Vercel Cron, which always calls with GET) rather than a person
+// clicking "Sync now". It only runs when CRON_SECRET is configured, and only
+// for the caller that presents it — the API otherwise has no authentication,
+// so an unguarded bulk trigger here would let anyone repeatedly force
+// discovery across every source.
+func (api *API) cronSync(w http.ResponseWriter, r *http.Request) {
+	if api.config.CronSecret == "" {
+		writeError(w, http.StatusServiceUnavailable, "scheduled sync is not configured")
+		return
+	}
+	if subtle.ConstantTimeCompare(
+		[]byte(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")),
+		[]byte(api.config.CronSecret),
+	) != 1 {
+		writeError(w, http.StatusUnauthorized, "invalid or missing scheduled sync credentials")
+		return
+	}
+	if api.syncer == nil {
+		writeError(w, http.StatusServiceUnavailable, "cloud source syncing is not available")
+		return
+	}
+	runs, err := api.syncer.SyncAll(r.Context(), "cron")
+	if err != nil {
+		slog.Error("run scheduled sync", "error", err)
+		writeError(w, http.StatusInternalServerError, "unable to run scheduled cloud source sync")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": runs})
 }
 
 func (api *API) createApplicationOnboarding(w http.ResponseWriter, r *http.Request) {
