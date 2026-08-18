@@ -1,6 +1,10 @@
 /* App frame: top bar, primary navigation, page headings. */
 
+/* A column that hands the leftover viewport to the page, so a short list can
+   still park its pager at the foot of the screen instead of mid-air. */
 .app-shell {
+  display: flex;
+  flex-direction: column;
   min-height: 100vh;
   min-width: 0;
 }
@@ -169,6 +173,10 @@
   gap: var(--space-6);
   align-content: start;
   min-width: 0;
+  /* Takes the rest of the shell column, and lets a page's single section grow
+     into it when the page opts in with its own 1fr row. */
+  flex: 1 1 auto;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 /* Page and section headings ------------------------------------------- */
