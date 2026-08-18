@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
 import { buildApplication, buildResource, buildTarget, mockAPI } from '../test/mock-api'
 
@@ -25,6 +25,70 @@ afterEach(() => {
 })
 
 describe('applications list', () => {
+  // This environment provides no localStorage, so the view preference gets an
+  // in-memory stand-in. Most list tests exercise the table's rows, headers,
+  // and expansion, so they opt out of the tile default up front; the tile
+  // tests clear that seed to see what a first visit sees.
+  const storedPreferences = new Map<string, string>()
+  beforeEach(() => {
+    storedPreferences.clear()
+    storedPreferences.set('kubeops.applications.view', 'table')
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storedPreferences.get(key) ?? null,
+      setItem: (key: string, value: string) => storedPreferences.set(key, value),
+      removeItem: (key: string) => storedPreferences.delete(key),
+      clear: () => storedPreferences.clear(),
+    })
+  })
+
+  it('shows Argo-style tiles by default with health, sync, and scope', async () => {
+    storedPreferences.clear()
+    mockAPI({
+      applications: [
+        buildApplication({
+          status: 'partial',
+          targets: [
+            buildTarget({ id: 'target-1', region: 'us-east-1' }),
+            buildTarget({
+              id: 'target-2',
+              region: 'eu-west-1',
+              clusterName: 'prod-eu',
+              healthStatus: 'Degraded',
+              syncStatus: 'OutOfSync',
+              status: 'failed',
+            }),
+          ],
+        }),
+      ],
+    })
+    renderApp('/applications')
+
+    const card = (await screen.findByRole('link', { name: /payments-api/ })).closest('article')
+    expect(card).not.toBeNull()
+    // The rollup surfaces the worst target, Argo-glyph first.
+    expect(within(card!).getByLabelText('Health Degraded')).toBeInTheDocument()
+    expect(within(card!).getByLabelText('Sync OutOfSync')).toBeInTheDocument()
+    expect(within(card!).getByText('prod')).toBeInTheDocument()
+    expect(within(card!).getByText('1 release · 2 targets')).toBeInTheDocument()
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+  })
+
+  it('switches between tile and table views', async () => {
+    storedPreferences.clear()
+    mockAPI({ applications: [buildApplication({})] })
+    const user = userEvent.setup()
+    renderApp('/applications')
+
+    await screen.findByRole('link', { name: /payments-api/ })
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Table' }))
+    expect(await screen.findByRole('table')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Tiles' }))
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+  })
+
   it('lists onboarded applications with regions, targets, and status', async () => {
     mockAPI({
       applications: [

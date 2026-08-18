@@ -576,6 +576,20 @@ func (s *Service) Offboard(ctx context.Context, id string) (model.ApplicationOnb
 			callCtx, target.ArgoApplication, s.config.ArgoNamespace,
 		)
 		if deleteErr != nil && !errors.Is(deleteErr, ErrApplicationNotFound) {
+			// A cluster deleted out from under its onboarding takes its Argo CD
+			// with it, so this delete can never be acknowledged and the
+			// onboarding would stay stuck forever. The inventory is the
+			// authority on existence: once the syncer no longer reports the
+			// cluster, there is nothing left to remove. The lookup gets a fresh
+			// context because the failed delete may have consumed callCtx's
+			// entire timeout.
+			if s.clusterRemoved(context.WithoutCancel(callCtx), target.ClusterID) {
+				slog.Info("offboarded target on a removed cluster",
+					"onboarding", record.ID, "target", target.ID,
+					"cluster", target.ClusterName, "application", target.ArgoApplication)
+				return "offboarded", "Unknown", "Missing",
+					"Cluster no longer exists; GitHub values were preserved"
+			}
 			slog.Error("delete Argo CD application",
 				"onboarding", record.ID, "target", target.ID,
 				"cluster", target.ClusterName, "application", target.ArgoApplication,
@@ -589,6 +603,22 @@ func (s *Service) Offboard(ctx context.Context, id string) (model.ApplicationOnb
 		return model.ApplicationOnboarding{}, err
 	}
 	return s.Get(ctx, id)
+}
+
+// clusterRemoved reports whether the inventory no longer carries the cluster —
+// hard-deleted or marked removed by the syncer. A lookup error returns false:
+// uncertainty must keep the offboard failure rather than fake a success.
+func (s *Service) clusterRemoved(ctx context.Context, clusterID string) bool {
+	clusters, err := s.store.GetClustersByIDs(ctx, []string{clusterID})
+	if err != nil {
+		return false
+	}
+	for _, cluster := range clusters {
+		if cluster.RemovedAt == nil {
+			return false
+		}
+	}
+	return true
 }
 
 type targetOperation func(

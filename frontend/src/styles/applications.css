@@ -1,9 +1,11 @@
 /* Applications list, its expanded target table, and the application detail view. */
 
+/* A flex column rather than a grid so the tiles frame can absorb the leftover
+   viewport and keep the pager at the foot of the page. */
 .applications-page {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: var(--space-5);
-  align-content: start;
   width: 100%;
   max-width: calc(1400px - var(--space-6) - var(--space-6));
   margin-inline: auto;
@@ -23,6 +25,54 @@
   max-width: 58ch;
   color: var(--text-muted);
   font-size: var(--text-sm);
+}
+
+.applications-heading-actions {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+}
+
+/* Tiles or table: a segmented pair, styled like the detail view's tablist so
+   switching views reads as the same gesture everywhere. */
+.view-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.view-toggle button {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.view-toggle button svg {
+  width: 13px;
+  height: 13px;
+  fill: currentcolor;
+}
+
+.view-toggle button:hover {
+  color: var(--text);
+}
+
+.view-toggle button.is-active {
+  color: var(--accent);
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: var(--shadow-sm);
 }
 
 /* Search and status are one operator action, so they share a stable control
@@ -82,6 +132,38 @@
 
 .application-filter-control select {
   width: 100%;
+}
+
+.application-filter-grid--with-sort {
+  grid-template-columns:
+    minmax(240px, 1fr) minmax(150px, 200px) minmax(150px, 200px)
+    minmax(160px, 210px);
+}
+
+.tile-sort-control {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.tile-sort-control select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tile-sort-control button {
+  flex: 0 0 auto;
+  width: 40px;
+  padding: 0;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+}
+
+.tile-sort-control button:hover {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 /* The triage row. A hundred applications make "what is broken" the first
@@ -346,6 +428,274 @@
 .release-target-count small {
   color: var(--text-subtle);
   font-size: var(--text-2xs);
+}
+
+/* Argo-style application tiles ------------------------------------------ */
+
+/* Tiles sit straight on the canvas rather than inside the table's frame, so
+   each card carries its own border and the grid breathes between them. */
+.application-tiles-frame {
+  display: grid;
+  gap: var(--space-4);
+  /* The grid takes whatever height the page hands down, so the pagination bar
+     lands at the bottom of the screen rather than hugging a short list. */
+  flex: 1 0 auto;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.application-tiles-frame > .application-card-grid {
+  align-content: start;
+}
+
+.application-tiles-frame > .retry-state,
+.application-tiles-frame > .table-state {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.application-tiles-frame > .pagination {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.application-card-grid {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+}
+
+/* The top edge carries the reconciliation verdict — the same tone language as
+   the table's rail, turned into the first thing the eye meets on a wall of
+   tiles, exactly how Argo's own tile wall is scanned. */
+.application-card {
+  --card-tone: var(--idle);
+
+  position: relative;
+  display: grid;
+  gap: var(--space-3);
+  align-content: start;
+  padding: var(--space-4);
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition:
+    border-color var(--duration-fast),
+    box-shadow var(--duration-fast),
+    transform var(--duration-fast);
+}
+
+.application-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 3px;
+  background: var(--card-tone);
+}
+
+.application-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .application-card:hover {
+    transform: none;
+  }
+}
+
+.application-card--converged {
+  --card-tone: var(--ok);
+}
+
+.application-card--reconciling {
+  --card-tone: var(--warn);
+}
+
+.application-card--diverged {
+  --card-tone: var(--err);
+}
+
+.application-card-head {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.application-card-identity {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.application-card-name {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  font-weight: 600;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.application-card-name:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.application-card-namespace {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Argo's two glyphs, health then sync, reading order matching the question
+   order: is it well, and does it match git. */
+.application-card-states {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.argo-state {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 var(--space-3) 0 var(--space-2);
+  background: color-mix(in srgb, var(--state-tone) 9%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--state-tone) 28%, transparent);
+  border-radius: var(--radius-pill);
+}
+
+.argo-state svg {
+  width: 14px;
+  height: 14px;
+  color: var(--state-tone);
+}
+
+.argo-state-label {
+  color: var(--text);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+}
+
+.argo-state--ok {
+  --state-tone: var(--ok);
+}
+
+.argo-state--warn {
+  --state-tone: var(--warn);
+}
+
+.argo-state--err {
+  --state-tone: var(--err);
+}
+
+.argo-state--idle {
+  --state-tone: var(--idle);
+}
+
+.argo-state-icon--spin {
+  animation: argo-spin 1.4s linear infinite;
+}
+
+.argo-state-icon--pulse {
+  animation: argo-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes argo-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes argo-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .argo-state-icon--spin,
+  .argo-state-icon--pulse {
+    animation: none;
+  }
+}
+
+.application-card-facts {
+  display: grid;
+  gap: var(--space-2) var(--space-3);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+
+.application-card-facts > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.application-card-fact--wide {
+  grid-column: 1 / -1;
+}
+
+.application-card-facts dt {
+  color: var(--text-subtle);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.application-card-facts dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.application-card-foot {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--space-1);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.application-card-counts {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.application-card-argo {
+  display: inline-flex;
+  gap: var(--space-1);
+  align-items: center;
+  color: var(--accent);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.application-card-argo svg {
+  width: 11px;
+  height: 11px;
+}
+
+.application-card-argo:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 /* Row expander --------------------------------------------------------- */

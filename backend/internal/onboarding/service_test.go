@@ -781,6 +781,58 @@ func TestOffboardDeletesApplicationButPreservesRepositoryRecord(t *testing.T) {
 	}
 }
 
+// A cluster deleted out from under its onboarding takes its Argo CD with it,
+// so the delete can never be acknowledged. The inventory decides: a removed or
+// absent cluster offboards vacuously, while a live cluster keeps the failure.
+func TestOffboardResolvesTargetsOnRemovedClusters(t *testing.T) {
+	now := time.Now()
+	tests := []struct {
+		name       string
+		clusters   []model.Cluster
+		wantStatus string
+	}{
+		{name: "cluster marked removed", clusters: []model.Cluster{
+			{ID: "cluster-1", RemovedAt: &now},
+		}, wantStatus: "offboarded"},
+		{name: "cluster hard-deleted", clusters: nil, wantStatus: "offboarded"},
+		{name: "cluster still live", clusters: []model.Cluster{
+			{ID: "cluster-1"},
+		}, wantStatus: "failed"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			target := model.ApplicationDeployment{
+				ID: "target-1", ClusterID: "cluster-1", ClusterName: "prod",
+				SourceID: "aws", ProviderResourceID: "arn:cluster/prod",
+				ArgoApplication: "payments",
+				Status:          "healthy", SyncStatus: "Synced", HealthStatus: "Healthy",
+			}
+			repository := &fakeRepository{
+				clusters: test.clusters,
+				record: model.ApplicationOnboarding{
+					ID: "onboarding-1", Name: "payments",
+					Targets: []model.ApplicationDeployment{target},
+				},
+			}
+			client := &fakeArgoClient{deleteErr: errors.New("connection refused")}
+			service := &Service{
+				store: repository,
+				config: config.OnboardingConfig{
+					ArgoNamespace: "argo-cd", RequestTimeout: time.Second,
+				},
+				clients: map[string]ArgoClient{targetKey("aws", "arn:cluster/prod"): client},
+			}
+
+			if _, err := service.Offboard(context.Background(), "onboarding-1"); err != nil {
+				t.Fatal(err)
+			}
+			if got := repository.updates[target.ID].Status; got != test.wantStatus {
+				t.Fatalf("target status = %q, want %q", got, test.wantStatus)
+			}
+		})
+	}
+}
+
 func TestNewServiceEncryptsArgoUIAccess(t *testing.T) {
 	repository := &fakeRepository{}
 	key := bytes.Repeat([]byte{3}, secure.KeyBytes)

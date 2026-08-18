@@ -7,9 +7,11 @@ import {
   type ApplicationOnboarding,
   type OnboardingStatus,
 } from '../api/onboarding'
+import { ArgoHealthState, ArgoSyncState } from './ArgoStateIcons'
 import { KubernetesLogo } from './BrandIcons'
 import { StateDelta, StateDeltaLegend } from './StateDelta'
 import { StatusBadge } from './StatusBadge'
+import { useStoredPreference } from '../hooks/useStoredPreference'
 import { deltaTone, rollupState } from '../lib/status'
 
 const pollIntervalMs = 10_000
@@ -25,6 +27,13 @@ const defaultPageSize = 50
 
 type SortKey = 'name' | 'targets' | 'status'
 type SortDirection = 'asc' | 'desc'
+type ViewMode = 'tiles' | 'table'
+
+const sortLabels: Record<SortKey, string> = {
+  name: 'Name',
+  targets: 'Releases',
+  status: 'Status',
+}
 
 // Worst first: the reason to sort by status is to find what is broken.
 const statusSeverity: Record<OnboardingStatus, number> = {
@@ -202,6 +211,9 @@ export function ApplicationsList() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [expanded, setExpanded] = useState<string[]>([])
+  // Argo-style tiles are the default read; the table remains one click away for
+  // operators who want columns to sort and compare.
+  const [view, setView] = useStoredPreference<ViewMode>('kubeops.applications.view', 'tiles')
 
   // Filters live in the URL so a filtered list stays bookmarkable and shareable.
   const search = searchParams.get('search') ?? ''
@@ -400,9 +412,42 @@ export function ApplicationsList() {
           <h1 id="applications-heading">Onboarded applications</h1>
           <p>Inspect releases, target health, and reconciliation across the fleet.</p>
         </div>
-        <Link className="primary-button" to="/applications/new">
-          Onboard application
-        </Link>
+        <div className="applications-heading-actions">
+          <div className="view-toggle" role="group" aria-label="Applications view">
+            <button
+              type="button"
+              className={view === 'tiles' ? 'is-active' : ''}
+              aria-pressed={view === 'tiles'}
+              title="Tile view"
+              onClick={() => setView('tiles')}
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <rect x="1.5" y="1.5" width="5.4" height="5.4" rx="1.2" />
+                <rect x="9.1" y="1.5" width="5.4" height="5.4" rx="1.2" />
+                <rect x="1.5" y="9.1" width="5.4" height="5.4" rx="1.2" />
+                <rect x="9.1" y="9.1" width="5.4" height="5.4" rx="1.2" />
+              </svg>
+              Tiles
+            </button>
+            <button
+              type="button"
+              className={view === 'table' ? 'is-active' : ''}
+              aria-pressed={view === 'table'}
+              title="Table view"
+              onClick={() => setView('table')}
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <rect x="1.5" y="2.2" width="13" height="2.6" rx="1" />
+                <rect x="1.5" y="6.7" width="13" height="2.6" rx="1" />
+                <rect x="1.5" y="11.2" width="13" height="2.6" rx="1" />
+              </svg>
+              Table
+            </button>
+          </div>
+          <Link className="primary-button" to="/applications/new">
+            Onboard application
+          </Link>
+        </div>
       </header>
 
       {/* With rows already on screen a failed poll is a stale-data warning. With
@@ -421,7 +466,11 @@ export function ApplicationsList() {
       )}
 
       <section className="application-filter-deck" aria-label="Filter applications">
-        <div className="application-filter-grid">
+        <div
+          className={`application-filter-grid${
+            view === 'tiles' ? ' application-filter-grid--with-sort' : ''
+          }`}
+        >
           <label className="application-filter-control application-search-control">
             <span>Application or namespace</span>
             <span className="application-search-field">
@@ -463,6 +512,35 @@ export function ApplicationsList() {
               ))}
             </select>
           </label>
+          {/* The table sorts from its headers; tiles have no headers, so the
+              same sort state gets a control of its own. */}
+          {view === 'tiles' && (
+            <label className="application-filter-control">
+              <span>Sort by</span>
+              <div className="tile-sort-control">
+                <select
+                  value={sortKey}
+                  onChange={(event) => updateParams({ sort: event.target.value })}
+                >
+                  {(Object.keys(sortLabels) as SortKey[]).map((key) => (
+                    <option value={key} key={key}>
+                      {sortLabels[key]}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  aria-label={`Sort ${sortDirection === 'asc' ? 'descending' : 'ascending'}`}
+                  title={sortDirection === 'asc' ? 'Ascending' : 'Descending'}
+                  onClick={() =>
+                    updateParams({ sort: sortKey, dir: sortDirection === 'asc' ? 'desc' : 'asc' })
+                  }
+                >
+                  {sortDirection === 'asc' ? '↑' : '↓'}
+                </button>
+              </div>
+            </label>
+          )}
         </div>
 
         {/* At a hundred rows the fastest question is "what is broken", and the
@@ -537,7 +615,7 @@ export function ApplicationsList() {
         )}
       </section>
 
-      <div className="table-frame">
+      <div className={view === 'tiles' ? 'application-tiles-frame' : 'table-frame'}>
         {loading || (error && items.length === 0) ? (
           <div className="retry-state" role="status">
             <span className="loader" aria-hidden="true" />
@@ -563,6 +641,120 @@ export function ApplicationsList() {
                 <span>Onboard one and its clusters, sync state, and health show up here.</span>
               </>
             )}
+          </div>
+        ) : view === 'tiles' ? (
+          <div className="application-card-grid">
+            {visibleGroups.map((group) => {
+              const rollup = rollupState(group.targets)
+              const cardTone = deltaTone(rollup.syncStatus, rollup.healthStatus)
+              const namespaceLabel =
+                group.namespaces.length === 1
+                  ? group.namespaces[0]
+                  : `${group.namespaces.length} namespaces`
+              const argoUrl = group.targets.find(
+                (target) => target.argoApplicationUrl,
+              )?.argoApplicationUrl
+              const overflowPlatformIds = group.platformIds.slice(visiblePlatformIds)
+              return (
+                <article
+                  className={`application-card application-card--${cardTone}`}
+                  key={group.key}
+                >
+                  <header className="application-card-head">
+                    <div className="application-card-identity">
+                      <Link
+                        className="application-card-name"
+                        to={`/applications/${group.applicationId}`}
+                        title={`${group.name} · ${group.applicationId}`}
+                      >
+                        {group.name}
+                      </Link>
+                      <span className="application-card-namespace" title={namespaceLabel}>
+                        {namespaceLabel}
+                      </span>
+                    </div>
+                    <StatusBadge status={group.status} />
+                  </header>
+                  <div className="application-card-states">
+                    <ArgoHealthState status={rollup.healthStatus} />
+                    <ArgoSyncState status={rollup.syncStatus} />
+                  </div>
+                  <dl className="application-card-facts">
+                    <div>
+                      <dt>Environments</dt>
+                      <dd>
+                        <span className="environment-list">
+                          {group.environments.length > 0
+                            ? group.environments.map((item) => (
+                                <span className="environment-tag" key={item}>
+                                  {item}
+                                </span>
+                              ))
+                            : '—'}
+                        </span>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Regions</dt>
+                      <dd>
+                        <span className="region-run" title={group.regions.join(', ')}>
+                          {group.regions.length > 0 ? group.regions.join(' · ') : '—'}
+                        </span>
+                      </dd>
+                    </div>
+                    <div className="application-card-fact--wide">
+                      <dt>Platforms</dt>
+                      <dd>
+                        <span className="platform-id-list">
+                          {group.platformIds.length > 0
+                            ? group.platformIds.slice(0, visiblePlatformIds).map((platformId) => (
+                                <span className="platform-id" key={platformId} title={platformId}>
+                                  {platformId}
+                                </span>
+                              ))
+                            : '—'}
+                          {overflowPlatformIds.length > 0 && (
+                            <span
+                              className="platform-id platform-id--more"
+                              title={overflowPlatformIds.join(', ')}
+                            >
+                              +{overflowPlatformIds.length}
+                            </span>
+                          )}
+                        </span>
+                      </dd>
+                    </div>
+                  </dl>
+                  <footer className="application-card-foot">
+                    <span className="application-card-counts">
+                      {`${releaseCountLabel(group.records.length)} · ${targetCountLabel(
+                        group.targets.length,
+                      )}`}
+                    </span>
+                    {argoUrl && (
+                      <a
+                        className="application-card-argo"
+                        href={argoUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Argo CD
+                        <svg viewBox="0 0 12 12" aria-hidden="true">
+                          <path
+                            d="M4.5 2h5.5v5.5M10 2 4 8"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </a>
+                    )}
+                  </footer>
+                </article>
+              )
+            })}
           </div>
         ) : (
           <>
