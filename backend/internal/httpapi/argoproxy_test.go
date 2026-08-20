@@ -3,13 +3,23 @@ package httpapi
 import (
 	"compress/gzip"
 	"compress/zlib"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GitOpsHub/kubeops/backend/internal/config"
+	"github.com/GitOpsHub/kubeops/backend/internal/model"
 )
 
 func TestArgoProxyAuthenticatesAndRebasesTheUI(t *testing.T) {
@@ -212,4 +222,178 @@ func TestProxyIDIsStableAndOpaque(t *testing.T) {
 	if strings.Contains(target.ProxyID(), "arn") || strings.Contains(target.ProxyID(), "aws") {
 		t.Fatalf("ProxyID leaks the cluster identifier: %q", target.ProxyID())
 	}
+}
+
+// TestArgoProxyResolvesKubespinClusterAndLogsIn covers a cluster with no
+// statically configured target: the proxy resolves it by cluster id, looks
+// up kubespin's Argo CD details, logs in with the username/password, and
+// attaches the resulting session token — so the browser lands signed in
+// instead of at an Argo CD login form.
+func TestArgoProxyResolvesKubespinClusterAndLogsIn(t *testing.T) {
+	var logins int
+	var sawAuth string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/session" {
+			logins++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"token":"kubespin-session-token"}`))
+			return
+		}
+		sawAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "text/html")
+		io.WriteString(w, `<!doctype html><html><head><base href="/"></head></html>`)
+	}))
+	defer upstream.Close()
+
+	repo := &fakeRepository{
+		cluster: model.Cluster{ID: "cluster-1", Name: "prod"},
+		kubespin: model.KubespinArgoCDDetails{
+			Endpoint: upstream.URL, Username: "admin", Password: "secret",
+		},
+	}
+	proxy, err := newArgoProxy(nil, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/argo/cluster-1/applications", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	if sawAuth != "Bearer kubespin-session-token" {
+		t.Fatalf("kubespin session token was not attached: %q", sawAuth)
+	}
+	if logins != 1 {
+		t.Fatalf("expected exactly one login, got %d", logins)
+	}
+
+	// A second request against the same cluster reuses the cached session and
+	// the cached proxy — no repeat database lookup or login.
+	recorder2 := httptest.NewRecorder()
+	proxy.ServeHTTP(recorder2, httptest.NewRequest(http.MethodGet, "/argo/cluster-1/applications", nil))
+	if recorder2.Code != http.StatusOK {
+		t.Fatalf("unexpected status on second request: %d", recorder2.Code)
+	}
+	if logins != 1 {
+		t.Fatalf("expected the session to be cached, got %d logins", logins)
+	}
+}
+
+// TestArgoProxyRelogsInToKubespinOnUnauthorized proves the cached kubespin
+// session recovers from expiry or rotation without a cache TTL: a 401
+// invalidates it, and the next request relogins.
+func TestArgoProxyRelogsInToKubespinOnUnauthorized(t *testing.T) {
+	var logins int
+	var rejectedOnce bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/session" {
+			logins++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"token":"session-token-%d"}`, logins)))
+			return
+		}
+		if r.Header.Get("Authorization") == "Bearer session-token-1" && !rejectedOnce {
+			rejectedOnce = true
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		io.WriteString(w, `<!doctype html><html><head><base href="/"></head></html>`)
+	}))
+	defer upstream.Close()
+
+	repo := &fakeRepository{
+		cluster: model.Cluster{ID: "cluster-1", Name: "prod"},
+		kubespin: model.KubespinArgoCDDetails{
+			Endpoint: upstream.URL, Username: "admin", Password: "secret",
+		},
+	}
+	proxy, err := newArgoProxy(nil, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/argo/cluster-1/applications", nil))
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected the first request to surface the 401, got %d", recorder.Code)
+	}
+	if logins != 1 {
+		t.Fatalf("expected one login before the 401, got %d", logins)
+	}
+
+	recorder2 := httptest.NewRecorder()
+	proxy.ServeHTTP(recorder2, httptest.NewRequest(http.MethodGet, "/argo/cluster-1/applications", nil))
+	if recorder2.Code != http.StatusOK {
+		t.Fatalf("expected the retried request to succeed, got %d: %s", recorder2.Code, recorder2.Body.String())
+	}
+	if logins != 2 {
+		t.Fatalf("expected a relogin after the 401, got %d logins", logins)
+	}
+}
+
+func TestArgoProxyReturns404WhenKubespinHasNoAccessForTheCluster(t *testing.T) {
+	repo := &fakeRepository{cluster: model.Cluster{ID: "cluster-1", Name: "prod"}}
+	proxy, err := newArgoProxy(nil, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/argo/cluster-1/applications", nil))
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", recorder.Code)
+	}
+}
+
+// TestKubespinArgoSessionPinsCertificateOnFirstConnection proves the
+// trust-on-first-use pinning that replaces default certificate verification
+// for kubespin's self-signed Argo CD servers (see verifyConnection): the
+// first certificate seen is trusted and recorded, a matching certificate on
+// a later connection is accepted, and a different certificate — the shape a
+// MITM would take — is rejected.
+func TestKubespinArgoSessionPinsCertificateOnFirstConnection(t *testing.T) {
+	certA := selfSignedTestCert(t)
+	certB := selfSignedTestCert(t)
+	session := &kubespinArgoSession{endpoint: "https://argo.example.test"}
+
+	if err := session.verifyConnection(tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{certA},
+	}); err != nil {
+		t.Fatalf("first connection should be pinned without error: %v", err)
+	}
+	if err := session.verifyConnection(tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{certA},
+	}); err != nil {
+		t.Fatalf("a connection presenting the pinned certificate should be accepted: %v", err)
+	}
+	if err := session.verifyConnection(tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{certB},
+	}); err == nil {
+		t.Fatal("expected a swapped certificate to be rejected")
+	}
+}
+
+func selfSignedTestCert(t *testing.T) *x509.Certificate {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "test"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cert
 }
