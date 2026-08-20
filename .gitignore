@@ -159,3 +159,4 @@ config/.argocd-local-tls/
 .claude/settings.local.json
 .serena/
 .dev/
+.vercel
