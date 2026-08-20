@@ -5,8 +5,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -16,6 +19,7 @@ import (
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
 	"github.com/GitOpsHub/kubeops/backend/internal/secure"
 	"github.com/GitOpsHub/kubeops/backend/internal/store"
+	"github.com/jackc/pgx/v5"
 )
 
 type fakeRepository struct {
@@ -36,10 +40,31 @@ type fakeRepository struct {
 	lookedUpNamespace string
 	// createErr overrides the result of CreateApplicationOnboarding.
 	createErr error
+	// kubespinArgo maps cluster name to the Argo CD details GetKubespinArgoDetails
+	// returns; a cluster name absent here returns pgx.ErrNoRows, as it does when
+	// kubespin has no ready entry for that cluster.
+	kubespinArgo map[string]model.KubespinArgoCDDetails
+	// kubespinLookups counts calls per cluster name, so tests can assert a
+	// resolved client is cached rather than re-queried on every use.
+	kubespinLookups map[string]int
 }
 
 func (f *fakeRepository) GetClustersByIDs(context.Context, []string) ([]model.Cluster, error) {
 	return f.clusters, nil
+}
+
+func (f *fakeRepository) GetKubespinArgoDetails(
+	_ context.Context,
+	clusterName string,
+) (model.KubespinArgoCDDetails, error) {
+	if f.kubespinLookups != nil {
+		f.kubespinLookups[clusterName]++
+	}
+	details, ok := f.kubespinArgo[clusterName]
+	if !ok {
+		return model.KubespinArgoCDDetails{}, pgx.ErrNoRows
+	}
+	return details, nil
 }
 func (f *fakeRepository) ActiveApplicationOnboardingID(
 	_ context.Context,
@@ -1133,5 +1158,86 @@ func TestEnrichLinksTokenOnlyTargetWithoutUsername(t *testing.T) {
 	}
 	if targets[0].ArgoUsername != "" {
 		t.Fatalf("unexpected username without UI credentials: %q", targets[0].ArgoUsername)
+	}
+}
+
+func TestResolveClientPrefersStaticTargetOverKubespin(t *testing.T) {
+	staticClient := &fakeArgoClient{}
+	repository := &fakeRepository{
+		kubespinLookups: map[string]int{},
+		kubespinArgo: map[string]model.KubespinArgoCDDetails{
+			"prod": {Endpoint: "https://should-not-be-used.example.test"},
+		},
+	}
+	service := &Service{
+		store:   repository,
+		config:  config.OnboardingConfig{RequestTimeout: time.Second},
+		clients: map[string]ArgoClient{targetKey("aws", "arn:cluster/prod"): staticClient},
+	}
+
+	client, err := service.resolveClient(context.Background(), "aws", "arn:cluster/prod", "prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client != ArgoClient(staticClient) {
+		t.Fatal("expected the statically configured client to win")
+	}
+	if repository.kubespinLookups["prod"] != 0 {
+		t.Fatal("a static target hit must not query kubespin's Argo CD details")
+	}
+}
+
+func TestResolveClientFallsBackToKubespinAndCachesTheClient(t *testing.T) {
+	var sessionCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/session" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		sessionCalls++
+		_ = json.NewEncoder(w).Encode(map[string]string{"token": "kubespin-session-token"})
+	}))
+	defer server.Close()
+
+	repository := &fakeRepository{
+		kubespinLookups: map[string]int{},
+		kubespinArgo: map[string]model.KubespinArgoCDDetails{
+			"prod": {Endpoint: server.URL, Username: "admin", Password: "secret"},
+		},
+	}
+	service := &Service{
+		store:   repository,
+		config:  config.OnboardingConfig{RequestTimeout: time.Second},
+		clients: map[string]ArgoClient{},
+	}
+
+	first, err := service.resolveClient(context.Background(), "aws", "arn:cluster/prod", "prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == nil {
+		t.Fatal("expected a client resolved from kubespin's Argo CD details")
+	}
+	second, err := service.resolveClient(context.Background(), "aws", "arn:cluster/prod", "prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatal("expected the resolved client to be cached across calls")
+	}
+	if repository.kubespinLookups["prod"] != 1 {
+		t.Fatalf("expected exactly one database lookup, got %d", repository.kubespinLookups["prod"])
+	}
+	if sessionCalls != 1 {
+		t.Fatalf("expected exactly one Argo CD login, got %d", sessionCalls)
+	}
+}
+
+func TestResolveClientReturnsErrorWhenNothingIsConfigured(t *testing.T) {
+	repository := &fakeRepository{}
+	service := &Service{store: repository, clients: map[string]ArgoClient{}}
+
+	if _, err := service.resolveClient(context.Background(), "aws", "arn:cluster/prod", "prod"); err == nil {
+		t.Fatal("expected an error when neither a static target nor a kubespin entry exists")
 	}
 }

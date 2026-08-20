@@ -176,6 +176,21 @@ type EncryptedArgoAccess struct {
 	PasswordNonce      []byte
 }
 
+// KubespinArgoCDDetails is one kubespin-launched cluster's Argo CD connection
+// info, read from the cluster_argocd_details table kubespin owns. Password
+// holds kubespin's plaintext; callers must encrypt it before persisting
+// anywhere and must never log it. This never crosses the API boundary
+// directly, so it carries no json tags.
+type KubespinArgoCDDetails struct {
+	ClusterID   string
+	KubeContext string
+	Endpoint    string
+	Username    string
+	Password    string
+	CapturedAt  time.Time
+	UpdatedAt   time.Time
+}
+
 type ScaleResult struct {
 	NodePoolID          string `json:"nodePoolId"`
 	DesiredCount        int32  `json:"desiredCount"`

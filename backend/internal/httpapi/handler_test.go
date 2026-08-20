@@ -22,13 +22,15 @@ import (
 )
 
 type fakeRepository struct {
-	readyErr   error
-	queueErr   error
-	listErr    error
-	filter     model.ClusterFilter
-	cluster    model.Cluster
-	clusterErr error
-	sources    []model.SourceSummary
+	readyErr    error
+	queueErr    error
+	listErr     error
+	filter      model.ClusterFilter
+	cluster     model.Cluster
+	clusterErr  error
+	sources     []model.SourceSummary
+	kubespin    model.KubespinArgoCDDetails
+	kubespinErr error
 }
 
 func (f *fakeRepository) Ready(context.Context) error { return f.readyErr }
@@ -44,6 +46,15 @@ func (f *fakeRepository) ListClusters(_ context.Context, filter model.ClusterFil
 }
 func (f *fakeRepository) GetCluster(context.Context, string) (model.Cluster, error) {
 	return f.cluster, f.clusterErr
+}
+func (f *fakeRepository) GetKubespinArgoDetails(context.Context, string) (model.KubespinArgoCDDetails, error) {
+	if f.kubespinErr != nil {
+		return model.KubespinArgoCDDetails{}, f.kubespinErr
+	}
+	if f.kubespin.Endpoint == "" {
+		return model.KubespinArgoCDDetails{}, pgx.ErrNoRows
+	}
+	return f.kubespin, nil
 }
 func (f *fakeRepository) ListSyncRuns(context.Context, int) ([]model.SyncRun, error) {
 	return []model.SyncRun{}, f.listErr
@@ -496,6 +507,56 @@ func TestClusterArgoAccess(t *testing.T) {
 	}
 	if strings.Contains(string(body), "username") || strings.Contains(string(body), "password") {
 		t.Fatalf("Argo CD credentials leaked in response: %s", body)
+	}
+}
+
+// TestClusterArgoAccessFallsBackToKubespin covers a cluster discovered through
+// the ordinary cloud-provider sync with no statically configured Argo CD
+// target: access falls back to kubespin's cluster_argocd_details, matched by
+// cluster name, and returns kubespin's Argo CD URL directly rather than a
+// proxied one.
+func TestClusterArgoAccessFallsBackToKubespin(t *testing.T) {
+	handler := NewHandler(config.Config{Onboarding: config.OnboardingConfig{
+		PublicBaseURL: "https://kubeops.example.test",
+	}}, &fakeRepository{
+		cluster: model.Cluster{ID: "cluster-1", Name: "prod", SourceID: "aws-platform"},
+		kubespin: model.KubespinArgoCDDetails{
+			ClusterID: "prod", Endpoint: "https://kubespin-argo.example.test",
+			Username: "admin", Password: "secret",
+		},
+	})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(
+		response,
+		httptest.NewRequest(http.MethodGet, "/api/clusters/cluster-1/argo-access", nil),
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var access model.ArgoAccess
+	body := response.Body.Bytes()
+	if err := json.Unmarshal(body, &access); err != nil {
+		t.Fatal(err)
+	}
+	if access.URL != "https://kubespin-argo.example.test" {
+		t.Fatalf("expected the direct kubespin Argo CD URL, got %#v", access)
+	}
+	if strings.Contains(string(body), "username") || strings.Contains(string(body), "password") {
+		t.Fatalf("Argo CD credentials leaked in response: %s", body)
+	}
+}
+
+func TestClusterArgoAccessNotFoundWithoutStaticOrKubespinTarget(t *testing.T) {
+	handler := NewHandler(config.Config{}, &fakeRepository{
+		cluster: model.Cluster{ID: "cluster-1", Name: "prod", SourceID: "aws-platform"},
+	})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(
+		response,
+		httptest.NewRequest(http.MethodGet, "/api/clusters/cluster-1/argo-access", nil),
+	)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d: %s", response.Code, response.Body.String())
 	}
 }
 
