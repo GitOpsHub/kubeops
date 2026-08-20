@@ -23,6 +23,13 @@ type LocalKubernetes struct {
 }
 
 func (l LocalKubernetes) Discover(ctx context.Context, source model.CloudSource) ([]model.Cluster, error) {
+	// Docker Desktop/minikube/kind/k3d contexts live on one developer's
+	// machine; a deployed function has no kubeconfig to read (and often no
+	// $HOME at all), so failing fast here avoids a confusing "resolve home
+	// directory" error surfacing as the cause instead of the real one.
+	if os.Getenv("VERCEL") != "" {
+		return nil, fmt.Errorf("%s is a local-only source and cannot be synced from a deployed environment", l.Provider)
+	}
 	path, err := expandPath(source.KubeconfigPath)
 	if err != nil {
 		return nil, err

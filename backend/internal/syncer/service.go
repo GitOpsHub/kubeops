@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -141,7 +142,15 @@ func (s *Service) Sync(ctx context.Context, sourceID, trigger string) (model.Syn
 // error does not stop the remaining sources from being attempted.
 func (s *Service) SyncAll(ctx context.Context, trigger string) ([]model.SyncRun, error) {
 	runs := make([]model.SyncRun, 0, len(s.sources))
+	deployed := os.Getenv("VERCEL") != ""
 	for _, sourceID := range s.sourceIDs() {
+		// Local-only sources (docker-desktop, minikube) can never succeed from
+		// a deployed function; skip them on the unattended cron path instead
+		// of repeatedly marking them failed. A person clicking "Sync now"
+		// still gets a clear error via Sync.
+		if deployed && isLocalProvider(s.sources[sourceID].Provider) {
+			continue
+		}
 		run, err := s.Sync(ctx, sourceID, trigger)
 		if err != nil {
 			if errors.Is(err, store.ErrSyncAlreadyActive) {
@@ -152,6 +161,10 @@ func (s *Service) SyncAll(ctx context.Context, trigger string) ([]model.SyncRun,
 		runs = append(runs, run)
 	}
 	return runs, nil
+}
+
+func isLocalProvider(provider string) bool {
+	return provider == model.ProviderDocker || provider == model.ProviderMinikube
 }
 
 func (s *Service) work(ctx context.Context, worker int) {
