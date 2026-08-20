@@ -472,11 +472,13 @@ func TestGetKubespinArgoDetails(t *testing.T) {
 			('prod', 'ready'), ('retired', 'decommissioned')`); err != nil {
 		t.Fatal(err)
 	}
+	// kubespin writes a bare host or IP with no scheme, the way it does in
+	// production (an ELB hostname, a node IP) — the lookup must add https://.
 	if _, err := repository.pool.Exec(ctx, `
 		INSERT INTO cluster_argocd_details (cluster_id, kube_context, argocd_endpoint, argocd_username, argocd_password)
 		VALUES
-			('prod', 'prod-ctx', 'https://argo.prod.example.test', 'admin', 'secret'),
-			('retired', 'retired-ctx', 'https://argo.retired.example.test', 'admin', 'secret')`); err != nil {
+			('prod', 'prod-ctx', 'argo.prod.example.test', 'admin', 'secret'),
+			('retired', 'retired-ctx', 'argo.retired.example.test', 'admin', 'secret')`); err != nil {
 		t.Fatal(err)
 	}
 

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
 	"github.com/jackc/pgx/v5"
@@ -42,10 +43,23 @@ func (s *Store) GetKubespinArgoDetails(ctx context.Context, clusterName string) 
 		}
 		return model.KubespinArgoCDDetails{}, err
 	}
+	details.Endpoint = withScheme(details.Endpoint)
 	return details, nil
 }
 
 func isUndefinedTable(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == undefinedTable
+}
+
+// withScheme adds https:// to a bare host or IP. kubespin's argocd_endpoint
+// column stores a bare address (an ELB hostname or a node IP) with no scheme,
+// which both url.Parse (in onboarding's Argo CD client) and a browser
+// treat as a relative path rather than an absolute URL.
+func withScheme(endpoint string) string {
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" || strings.Contains(endpoint, "://") {
+		return endpoint
+	}
+	return "https://" + endpoint
 }
