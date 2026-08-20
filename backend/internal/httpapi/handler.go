@@ -153,7 +153,7 @@ func newHandler(
 	)
 	// Serves the Argo CD UI on this origin so the browser needs neither Argo CD
 	// credentials nor trust in the Argo CD server's certificate.
-	if proxy, err := newArgoProxy(cfg.Onboarding.ArgoTargets); err != nil {
+	if proxy, err := newArgoProxy(cfg.Onboarding.ArgoTargets, repository); err != nil {
 		// A misconfigured target must not take down the rest of the API; the deep
 		// links simply stay unavailable.
 		slog.Error("configure Argo CD proxy", "error", err)
@@ -291,12 +291,20 @@ func (api *API) clusterArgoAccess(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// No statically configured target: fall back to kubespin's Argo CD details
-	// for this cluster, matched by name. This is a direct link to kubespin's
-	// own Argo CD server rather than a proxied one — kubeops has no reverse
-	// proxy mount for these, unlike the static targets above.
-	details, err := api.store.GetKubespinArgoDetails(r.Context(), cluster.Name)
+	// for this cluster, matched by name. Routed through the same reverse proxy
+	// as static targets (argoProxy.resolveDynamicProxy resolves it on first
+	// request, keyed by the cluster's own id), which logs into kubespin's
+	// Argo CD server with its username/password and attaches the resulting
+	// session token server-side — the browser lands signed in rather than at
+	// an Argo CD login form. Linked at the mount root rather than
+	// "/applications": kubespin's Argo CD servers serve the UI shell only at
+	// "/" and answer every other client-side route with a bare 404, unlike
+	// the fully configured deployments static targets point at.
+	_, err = api.store.GetKubespinArgoDetails(r.Context(), cluster.Name)
 	if err == nil {
-		writeJSON(w, http.StatusOK, model.ArgoAccess{URL: details.Endpoint})
+		writeJSON(w, http.StatusOK, model.ArgoAccess{
+			URL: api.config.Onboarding.PublicBaseURL + argoProxyPrefix + cluster.ID + "/",
+		})
 		return
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {

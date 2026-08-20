@@ -513,8 +513,10 @@ func TestClusterArgoAccess(t *testing.T) {
 // TestClusterArgoAccessFallsBackToKubespin covers a cluster discovered through
 // the ordinary cloud-provider sync with no statically configured Argo CD
 // target: access falls back to kubespin's cluster_argocd_details, matched by
-// cluster name, and returns kubespin's Argo CD URL directly rather than a
-// proxied one.
+// cluster name, and returns a URL through kubeops's own Argo CD proxy (keyed
+// by the cluster's id) rather than kubespin's Argo CD server directly — the
+// proxy is what logs in with kubespin's username/password and attaches the
+// session token server-side, so the browser lands signed in.
 func TestClusterArgoAccessFallsBackToKubespin(t *testing.T) {
 	handler := NewHandler(config.Config{Onboarding: config.OnboardingConfig{
 		PublicBaseURL: "https://kubeops.example.test",
@@ -538,8 +540,9 @@ func TestClusterArgoAccessFallsBackToKubespin(t *testing.T) {
 	if err := json.Unmarshal(body, &access); err != nil {
 		t.Fatal(err)
 	}
-	if access.URL != "https://kubespin-argo.example.test" {
-		t.Fatalf("expected the direct kubespin Argo CD URL, got %#v", access)
+	wantURL := "https://kubeops.example.test/argo/cluster-1/"
+	if access.URL != wantURL {
+		t.Fatalf("expected the proxied URL %q, got %#v", wantURL, access)
 	}
 	if strings.Contains(string(body), "username") || strings.Contains(string(body), "password") {
 		t.Fatalf("Argo CD credentials leaked in response: %s", body)
