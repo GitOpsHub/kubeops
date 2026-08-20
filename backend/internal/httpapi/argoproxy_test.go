@@ -3,12 +3,20 @@ package httpapi
 import (
 	"compress/gzip"
 	"compress/zlib"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GitOpsHub/kubeops/backend/internal/config"
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
@@ -337,4 +345,55 @@ func TestArgoProxyReturns404WhenKubespinHasNoAccessForTheCluster(t *testing.T) {
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", recorder.Code)
 	}
+}
+
+// TestKubespinArgoSessionPinsCertificateOnFirstConnection proves the
+// trust-on-first-use pinning that replaces default certificate verification
+// for kubespin's self-signed Argo CD servers (see verifyConnection): the
+// first certificate seen is trusted and recorded, a matching certificate on
+// a later connection is accepted, and a different certificate — the shape a
+// MITM would take — is rejected.
+func TestKubespinArgoSessionPinsCertificateOnFirstConnection(t *testing.T) {
+	certA := selfSignedTestCert(t)
+	certB := selfSignedTestCert(t)
+	session := &kubespinArgoSession{endpoint: "https://argo.example.test"}
+
+	if err := session.verifyConnection(tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{certA},
+	}); err != nil {
+		t.Fatalf("first connection should be pinned without error: %v", err)
+	}
+	if err := session.verifyConnection(tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{certA},
+	}); err != nil {
+		t.Fatalf("a connection presenting the pinned certificate should be accepted: %v", err)
+	}
+	if err := session.verifyConnection(tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{certB},
+	}); err == nil {
+		t.Fatal("expected a swapped certificate to be rejected")
+	}
+}
+
+func selfSignedTestCert(t *testing.T) *x509.Certificate {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "test"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cert
 }

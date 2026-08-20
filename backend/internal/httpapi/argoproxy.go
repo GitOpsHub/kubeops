@@ -5,8 +5,10 @@ import (
 	"compress/gzip"
 	"compress/zlib"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -125,22 +127,32 @@ func newKubespinTargetProxy(id, endpoint, username, password string) (*httputil.
 		return nil, fmt.Errorf("invalid kubespin Argo CD server URL: %q", endpoint)
 	}
 
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	// kubespin's Argo CD servers present Argo CD's own self-signed default
-	// certificate, with no CA and no SAN matching the ELB hostname or node IP
-	// kubespin reports. kubespin gives kubeops no CA to validate against, so
-	// this backend-to-cluster hop trusts the connection the same way an
-	// operator would trust an internal service with no PKI. The browser's
-	// connection to kubeops itself is unaffected — this transport is never
-	// exposed to it.
-	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true}
-
 	session := &kubespinArgoSession{
 		endpoint: strings.TrimRight(endpoint, "/"),
 		username: username,
 		password: password,
-		client:   &http.Client{Transport: transport, Timeout: 10 * time.Second},
 	}
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// kubespin's Argo CD servers present Argo CD's own self-signed default
+	// certificate, with no CA and no SAN matching the ELB hostname or node IP
+	// kubespin reports, so the default chain-and-hostname verification can
+	// never succeed here — kubespin gives kubeops no CA to validate against.
+	// InsecureSkipVerify only turns off that default check; VerifyConnection
+	// replaces it with certificate pinning: the first connection's leaf
+	// public key is trusted and recorded (the same trust-on-first-use model
+	// SSH host keys use), and every later connection to this cluster must
+	// present that same key. This still trusts the very first connection,
+	// but unlike a blanket skip of verification, it detects a certificate
+	// swapped in afterward — which is exactly what a MITM looks like. The
+	// browser's connection to kubeops itself is unaffected either way — this
+	// transport is never exposed to it.
+	transport.TLSClientConfig = &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: true,
+		VerifyConnection:   session.verifyConnection,
+	}
+	session.client = &http.Client{Transport: transport, Timeout: 10 * time.Second}
 
 	mount := argoProxyPrefix + id
 	return buildTargetProxy(mount, upstream, transport, session.authHeader, session.invalidate), nil
@@ -215,6 +227,34 @@ type kubespinArgoSession struct {
 
 	mu    sync.Mutex
 	token string
+	// pinnedSPKI is the SHA-256 hash of the first leaf certificate's
+	// SubjectPublicKeyInfo seen for this endpoint (trust-on-first-use). Nil
+	// until the first successful handshake.
+	pinnedSPKI []byte
+}
+
+// verifyConnection implements certificate pinning in place of the default
+// chain-and-hostname verification, which InsecureSkipVerify has disabled on
+// this transport (see newKubespinTargetProxy for why). It runs once per new
+// TLS connection, not per request.
+func (s *kubespinArgoSession) verifyConnection(state tls.ConnectionState) error {
+	if len(state.PeerCertificates) == 0 {
+		return errors.New("kubespin Argo CD server presented no certificate")
+	}
+	sum := sha256.Sum256(state.PeerCertificates[0].RawSubjectPublicKeyInfo)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pinnedSPKI == nil {
+		s.pinnedSPKI = sum[:]
+		slog.Warn("pinning kubespin Argo CD certificate on first connection",
+			"endpoint", s.endpoint, "fingerprint", hex.EncodeToString(sum[:]))
+		return nil
+	}
+	if !bytes.Equal(s.pinnedSPKI, sum[:]) {
+		return fmt.Errorf("kubespin Argo CD certificate for %s does not match the pinned certificate", s.endpoint)
+	}
+	return nil
 }
 
 func (s *kubespinArgoSession) authHeader(r *http.Request) string {
