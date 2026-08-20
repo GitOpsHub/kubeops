@@ -37,6 +37,26 @@ func main() {
 	}
 	defer repository.Close()
 
+	// Database-managed sources and Argo targets take precedence over
+	// YAML/env, so a cloud source or a cluster's Argo CD access can be added
+	// by inserting a row directly (e.g. via the Neon console or
+	// cmd/seed-argo-target) instead of editing cloud-sources.yaml /
+	// argo-targets.yaml and redeploying. YAML-only entries (local dev
+	// sources tied to one developer's machine) still work unchanged.
+	dbSources, err := repository.ListCloudSourcesConfig(ctx)
+	if err != nil {
+		slog.Error("load cloud sources from database", "error", err)
+		os.Exit(1)
+	}
+	cfg.CloudSources = config.MergeCloudSources(cfg.CloudSources, dbSources)
+
+	dbTargets, err := repository.ListArgoTargets(ctx, cfg.Onboarding.ArgoCredentialKey)
+	if err != nil {
+		slog.Error("load Argo CD targets from database", "error", err)
+		os.Exit(1)
+	}
+	cfg.Onboarding.ArgoTargets = config.MergeArgoTargets(cfg.Onboarding.ArgoTargets, dbTargets)
+
 	if err := repository.UpsertSources(ctx, cfg.CloudSources); err != nil {
 		slog.Error("reconcile cloud sources", "error", err)
 		os.Exit(1)

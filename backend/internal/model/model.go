@@ -176,6 +176,25 @@ type EncryptedArgoAccess struct {
 	PasswordNonce      []byte
 }
 
+// EncryptedArgoTarget is one argo_targets row: a database-managed
+// counterpart to config.ArgoTarget for clusters whose Argo CD access is
+// registered directly in Neon instead of argo-targets.yaml. Token and
+// (optional) Password are encrypted at rest with the same
+// ARGO_CREDENTIAL_ENCRYPTION_KEY used for argo_cluster_access; this type
+// never crosses the API boundary, so it carries no json tags.
+type EncryptedArgoTarget struct {
+	SourceID           string
+	ProviderResourceID string
+	ServerURL          string
+	TokenCiphertext    []byte
+	TokenNonce         []byte
+	CACert             string
+	UIURL              string
+	Username           string
+	PasswordCiphertext []byte
+	PasswordNonce      []byte
+}
+
 // KubespinArgoCDDetails is one kubespin-launched cluster's Argo CD connection
 // info, read from the cluster_argocd_details table kubespin owns. Password
 // holds kubespin's plaintext; callers must encrypt it before persisting

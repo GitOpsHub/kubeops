@@ -3,12 +3,15 @@ package onboarding
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -143,6 +146,10 @@ type sessionArgoClient struct {
 	*HTTPArgoClient
 	username, password string
 	mu                 sync.Mutex
+	// pinnedSPKI is the SHA-256 hash of the first leaf certificate's
+	// SubjectPublicKeyInfo seen for this endpoint (trust-on-first-use),
+	// guarded by mu. Nil until the first successful handshake.
+	pinnedSPKI []byte
 }
 
 // NewSessionArgoClient builds an ArgoClient for a server that authenticates by
@@ -150,24 +157,68 @@ type sessionArgoClient struct {
 // held only on this struct for the process lifetime of the cached client (see
 // onboarding.Service.resolveClient); it is never logged and never placed on a
 // struct with a JSON marshaler.
+//
+// kubespin's Argo CD servers present Argo CD's own self-signed default
+// certificate, with no CA and no SAN matching the ELB hostname or node IP
+// kubespin reports, so the default chain-and-hostname verification can never
+// succeed here — kubespin gives kubeops no CA to validate against.
+// InsecureSkipVerify only turns off that default check; verifyConnection
+// replaces it with certificate pinning (the same trust-on-first-use model
+// SSH host keys use, and the same approach httpapi's Argo CD reverse proxy
+// already uses for these same kubespin endpoints — see
+// backend/internal/httpapi/argoproxy.go's kubespinArgoSession).
 func NewSessionArgoClient(
 	ctx context.Context,
 	endpoint, username, password string,
 	cfg config.OnboardingConfig,
 ) (ArgoClient, error) {
-	inner, err := NewHTTPArgoClient(config.ArgoTarget{SourceID: "kubespin", ServerURL: endpoint}, cfg)
-	if err != nil {
-		return nil, err
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return nil, fmt.Errorf("invalid kubespin Argo CD server URL: %q", endpoint)
 	}
-	client := &sessionArgoClient{HTTPArgoClient: inner, username: username, password: password}
-	inner.client = &http.Client{
-		Transport: &sessionRoundTripper{base: inner.client.Transport, client: client},
-		Timeout:   inner.client.Timeout,
+
+	client := &sessionArgoClient{
+		HTTPArgoClient: &HTTPArgoClient{serverURL: endpoint},
+		username:       username,
+		password:       password,
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: true,
+		VerifyConnection:   client.verifyConnection,
+	}
+	client.client = &http.Client{
+		Transport: &sessionRoundTripper{base: transport, client: client},
+		Timeout:   cfg.RequestTimeout,
 	}
 	if err := client.login(ctx); err != nil {
 		return nil, err
 	}
 	return client, nil
+}
+
+// verifyConnection implements certificate pinning in place of the default
+// chain-and-hostname verification, which InsecureSkipVerify has disabled on
+// this transport. It runs once per new TLS connection, not per request.
+func (c *sessionArgoClient) verifyConnection(state tls.ConnectionState) error {
+	if len(state.PeerCertificates) == 0 {
+		return errors.New("kubespin Argo CD server presented no certificate")
+	}
+	sum := sha256.Sum256(state.PeerCertificates[0].RawSubjectPublicKeyInfo)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.pinnedSPKI == nil {
+		c.pinnedSPKI = sum[:]
+		slog.Warn("pinning kubespin Argo CD certificate on first connection",
+			"endpoint", c.serverURL, "fingerprint", hex.EncodeToString(sum[:]))
+		return nil
+	}
+	if !bytes.Equal(c.pinnedSPKI, sum[:]) {
+		return fmt.Errorf("kubespin Argo CD certificate for %s does not match the pinned certificate", c.serverURL)
+	}
+	return nil
 }
 
 // login authenticates against Argo CD's session endpoint and stores the

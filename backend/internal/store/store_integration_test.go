@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
+	"github.com/GitOpsHub/kubeops/backend/internal/secure"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -495,5 +496,88 @@ func TestGetKubespinArgoDetails(t *testing.T) {
 	}
 	if _, err := repository.GetKubespinArgoDetails(ctx, "unknown"); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("expected pgx.ErrNoRows for an unknown cluster, got %v", err)
+	}
+}
+
+func TestArgoTargetsAndCloudSourcesConfigRoundTrip(t *testing.T) {
+	databaseURL := integrationDatabaseURL(t)
+
+	ctx := context.Background()
+	repository, err := Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		repository.pool.Exec(context.Background(), truncateIntegrationData)
+		repository.Close()
+	})
+	if _, err := repository.pool.Exec(ctx, truncateIntegrationData); err != nil {
+		t.Fatal(err)
+	}
+
+	source := model.CloudSource{
+		ID: "aws-test", Provider: model.ProviderAWS, Name: "AWS Test",
+		ScopeID: "465532803838", Regions: []string{"us-east-1"}, Enabled: true,
+		RoleARN: "arn:aws:iam::465532803838:role/KubeOpsInventory",
+	}
+	if err := repository.UpsertSources(ctx, []model.CloudSource{source}); err != nil {
+		t.Fatal(err)
+	}
+
+	configured, err := repository.ListCloudSourcesConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(configured) != 1 || configured[0].RoleARN != source.RoleARN {
+		t.Fatalf("unexpected cloud source config: %#v, %v", configured, err)
+	}
+
+	key := make([]byte, secure.KeyBytes)
+	tokenCiphertext, tokenNonce, err := secure.Encrypt(key, []byte("api-token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	passwordCiphertext, passwordNonce, err := secure.Encrypt(key, []byte("ui-password"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	target := model.EncryptedArgoTarget{
+		SourceID: source.ID, ProviderResourceID: "arn:aws:eks:us-east-1:465532803838:cluster/eks-spot-dev-02",
+		ServerURL: "https://argocd.example.test", TokenCiphertext: tokenCiphertext, TokenNonce: tokenNonce,
+		CACert: "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----\n",
+		UIURL:  "https://argocd.example.test", Username: "kubeops",
+		PasswordCiphertext: passwordCiphertext, PasswordNonce: passwordNonce,
+	}
+	if err := repository.UpsertArgoTarget(ctx, target); err != nil {
+		t.Fatal(err)
+	}
+
+	targets, err := repository.ListArgoTargets(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 1 {
+		t.Fatalf("expected one Argo target, got %#v", targets)
+	}
+	got := targets[0]
+	if got.SourceID != target.SourceID || got.ProviderResourceID != target.ProviderResourceID ||
+		got.ServerURL != target.ServerURL || got.Token != "api-token" || got.Password != "ui-password" ||
+		got.UIURL != target.UIURL || got.Username != target.Username {
+		t.Fatalf("unexpected decrypted target: %#v", got)
+	}
+	if got.CAFile == "" {
+		t.Fatal("expected a CA file to be written for a target with ca_cert set")
+	}
+	caContent, err := os.ReadFile(got.CAFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(caContent) != target.CACert {
+		t.Fatalf("CA file content = %q, want %q", caContent, target.CACert)
+	}
+
+	if _, err := repository.ListArgoTargets(ctx, nil); err == nil {
+		t.Fatal("expected an error when a row exists but no decryption key is configured")
 	}
 }

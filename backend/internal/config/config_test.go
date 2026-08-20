@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/GitOpsHub/kubeops/backend/internal/cloudauth"
@@ -389,5 +390,94 @@ func TestFederationModeReportsCredentialPath(t *testing.T) {
 				t.Fatalf("FederationMode = %q, want %q", got, test.want)
 			}
 		})
+	}
+}
+
+func TestMergeCloudSourcesDatabaseWinsOnConflict(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml []model.CloudSource
+		db   []model.CloudSource
+		want []model.CloudSource
+	}{
+		{
+			name: "database overrides a yaml source with the same id",
+			yaml: []model.CloudSource{
+				{ID: "aws-prod", Name: "yaml name", RoleARN: "arn:aws:iam::1:role/old"},
+			},
+			db: []model.CloudSource{
+				{ID: "aws-prod", Name: "db name", RoleARN: "arn:aws:iam::1:role/new"},
+			},
+			want: []model.CloudSource{
+				{ID: "aws-prod", Name: "db name", RoleARN: "arn:aws:iam::1:role/new"},
+			},
+		},
+		{
+			name: "yaml-only local dev sources pass through unchanged",
+			yaml: []model.CloudSource{
+				{ID: "docker-local", Name: "Docker Kubernetes"},
+			},
+			db: nil,
+			want: []model.CloudSource{
+				{ID: "docker-local", Name: "Docker Kubernetes"},
+			},
+		},
+		{
+			name: "database-only sources are added",
+			yaml: []model.CloudSource{
+				{ID: "aws-prod", Name: "AWS Production"},
+			},
+			db: []model.CloudSource{
+				{ID: "gcp-dev", Name: "GCP Dev"},
+			},
+			want: []model.CloudSource{
+				{ID: "aws-prod", Name: "AWS Production"},
+				{ID: "gcp-dev", Name: "GCP Dev"},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := MergeCloudSources(test.yaml, test.db)
+			if len(got) != len(test.want) {
+				t.Fatalf("MergeCloudSources = %#v, want %#v", got, test.want)
+			}
+			for i := range got {
+				if !reflect.DeepEqual(got[i], test.want[i]) {
+					t.Fatalf("MergeCloudSources[%d] = %#v, want %#v", i, got[i], test.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestMergeArgoTargetsDatabaseWinsOnConflict(t *testing.T) {
+	yaml := []ArgoTarget{
+		{SourceID: "docker-local", ProviderResourceID: "kubeconfig:docker-local:docker-desktop", ServerURL: "https://localhost:18081"},
+		{SourceID: "aws-prod", ProviderResourceID: "arn:aws:eks:us-east-1:1:cluster/old", ServerURL: "https://old.example.com"},
+	}
+	db := []ArgoTarget{
+		{SourceID: "aws-prod", ProviderResourceID: "arn:aws:eks:us-east-1:1:cluster/old", ServerURL: "https://new.example.com"},
+		{SourceID: "aws-prod", ProviderResourceID: "arn:aws:eks:us-east-1:1:cluster/eks-spot-dev-02", ServerURL: "https://argocd.example.com"},
+	}
+
+	got := MergeArgoTargets(yaml, db)
+	if len(got) != 3 {
+		t.Fatalf("MergeArgoTargets returned %d targets, want 3: %#v", len(got), got)
+	}
+
+	byProxyID := make(map[string]ArgoTarget, len(got))
+	for _, target := range got {
+		byProxyID[target.ProxyID()] = target
+	}
+
+	if target := byProxyID[yaml[0].ProxyID()]; target.ServerURL != "https://localhost:18081" {
+		t.Fatalf("yaml-only target changed: %#v", target)
+	}
+	if target := byProxyID[yaml[1].ProxyID()]; target.ServerURL != "https://new.example.com" {
+		t.Fatalf("database target did not win: %#v", target)
+	}
+	if target := byProxyID[db[1].ProxyID()]; target.ServerURL != "https://argocd.example.com" {
+		t.Fatalf("database-only target missing: %#v", target)
 	}
 }

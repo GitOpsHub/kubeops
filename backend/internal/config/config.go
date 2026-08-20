@@ -378,8 +378,13 @@ func parseArgoTargets(content []byte) ([]ArgoTarget, error) {
 	return document.Targets, nil
 }
 
+// loadArgoCredentialKey loads ARGO_CREDENTIAL_ENCRYPTION_KEY whenever it is
+// set, not only when a YAML target has a password. Database-managed Argo
+// targets (see backend/internal/store.ListArgoTargets) store their token and
+// optional UI password encrypted with this key and carry no plaintext in
+// YAML/env for loadArgoCredentialKey to have detected a need from.
 func loadArgoCredentialKey(targets []ArgoTarget) ([]byte, error) {
-	var needsKey bool
+	needsKey := strings.TrimSpace(os.Getenv("ARGO_CREDENTIAL_ENCRYPTION_KEY")) != ""
 	for _, target := range targets {
 		if target.Password != "" {
 			needsKey = true
@@ -401,6 +406,53 @@ func loadArgoCredentialKey(targets []ArgoTarget) ([]byte, error) {
 
 func (c Config) Address() string {
 	return c.Host + ":" + c.Port
+}
+
+// MergeCloudSources combines YAML/env-parsed sources with database-managed
+// ones (see store.ListCloudSourcesConfig), keyed by ID. A database row wins
+// over a YAML entry with the same ID; YAML-only entries (local dev sources
+// such as docker-desktop or minikube, which are specific to one developer's
+// machine and have no business in a shared database) pass through
+// unchanged. This lets a cloud source be added or corrected by inserting a
+// row directly instead of editing cloud-sources.yaml and redeploying.
+func MergeCloudSources(yamlSources, dbSources []model.CloudSource) []model.CloudSource {
+	merged := make([]model.CloudSource, 0, len(yamlSources)+len(dbSources))
+	byID := make(map[string]int, len(yamlSources))
+	for _, source := range yamlSources {
+		byID[source.ID] = len(merged)
+		merged = append(merged, source)
+	}
+	for _, source := range dbSources {
+		if index, ok := byID[source.ID]; ok {
+			merged[index] = source
+			continue
+		}
+		byID[source.ID] = len(merged)
+		merged = append(merged, source)
+	}
+	return merged
+}
+
+// MergeArgoTargets combines YAML/env-parsed Argo CD targets with
+// database-managed ones (see store.ListArgoTargets), keyed by
+// (SourceID, ProviderResourceID) via ProxyID, which depends only on those
+// two fields. A database row wins over a YAML entry for the same cluster.
+func MergeArgoTargets(yamlTargets, dbTargets []ArgoTarget) []ArgoTarget {
+	merged := make([]ArgoTarget, 0, len(yamlTargets)+len(dbTargets))
+	byProxyID := make(map[string]int, len(yamlTargets))
+	for _, target := range yamlTargets {
+		byProxyID[target.ProxyID()] = len(merged)
+		merged = append(merged, target)
+	}
+	for _, target := range dbTargets {
+		if index, ok := byProxyID[target.ProxyID()]; ok {
+			merged[index] = target
+			continue
+		}
+		byProxyID[target.ProxyID()] = len(merged)
+		merged = append(merged, target)
+	}
+	return merged
 }
 
 func loadEnvFile(path string) error {

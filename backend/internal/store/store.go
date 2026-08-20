@@ -7,10 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"sort"
 	"strings"
 
+	"github.com/GitOpsHub/kubeops/backend/internal/config"
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
+	"github.com/GitOpsHub/kubeops/backend/internal/secure"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -130,22 +133,77 @@ func (s *Store) UpsertSources(ctx context.Context, sources []model.CloudSource) 
 	defer tx.Rollback(ctx)
 
 	for _, source := range sources {
+		regions := source.Regions
+		if regions == nil {
+			regions = []string{}
+		}
+		contexts := source.Contexts
+		if contexts == nil {
+			contexts = []string{}
+		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO cloud_sources (id, provider, name, scope_id, regions, enabled)
-			VALUES ($1, $2, $3, $4, $5, $6)
+			INSERT INTO cloud_sources (
+				id, provider, name, scope_id, regions, enabled,
+				role_arn, impersonate_service_account, workload_identity_provider,
+				tenant_id, client_id, kubeconfig_path, contexts
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 			ON CONFLICT (id) DO UPDATE SET
 				provider = EXCLUDED.provider,
 				name = EXCLUDED.name,
 				scope_id = EXCLUDED.scope_id,
 				regions = EXCLUDED.regions,
 				enabled = EXCLUDED.enabled,
+				role_arn = EXCLUDED.role_arn,
+				impersonate_service_account = EXCLUDED.impersonate_service_account,
+				workload_identity_provider = EXCLUDED.workload_identity_provider,
+				tenant_id = EXCLUDED.tenant_id,
+				client_id = EXCLUDED.client_id,
+				kubeconfig_path = EXCLUDED.kubeconfig_path,
+				contexts = EXCLUDED.contexts,
 				updated_at = NOW()`,
-			source.ID, source.Provider, source.Name, source.ScopeID, source.Regions, source.Enabled,
+			source.ID, source.Provider, source.Name, source.ScopeID, regions, source.Enabled,
+			source.RoleARN, source.ImpersonateServiceAccount, source.WorkloadIdentityProvider,
+			source.TenantID, source.ClientID, source.KubeconfigPath, contexts,
 		); err != nil {
 			return err
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+// ListCloudSourcesConfig returns every cloud_sources row as a full
+// model.CloudSource, including the federation columns that ListSources /
+// SourceSummary deliberately omit from API responses. It is used at startup
+// to merge database-managed sources into the config loaded from YAML/env, so
+// a cloud source can be added or updated by inserting a row directly instead
+// of editing cloud-sources.yaml and redeploying.
+func (s *Store) ListCloudSourcesConfig(ctx context.Context) ([]model.CloudSource, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, provider, name, scope_id, regions, enabled,
+			role_arn, impersonate_service_account, workload_identity_provider,
+			tenant_id, client_id, kubeconfig_path, contexts
+		FROM cloud_sources
+		ORDER BY provider, name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	sources := make([]model.CloudSource, 0)
+	for rows.Next() {
+		var source model.CloudSource
+		if err := rows.Scan(
+			&source.ID, &source.Provider, &source.Name, &source.ScopeID, &source.Regions,
+			&source.Enabled, &source.RoleARN, &source.ImpersonateServiceAccount,
+			&source.WorkloadIdentityProvider, &source.TenantID, &source.ClientID,
+			&source.KubeconfigPath, &source.Contexts,
+		); err != nil {
+			return nil, err
+		}
+		sources = append(sources, source)
+	}
+	return sources, rows.Err()
 }
 
 func (s *Store) ListSources(ctx context.Context) ([]model.SourceSummary, error) {
@@ -328,6 +386,119 @@ func (s *Store) GetArgoAccessByClusterID(
 		&access.PasswordCiphertext, &access.PasswordNonce,
 	)
 	return access, err
+}
+
+// UpsertArgoTarget writes one argo_targets row. Token and password are
+// already encrypted by the caller (see secure.Encrypt) -- this method never
+// sees plaintext.
+func (s *Store) UpsertArgoTarget(ctx context.Context, target model.EncryptedArgoTarget) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO argo_targets (
+			source_id, provider_resource_id, server_url,
+			token_ciphertext, token_nonce, ca_cert,
+			ui_url, username, password_ciphertext, password_nonce
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		ON CONFLICT (source_id, provider_resource_id) DO UPDATE SET
+			server_url = EXCLUDED.server_url,
+			token_ciphertext = EXCLUDED.token_ciphertext,
+			token_nonce = EXCLUDED.token_nonce,
+			ca_cert = EXCLUDED.ca_cert,
+			ui_url = EXCLUDED.ui_url,
+			username = EXCLUDED.username,
+			password_ciphertext = EXCLUDED.password_ciphertext,
+			password_nonce = EXCLUDED.password_nonce,
+			updated_at = NOW()`,
+		target.SourceID, target.ProviderResourceID, target.ServerURL,
+		target.TokenCiphertext, target.TokenNonce, target.CACert,
+		target.UIURL, target.Username, target.PasswordCiphertext, target.PasswordNonce,
+	)
+	return err
+}
+
+// ListArgoTargets reads every argo_targets row and decrypts it into a
+// config.ArgoTarget -- the same type argo-targets.yaml produces -- so
+// callers can merge database-managed targets into cfg.Onboarding.ArgoTargets
+// without any change to how targets are consumed downstream (Argo client
+// construction, the reverse proxy, ProxyID). A target's CA certificate, if
+// present, is written to a temp file since Vercel's filesystem is read-only
+// outside /tmp; ArgoTarget.CAFile already expects a file path.
+//
+// key must be the same ARGO_CREDENTIAL_ENCRYPTION_KEY used to encrypt these
+// rows (see backend/cmd/seed-argo-target). A nil key with existing rows is a
+// configuration error, not silently skipped, since it means kubeops cannot
+// use Argo CD targets it knows the database has.
+func (s *Store) ListArgoTargets(ctx context.Context, key []byte) ([]config.ArgoTarget, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT source_id, provider_resource_id, server_url,
+			token_ciphertext, token_nonce, ca_cert,
+			ui_url, username, password_ciphertext, password_nonce
+		FROM argo_targets
+		ORDER BY source_id, provider_resource_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	targets := make([]config.ArgoTarget, 0)
+	for rows.Next() {
+		var (
+			row                               model.EncryptedArgoTarget
+			passwordCiphertext, passwordNonce []byte
+		)
+		if err := rows.Scan(
+			&row.SourceID, &row.ProviderResourceID, &row.ServerURL,
+			&row.TokenCiphertext, &row.TokenNonce, &row.CACert,
+			&row.UIURL, &row.Username, &passwordCiphertext, &passwordNonce,
+		); err != nil {
+			return nil, err
+		}
+
+		if len(key) == 0 {
+			return nil, fmt.Errorf(
+				"argo_targets has a row for %s/%s but ARGO_CREDENTIAL_ENCRYPTION_KEY is not set",
+				row.SourceID, row.ProviderResourceID,
+			)
+		}
+		token, err := secure.Decrypt(key, row.TokenCiphertext, row.TokenNonce)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt Argo CD token for %s/%s: %w", row.SourceID, row.ProviderResourceID, err)
+		}
+
+		target := config.ArgoTarget{
+			SourceID:           row.SourceID,
+			ProviderResourceID: row.ProviderResourceID,
+			ServerURL:          row.ServerURL,
+			Token:              string(token),
+			UIURL:              row.UIURL,
+			Username:           row.Username,
+		}
+
+		if row.CACert != "" {
+			caFile, err := os.CreateTemp("", "argo-target-ca-*.pem")
+			if err != nil {
+				return nil, fmt.Errorf("write CA certificate for %s/%s: %w", row.SourceID, row.ProviderResourceID, err)
+			}
+			if _, err := caFile.WriteString(row.CACert); err != nil {
+				caFile.Close()
+				return nil, fmt.Errorf("write CA certificate for %s/%s: %w", row.SourceID, row.ProviderResourceID, err)
+			}
+			if err := caFile.Close(); err != nil {
+				return nil, fmt.Errorf("write CA certificate for %s/%s: %w", row.SourceID, row.ProviderResourceID, err)
+			}
+			target.CAFile = caFile.Name()
+		}
+
+		if len(passwordCiphertext) > 0 {
+			password, err := secure.Decrypt(key, passwordCiphertext, passwordNonce)
+			if err != nil {
+				return nil, fmt.Errorf("decrypt Argo CD UI password for %s/%s: %w", row.SourceID, row.ProviderResourceID, err)
+			}
+			target.Password = string(password)
+		}
+
+		targets = append(targets, target)
+	}
+	return targets, rows.Err()
 }
 
 func (s *Store) ListSyncRuns(ctx context.Context, limit int) ([]model.SyncRun, error) {

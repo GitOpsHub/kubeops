@@ -24,10 +24,21 @@ make test
 ## Architecture notes
 
 **Clusters are discovered, never registered.** There is no "add a cluster" API.
-Operators edit `config/cloud-sources.yaml` (or `CLOUD_SOURCES_YAML` on
-serverless), and the syncer polls each provider. No kubeconfig, cluster token, or
-cloud credential is ever stored in the database — the only DB secret is the
-encrypted Argo CD UI password.
+Cloud sources and Argo CD targets can come from either `config/cloud-sources.yaml`
+/ `config/argo-targets.yaml` (or their `*_YAML` env equivalents) or from the
+`cloud_sources` / `argo_targets` database tables; at startup `main.go` merges
+both by ID, **database wins on conflict**. YAML stays the natural way to
+configure local-dev-only sources (`docker-desktop`, `minikube`) that have no
+business in a shared database; the database is how a shared/production
+cloud source or a cluster's Argo CD access gets added without a redeploy —
+insert a `cloud_sources` row directly (its federation columns are identifiers,
+not credentials) or run `backend/cmd/seed-argo-target` (it encrypts the Argo
+API token/UI password before writing `argo_targets`). There is deliberately no
+HTTP endpoint for either table — the API has no authentication. The syncer
+still just polls whatever providers this merged set names; no kubeconfig,
+cluster token, or cloud credential is ever stored in the database. DB secrets
+today: the encrypted Argo CD UI password (`argo_cluster_access`), and the
+encrypted Argo API token/UI password in `argo_targets`.
 
 **`backend/internal/cloudauth` owns all cloud credentials.** Provider code calls
 `AWSConfig`, `GCPClientOptions`, or `AzureCredential`; it never builds an SDK

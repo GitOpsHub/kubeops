@@ -218,9 +218,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 			return model.ApplicationOnboarding{}, ValidationError{Message: "removed clusters cannot receive applications"}
 		}
 		if _, err := s.resolveClient(ctx, cluster.SourceID, cluster.ProviderResourceID, cluster.Name); err != nil {
-			return model.ApplicationOnboarding{}, ValidationError{
-				Message: fmt.Sprintf("cluster %q does not have an Argo CD target configured", cluster.Name),
-			}
+			return model.ApplicationOnboarding{}, ValidationError{Message: argoTargetErrorMessage(cluster.Name, err)}
 		}
 	}
 
@@ -362,9 +360,7 @@ func (s *Service) target(
 		client, err := s.resolveClient(ctx, target.SourceID, target.ProviderResourceID, target.ClusterName)
 		if err != nil {
 			return model.ApplicationDeployment{}, nil, ValidationError{
-				Message: fmt.Sprintf(
-					"cluster %q does not have an Argo CD target configured", target.ClusterName,
-				),
+				Message: argoTargetErrorMessage(target.ClusterName, err),
 			}
 		}
 		return target, client, nil
@@ -375,6 +371,22 @@ func (s *Service) target(
 // errArgoTargetUnavailable reports that a cluster has neither a statically
 // configured Argo CD target nor a matching kubespin entry to fall back to.
 var errArgoTargetUnavailable = errors.New("no Argo CD target is configured for this cluster")
+
+// argoTargetErrorMessage distinguishes "nothing is configured for this
+// cluster" from "a target is configured but resolving/reaching it failed"
+// (e.g. a kubespin login error, an unreachable server, a bad certificate).
+// Collapsing both into the same "not configured" message hides the real
+// cause of a connectivity or credential problem behind a message that reads
+// as a config-editing task, not an outage. The underlying error is logged,
+// not returned to the caller — like the Argo CD reverse proxy's own error
+// handler, it can name internal hosts, and the API has no authentication.
+func argoTargetErrorMessage(clusterName string, err error) string {
+	if errors.Is(err, errArgoTargetUnavailable) {
+		return fmt.Sprintf("cluster %q does not have an Argo CD target configured", clusterName)
+	}
+	slog.Error("resolve Argo CD target", "cluster", clusterName, "error", err)
+	return fmt.Sprintf("cluster %q has an Argo CD target configured, but it could not be reached", clusterName)
+}
 
 // resolveClient returns the Argo CD client for a cluster. A statically
 // configured target (config.ArgoTarget) always wins and is never queried

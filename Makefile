@@ -60,7 +60,7 @@ test-db: db-up
 		|| docker compose exec -T postgres createdb -U kubeops $(TEST_DB_NAME)
 
 test-integration: test-db
-	cd backend && TEST_DATABASE_URL='$(TEST_DATABASE_URL)' go test ./internal/store -run 'TestInventoryLifecycle|TestGetKubespinArgoDetails' -count=1
+	cd backend && TEST_DATABASE_URL='$(TEST_DATABASE_URL)' go test ./internal/store -run 'TestInventoryLifecycle|TestGetKubespinArgoDetails|TestArgoTargetsAndCloudSourcesConfigRoundTrip' -count=1
 
 # Lints and renders every platform profile in charts/kubeops/ci, validates the
 # result against the Kubernetes API schemas, and asserts the chart still rejects
