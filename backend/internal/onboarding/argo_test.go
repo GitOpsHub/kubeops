@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -329,5 +330,76 @@ func TestHTTPArgoClientSyncsAndCascadeDeletesApplication(t *testing.T) {
 	}
 	if !synced || !deleted {
 		t.Fatalf("expected sync and delete calls, got synced=%t deleted=%t", synced, deleted)
+	}
+}
+
+func TestSessionArgoClientLogsInAndAttachesToken(t *testing.T) {
+	var sawAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/session" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"token":"session-token-1"}`))
+			return
+		}
+		sawAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":{"sync":{"status":"Synced"},"health":{"status":"Healthy"}}}`))
+	}))
+	defer server.Close()
+
+	client, err := NewSessionArgoClient(
+		context.Background(), server.URL, "admin", "secret",
+		config.OnboardingConfig{RequestTimeout: time.Second},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.GetApplication(context.Background(), "payments", "argo-cd"); err != nil {
+		t.Fatal(err)
+	}
+	if sawAuth != "Bearer session-token-1" {
+		t.Fatalf("unexpected Authorization header: %q", sawAuth)
+	}
+}
+
+// TestSessionArgoClientRelogsInOnUnauthorized proves the kubespin-shaped
+// username/password client recovers from an expired or rotated session
+// without a cache TTL: it relogs in once when a request comes back 401 and
+// retries with the refreshed token.
+func TestSessionArgoClientRelogsInOnUnauthorized(t *testing.T) {
+	var logins int
+	var rejectedOnce bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/session" {
+			logins++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"token":"session-token-%d"}`, logins)))
+			return
+		}
+		if r.Header.Get("Authorization") == "Bearer session-token-1" && !rejectedOnce {
+			rejectedOnce = true
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer session-token-2" {
+			t.Fatalf("expected the refreshed token, got %q", r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":{"sync":{"status":"Synced"},"health":{"status":"Healthy"}}}`))
+	}))
+	defer server.Close()
+
+	client, err := NewSessionArgoClient(
+		context.Background(), server.URL, "admin", "secret",
+		config.OnboardingConfig{RequestTimeout: time.Second},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.GetApplication(context.Background(), "payments", "argo-cd"); err != nil {
+		t.Fatal(err)
+	}
+	if logins != 2 {
+		t.Fatalf("expected an initial login plus one relogin, got %d", logins)
 	}
 }

@@ -29,6 +29,7 @@ type Repository interface {
 	GetCluster(context.Context, string) (model.Cluster, error)
 	ListSyncRuns(context.Context, int) ([]model.SyncRun, error)
 	QueueSync(context.Context, string, string) (model.SyncRun, error)
+	GetKubespinArgoDetails(context.Context, string) (model.KubespinArgoCDDetails, error)
 }
 
 type ClusterManager interface {
@@ -286,6 +287,24 @@ func (api *API) clusterArgoAccess(w http.ResponseWriter, r *http.Request) {
 			URL: api.config.Onboarding.PublicBaseURL + argoProxyPrefix +
 				target.ProxyID() + "/applications",
 		})
+		return
+	}
+
+	// No statically configured target: fall back to kubespin's Argo CD details
+	// for this cluster, matched by name. This is a direct link to kubespin's
+	// own Argo CD server rather than a proxied one — kubeops has no reverse
+	// proxy mount for these, unlike the static targets above.
+	details, err := api.store.GetKubespinArgoDetails(r.Context(), cluster.Name)
+	if err == nil {
+		writeJSON(w, http.StatusOK, model.ArgoAccess{URL: details.Endpoint})
+		return
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		if aborted(r) {
+			return
+		}
+		slog.Error("get kubespin Argo CD access", "cluster", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "unable to load Argo CD access")
 		return
 	}
 	writeError(w, http.StatusNotFound, "Argo CD access is not configured for this cluster")

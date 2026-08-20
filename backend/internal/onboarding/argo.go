@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/GitOpsHub/kubeops/backend/internal/config"
 	"gopkg.in/yaml.v3"
@@ -131,6 +132,132 @@ func NewHTTPArgoClient(target config.ArgoTarget, timeoutConfig config.Onboarding
 		token:     target.Token,
 		client:    &http.Client{Transport: transport, Timeout: timeoutConfig.RequestTimeout},
 	}, nil
+}
+
+// sessionArgoClient wraps HTTPArgoClient for Argo CD servers that hand out only
+// a username/password, not a long-lived API token — kubespin's per-cluster Argo
+// CD details are exactly this shape. A custom transport attaches the current
+// session token to every request and relogs in once on a 401, since Argo CD
+// session JWTs expire and kubespin exposes no separate long-lived token.
+type sessionArgoClient struct {
+	*HTTPArgoClient
+	username, password string
+	mu                 sync.Mutex
+}
+
+// NewSessionArgoClient builds an ArgoClient for a server that authenticates by
+// username/password rather than a static API token. The plaintext password is
+// held only on this struct for the process lifetime of the cached client (see
+// onboarding.Service.resolveClient); it is never logged and never placed on a
+// struct with a JSON marshaler.
+func NewSessionArgoClient(
+	ctx context.Context,
+	endpoint, username, password string,
+	cfg config.OnboardingConfig,
+) (ArgoClient, error) {
+	inner, err := NewHTTPArgoClient(config.ArgoTarget{SourceID: "kubespin", ServerURL: endpoint}, cfg)
+	if err != nil {
+		return nil, err
+	}
+	client := &sessionArgoClient{HTTPArgoClient: inner, username: username, password: password}
+	inner.client = &http.Client{
+		Transport: &sessionRoundTripper{base: inner.client.Transport, client: client},
+		Timeout:   inner.client.Timeout,
+	}
+	if err := client.login(ctx); err != nil {
+		return nil, err
+	}
+	return client, nil
+}
+
+// login authenticates against Argo CD's session endpoint and stores the
+// resulting bearer token. Callers must hold c.mu.
+func (c *sessionArgoClient) login(ctx context.Context) error {
+	body, err := json.Marshal(map[string]string{"username": c.username, "password": c.password})
+	if err != nil {
+		return err
+	}
+	request, err := http.NewRequestWithContext(
+		ctx, http.MethodPost, c.serverURL+"/api/v1/session", bytes.NewReader(body),
+	)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	// Bypass the session transport for the login call itself: it has no token
+	// yet, and a 401 here is a genuine bad-credential failure, not a stale
+	// session to retry.
+	base := c.client.Transport.(*sessionRoundTripper).base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	response, err := base.RoundTrip(request)
+	if err != nil {
+		return fmt.Errorf("log in to Argo CD: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+		return fmt.Errorf("Argo CD login returned status %d", response.StatusCode)
+	}
+	var payload struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&payload); err != nil {
+		return fmt.Errorf("decode Argo CD login response: %w", err)
+	}
+	if payload.Token == "" {
+		return errors.New("Argo CD login response did not include a token")
+	}
+	c.token = payload.Token
+	return nil
+}
+
+// sessionRoundTripper attaches the current session token to every request and
+// relogs in once when a request comes back unauthorized, retrying it with the
+// refreshed token. This is where an expired or rotated kubespin Argo CD
+// credential actually gets noticed and recovered from.
+type sessionRoundTripper struct {
+	base   http.RoundTripper
+	client *sessionArgoClient
+}
+
+func (t *sessionRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	t.client.mu.Lock()
+	request.Header.Set("Authorization", "Bearer "+t.client.token)
+	t.client.mu.Unlock()
+
+	response, err := base.RoundTrip(request)
+	if err != nil || response.StatusCode != http.StatusUnauthorized {
+		return response, err
+	}
+	if request.Body != nil && request.GetBody == nil {
+		// The request body was already consumed and cannot be replayed safely.
+		return response, err
+	}
+	response.Body.Close()
+
+	retry := request.Clone(request.Context())
+	if request.GetBody != nil {
+		body, bodyErr := request.GetBody()
+		if bodyErr != nil {
+			return response, nil
+		}
+		retry.Body = body
+	}
+	t.client.mu.Lock()
+	loginErr := t.client.login(request.Context())
+	token := t.client.token
+	t.client.mu.Unlock()
+	if loginErr != nil {
+		return response, nil
+	}
+	retry.Header.Set("Authorization", "Bearer "+token)
+	return base.RoundTrip(retry)
 }
 
 func (c *HTTPArgoClient) CreateApplication(

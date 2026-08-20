@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
+	"github.com/jackc/pgx/v5"
 )
 
 const truncateIntegrationData = "TRUNCATE sync_runs, application_onboardings, clusters, cloud_sources CASCADE"
@@ -421,5 +422,76 @@ func TestConcurrentDeploymentUpdatesSettleParentStatus(t *testing.T) {
 		if settled.CompletedAt == nil {
 			t.Fatalf("attempt %d: terminal onboarding has no completed_at", attempt)
 		}
+	}
+}
+
+// TestGetKubespinArgoDetails simulates kubespin's own schema as test fixtures
+// — fleet_registry and cluster_argocd_details are owned by kubespin, not by
+// kubeops's migrations, so they do not exist until a test (or kubespin
+// itself) creates them. It proves the lookup matches by cluster name, filters
+// on phase='ready' with no special-casing of any other phase, and returns
+// pgx.ErrNoRows for a cluster kubespin has never captured Argo CD details for.
+func TestGetKubespinArgoDetails(t *testing.T) {
+	databaseURL := integrationDatabaseURL(t)
+
+	ctx := context.Background()
+	repository, err := Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		repository.pool.Exec(context.Background(), "DROP TABLE IF EXISTS cluster_argocd_details, fleet_registry")
+		repository.Close()
+	})
+
+	if _, err := repository.pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS fleet_registry (
+			cluster_id text PRIMARY KEY,
+			phase text NOT NULL
+		)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS cluster_argocd_details (
+			cluster_id text PRIMARY KEY REFERENCES fleet_registry(cluster_id) ON DELETE CASCADE,
+			kube_context text NOT NULL,
+			argocd_endpoint text NOT NULL,
+			argocd_username text NOT NULL,
+			argocd_password text NOT NULL,
+			captured_at timestamptz NOT NULL DEFAULT NOW(),
+			updated_at timestamptz NOT NULL DEFAULT NOW()
+		)`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		repository.pool.Exec(context.Background(), "TRUNCATE cluster_argocd_details, fleet_registry CASCADE")
+	})
+
+	if _, err := repository.pool.Exec(ctx, `
+		INSERT INTO fleet_registry (cluster_id, phase) VALUES
+			('prod', 'ready'), ('retired', 'decommissioned')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.pool.Exec(ctx, `
+		INSERT INTO cluster_argocd_details (cluster_id, kube_context, argocd_endpoint, argocd_username, argocd_password)
+		VALUES
+			('prod', 'prod-ctx', 'https://argo.prod.example.test', 'admin', 'secret'),
+			('retired', 'retired-ctx', 'https://argo.retired.example.test', 'admin', 'secret')`); err != nil {
+		t.Fatal(err)
+	}
+
+	details, err := repository.GetKubespinArgoDetails(ctx, "prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if details.Endpoint != "https://argo.prod.example.test" || details.Username != "admin" {
+		t.Fatalf("unexpected details: %#v", details)
+	}
+
+	if _, err := repository.GetKubespinArgoDetails(ctx, "retired"); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expected pgx.ErrNoRows for a decommissioned cluster, got %v", err)
+	}
+	if _, err := repository.GetKubespinArgoDetails(ctx, "unknown"); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expected pgx.ErrNoRows for an unknown cluster, got %v", err)
 	}
 }

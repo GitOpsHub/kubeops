@@ -18,6 +18,7 @@ import (
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
 	"github.com/GitOpsHub/kubeops/backend/internal/secure"
 	"github.com/GitOpsHub/kubeops/backend/internal/store"
+	"github.com/jackc/pgx/v5"
 	"gopkg.in/yaml.v3"
 )
 
@@ -27,6 +28,10 @@ var dnsLabel = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 
 type Repository interface {
 	GetClustersByIDs(context.Context, []string) ([]model.Cluster, error)
+	// GetKubespinArgoDetails resolves the Argo CD connection kubespin captured
+	// for a cloud-discovered cluster, matched by cluster name. It returns
+	// pgx.ErrNoRows when kubespin has no ready entry for that cluster.
+	GetKubespinArgoDetails(context.Context, string) (model.KubespinArgoCDDetails, error)
 	CreateApplicationOnboarding(
 		context.Context,
 		model.ApplicationOnboarding,
@@ -99,6 +104,11 @@ type Service struct {
 	// UI credentials to be linkable.
 	linkTargets map[string]config.ArgoTarget
 	github      ValuesRepositoryManager
+	// dynamicClients caches Argo CD clients resolved on demand from kubespin's
+	// cluster_argocd_details for clusters with no statically configured target.
+	// The cache lives for the process lifetime; a stale session recovers via
+	// sessionArgoClient's own 401-triggered relogin rather than a cache TTL.
+	dynamicClients sync.Map
 }
 
 func NewService(repository Repository, cfg config.OnboardingConfig) (*Service, error) {
@@ -207,7 +217,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 		if cluster.RemovedAt != nil {
 			return model.ApplicationOnboarding{}, ValidationError{Message: "removed clusters cannot receive applications"}
 		}
-		if _, ok := s.clients[targetKey(cluster.SourceID, cluster.ProviderResourceID)]; !ok {
+		if _, err := s.resolveClient(ctx, cluster.SourceID, cluster.ProviderResourceID, cluster.Name); err != nil {
 			return model.ApplicationOnboarding{}, ValidationError{
 				Message: fmt.Sprintf("cluster %q does not have an Argo CD target configured", cluster.Name),
 			}
@@ -285,9 +295,21 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			client := s.clients[targetKey(target.SourceID, target.ProviderResourceID)]
 			callCtx, cancel := context.WithTimeout(ctx, s.config.RequestTimeout)
 			defer cancel()
+			// Already validated above; a cache hit unless the target's Argo CD
+			// session expired between validation and this call, in which case
+			// sessionArgoClient's own relogin handles it transparently.
+			client, clientErr := s.resolveClient(callCtx, target.SourceID, target.ProviderResourceID, target.ClusterName)
+			if clientErr != nil {
+				if updateErr := s.store.UpdateApplicationDeployment(
+					context.WithoutCancel(ctx), target.ID, "failed",
+					"Unknown", "Unknown", "Argo CD target configuration is no longer available",
+				); updateErr != nil {
+					errs <- updateErr
+				}
+				return
+			}
 			target.HasRegionValues = valuesRepository.RegionValues[target.Region]
 			state, createErr := client.CreateApplication(callCtx, s.applicationSpec(onboarding, target))
 			status, message := stateToDeployment(state)
@@ -337,8 +359,8 @@ func (s *Service) target(
 		if target.ID != targetID {
 			continue
 		}
-		client, ok := s.clients[targetKey(target.SourceID, target.ProviderResourceID)]
-		if !ok {
+		client, err := s.resolveClient(ctx, target.SourceID, target.ProviderResourceID, target.ClusterName)
+		if err != nil {
 			return model.ApplicationDeployment{}, nil, ValidationError{
 				Message: fmt.Sprintf(
 					"cluster %q does not have an Argo CD target configured", target.ClusterName,
@@ -348,6 +370,44 @@ func (s *Service) target(
 		return target, client, nil
 	}
 	return model.ApplicationDeployment{}, nil, ErrTargetNotFound
+}
+
+// errArgoTargetUnavailable reports that a cluster has neither a statically
+// configured Argo CD target nor a matching kubespin entry to fall back to.
+var errArgoTargetUnavailable = errors.New("no Argo CD target is configured for this cluster")
+
+// resolveClient returns the Argo CD client for a cluster. A statically
+// configured target (config.ArgoTarget) always wins and is never queried
+// against the database. Otherwise it falls back to kubespin's
+// cluster_argocd_details, matched by cluster name, and caches the resulting
+// client for the process lifetime — clusters remain discovered exclusively
+// through the ordinary cloud-provider sync; kubespin only supplies Argo CD
+// access for a cluster kubeops already knows about.
+func (s *Service) resolveClient(
+	ctx context.Context,
+	sourceID, providerResourceID, clusterName string,
+) (ArgoClient, error) {
+	key := targetKey(sourceID, providerResourceID)
+	if client, ok := s.clients[key]; ok {
+		return client, nil
+	}
+	if cached, ok := s.dynamicClients.Load(key); ok {
+		return cached.(ArgoClient), nil
+	}
+
+	details, err := s.store.GetKubespinArgoDetails(ctx, clusterName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errArgoTargetUnavailable
+	}
+	if err != nil {
+		return nil, fmt.Errorf("look up kubespin Argo CD access: %w", err)
+	}
+	client, err := NewSessionArgoClient(ctx, details.Endpoint, details.Username, details.Password, s.config)
+	if err != nil {
+		return nil, fmt.Errorf("connect to Argo CD for cluster %q: %w", clusterName, err)
+	}
+	actual, _ := s.dynamicClients.LoadOrStore(key, client)
+	return actual.(ArgoClient), nil
 }
 
 // Resources lists the Kubernetes objects Argo CD manages for one deployment.
@@ -640,8 +700,8 @@ func (s *Service) forEachTarget(
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			client, ok := s.clients[targetKey(target.SourceID, target.ProviderResourceID)]
-			if !ok {
+			client, err := s.resolveClient(ctx, target.SourceID, target.ProviderResourceID, target.ClusterName)
+			if err != nil {
 				if updateErr := s.store.UpdateApplicationDeployment(
 					context.WithoutCancel(ctx), target.ID, "failed",
 					target.SyncStatus, target.HealthStatus,
@@ -822,8 +882,8 @@ func (s *Service) Reconcile(ctx context.Context) {
 			}
 			continue
 		}
-		client, ok := s.clients[targetKey(target.SourceID, target.ProviderResourceID)]
-		if !ok {
+		client, err := s.resolveClient(ctx, target.SourceID, target.ProviderResourceID, target.ClusterName)
+		if err != nil {
 			if err := s.store.UpdateApplicationDeployment(
 				ctx, target.ID, "failed", target.SyncStatus, target.HealthStatus,
 				"Argo CD target configuration is no longer available",
