@@ -57,6 +57,21 @@ func main() {
 	}
 	cfg.Onboarding.ArgoTargets = config.MergeArgoTargets(cfg.Onboarding.ArgoTargets, dbTargets)
 
+	// A localhost/port-forward server_url (from argo-targets.yaml or a stale
+	// DB row) can never be reached from a deployed function; keeping it would
+	// hand the frontend a link that always 502s. Drop it here instead, so the
+	// cluster falls through to the "Argo CD access is not configured" message.
+	if os.Getenv("VERCEL") != "" {
+		var dropped []config.ArgoTarget
+		cfg.Onboarding.ArgoTargets, dropped = config.DropLocalArgoTargets(cfg.Onboarding.ArgoTargets)
+		for _, target := range dropped {
+			slog.Warn("skipping local-only Argo CD target on deployed environment",
+				"source_id", target.SourceID,
+				"provider_resource_id", target.ProviderResourceID,
+				"server_url", target.ServerURL)
+		}
+	}
+
 	if err := repository.UpsertSources(ctx, cfg.CloudSources); err != nil {
 		slog.Error("reconcile cloud sources", "error", err)
 		os.Exit(1)

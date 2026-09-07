@@ -481,3 +481,33 @@ func TestMergeArgoTargetsDatabaseWinsOnConflict(t *testing.T) {
 		t.Fatalf("database-only target missing: %#v", target)
 	}
 }
+
+func TestDropLocalArgoTargets(t *testing.T) {
+	tests := []struct {
+		name      string
+		serverURL string
+		wantDrop  bool
+	}{
+		{"localhost", "https://localhost:18081", true},
+		{"loopback ipv4", "https://127.0.0.1:18081", true},
+		{"loopback ipv6", "https://[::1]:18081", true},
+		{"public host", "https://argocd.example.com", false},
+		{"public ip", "https://203.0.113.10", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			targets := []ArgoTarget{{SourceID: "s", ProviderResourceID: "p", ServerURL: tt.serverURL}}
+			kept, dropped := DropLocalArgoTargets(targets)
+			if tt.wantDrop {
+				if len(kept) != 0 || len(dropped) != 1 {
+					t.Fatalf("DropLocalArgoTargets(%q) = kept %#v, dropped %#v, want dropped", tt.serverURL, kept, dropped)
+				}
+			} else {
+				if len(kept) != 1 || len(dropped) != 0 {
+					t.Fatalf("DropLocalArgoTargets(%q) = kept %#v, dropped %#v, want kept", tt.serverURL, kept, dropped)
+				}
+			}
+		})
+	}
+}

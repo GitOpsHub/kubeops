@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -453,6 +454,34 @@ func MergeArgoTargets(yamlTargets, dbTargets []ArgoTarget) []ArgoTarget {
 		merged = append(merged, target)
 	}
 	return merged
+}
+
+// DropLocalArgoTargets removes targets whose server_url is a loopback address
+// (e.g. the localhost:1808x port-forwards scripts/argo-port-forward.sh sets
+// up for local dev). Those addresses only resolve on the developer's own
+// machine, so a deployed function that merges them in unfiltered would
+// generate an Argo CD link it can never reach and fail every proxied request
+// with a 502. Call this after MergeArgoTargets so a stale local-only DB row
+// is caught the same as a YAML one.
+func DropLocalArgoTargets(targets []ArgoTarget) (kept []ArgoTarget, dropped []ArgoTarget) {
+	kept = make([]ArgoTarget, 0, len(targets))
+	for _, target := range targets {
+		if isLoopbackServerURL(target.ServerURL) {
+			dropped = append(dropped, target)
+			continue
+		}
+		kept = append(kept, target)
+	}
+	return kept, dropped
+}
+
+func isLoopbackServerURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := parsed.Hostname()
+	return host == "localhost" || net.ParseIP(host).IsLoopback()
 }
 
 func loadEnvFile(path string) error {
