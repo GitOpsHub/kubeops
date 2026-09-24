@@ -855,6 +855,35 @@ describe('application detail', () => {
     expect(screen.queryByRole('tab', { name: 'Deployment targets' })).not.toBeInTheDocument()
   })
 
+  // The switch used to compare aria-pressed against the raw selection, which
+  // is empty until a cluster is clicked, so on first load the highlighted
+  // cluster announced itself as not pressed.
+  it('reports the cluster whose resources are shown as pressed from the start', async () => {
+    mockAPI({
+      applications: [
+        buildApplication({
+          targets: [
+            buildTarget({ id: 'target-1', clusterName: 'prod-us-east' }),
+            buildTarget({ id: 'target-2', clusterName: 'prod-eu', region: 'eu-west-1' }),
+          ],
+        }),
+      ],
+    })
+    renderApp('/applications/onboarding-1')
+    const user = userEvent.setup()
+
+    const clusters = await screen.findByRole('group', { name: 'Choose a cluster' })
+    const east = within(clusters).getByRole('button', { name: /prod-us-east/ })
+    const eu = within(clusters).getByRole('button', { name: /prod-eu/ })
+    expect(east).toHaveAttribute('aria-pressed', 'true')
+    expect(eu).toHaveAttribute('aria-pressed', 'false')
+
+    await user.click(eu)
+
+    expect(east).toHaveAttribute('aria-pressed', 'false')
+    expect(eu).toHaveAttribute('aria-pressed', 'true')
+  })
+
   it('scopes deployment targets by application environment and region', async () => {
     mockAPI({
       applications: [

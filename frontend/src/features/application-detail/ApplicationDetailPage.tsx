@@ -16,6 +16,8 @@ import { PageHeader } from '../../components/ui/PageHeader'
 import { RefreshIndicator } from '../../components/ui/RefreshIndicator'
 import { Skeleton } from '../../components/ui/Skeleton'
 import { Tabs } from '../../components/ui/Tabs'
+import { useToast } from '../../components/ui/toast-context'
+import { ToggleGroup } from '../../components/ui/ToggleGroup'
 import { usePolledResource } from '../../hooks/usePolledResource'
 import type { AppShellContext } from '../../lib/app-shell'
 import { ResourceExplorer } from '../resources/ResourceExplorer'
@@ -42,14 +44,14 @@ const ApplicationManifestsModal = lazy(() =>
 
 const pollIntervalMs = 5_000
 
-type Feedback = { tone: 'success' | 'error'; message: string } | null
-
 export function ApplicationDetailPage() {
   const { id = '' } = useParams()
   const navigate = useNavigate()
   const { setApplicationTopbar } = useOutletContext<AppShellContext>()
   const [action, setAction] = useState<DetailAction>(null)
-  const [feedback, setFeedback] = useState<Feedback>(null)
+  // Action outcomes are toasts: they report something that just happened and
+  // should not push the page down or linger as stale state.
+  const toast = useToast()
   const [scaling, setScaling] = useState(false)
   const [scaleError, setScaleError] = useState('')
   const [confirmingOffboard, setConfirmingOffboard] = useState(false)
@@ -104,23 +106,16 @@ export function ApplicationDetailPage() {
   async function deploy() {
     if (!record) return
     setAction('sync')
-    setFeedback(null)
     try {
       const next = await syncApplicationOnboarding(record.id)
       replaceRelease(next)
-      setFeedback(
-        next.targets.some((target) => target.status === 'failed')
-          ? {
-              tone: 'error',
-              message: 'Synchronization could not start for one or more deployment targets.',
-            }
-          : { tone: 'success', message: 'Synchronization started for every deployment target.' },
-      )
+      if (next.targets.some((target) => target.status === 'failed')) {
+        toast.error('Synchronization could not start for one or more deployment targets.')
+      } else {
+        toast.success('Synchronization started for every deployment target.')
+      }
     } catch (error) {
-      setFeedback({
-        tone: 'error',
-        message: errorMessage(error, 'Synchronization could not be started.'),
-      })
+      toast.error(errorMessage(error, 'Synchronization could not be started.'))
     } finally {
       setAction(null)
     }
@@ -130,23 +125,20 @@ export function ApplicationDetailPage() {
     if (!record) return
     setAction('scale')
     setScaleError('')
-    setFeedback(null)
     try {
       const next = await scaleApplicationOnboarding(record.id, replicas)
       replaceRelease(next)
       setScaling(false)
       setActiveTab('resources')
-      setFeedback(
-        next.targets.some((target) => target.status === 'failed')
-          ? {
-              tone: 'error',
-              message: `The ${replicas}-pod value was committed, but synchronization failed for one or more clusters.`,
-            }
-          : {
-              tone: 'success',
-              message: `Scaling ${releaseScope(next)} to ${replicas} ${replicas === 1 ? 'pod' : 'pods'} through GitOps.`,
-            },
-      )
+      if (next.targets.some((target) => target.status === 'failed')) {
+        toast.error(
+          `The ${replicas}-pod value was committed, but synchronization failed for one or more clusters.`,
+        )
+      } else {
+        toast.success(
+          `Scaling ${releaseScope(next)} to ${replicas} ${replicas === 1 ? 'pod' : 'pods'} through GitOps.`,
+        )
+      }
     } catch (error) {
       setScaleError(errorMessage(error, 'The application could not be scaled.'))
     } finally {
@@ -157,7 +149,6 @@ export function ApplicationDetailPage() {
   async function offboard() {
     if (!record) return
     setAction('offboard')
-    setFeedback(null)
     try {
       const next = await offboardApplicationOnboarding(record.id)
       setConfirmingOffboard(false)
@@ -166,21 +157,16 @@ export function ApplicationDetailPage() {
         // sibling release if there is one, otherwise back to the list.
         const remaining = releases.filter((release) => release.id !== next.id)
         mutate(() => remaining)
+        toast.success(`${next.name} was offboarded. Its GitHub values were kept.`)
         navigate(remaining.length > 0 ? `/applications/${remaining[0].id}` : '/applications', {
           replace: true,
         })
         return
       }
       replaceRelease(next)
-      setFeedback({
-        tone: 'error',
-        message: 'One or more clusters could not be offboarded. GitHub values were kept.',
-      })
+      toast.error('One or more clusters could not be offboarded. GitHub values were kept.')
     } catch (error) {
-      setFeedback({
-        tone: 'error',
-        message: errorMessage(error, 'Application could not be offboarded.'),
-      })
+      toast.error(errorMessage(error, 'Application could not be offboarded.'))
     } finally {
       setAction(null)
     }
@@ -188,7 +174,6 @@ export function ApplicationDetailPage() {
 
   function selectRelease(releaseId: string) {
     setResourceTargetId('')
-    setFeedback(null)
     setConfirmingOffboard(false)
     setScaling(false)
     navigate(`/applications/${releaseId}`, { replace: true })
@@ -277,16 +262,6 @@ export function ApplicationDetailPage() {
         </Banner>
       )}
 
-      {feedback && (
-        <Banner
-          tone={feedback.tone}
-          title={feedback.tone === 'error' ? 'Application action failed' : 'Application updated'}
-          onDismiss={() => setFeedback(null)}
-        >
-          {feedback.message}
-        </Banner>
-      )}
-
       {releases.length > 0 && (
         <nav className="release-rail" aria-label="Filter targets by environment and region">
           <span className="kicker">Release</span>
@@ -335,24 +310,20 @@ export function ApplicationDetailPage() {
                   {/* Resources live on one cluster, so targets are inspected one
                       at a time rather than merged. */}
                   {targets.length > 1 && (
-                    <div className="target-switch" role="group" aria-label="Choose a cluster">
-                      {targets.map((target) => (
-                        <button
-                          key={target.id}
-                          type="button"
-                          className={
-                            resourceTarget.id === target.id
-                              ? 'target-switch-item is-active'
-                              : 'target-switch-item'
-                          }
-                          aria-pressed={resourceTargetId === target.id}
-                          onClick={() => setResourceTargetId(target.id)}
-                        >
-                          <DeploymentTargetLogo target={target} />
-                          {target.clusterName}
-                        </button>
-                      ))}
-                    </div>
+                    <ToggleGroup
+                      label="Choose a cluster"
+                      appearance="pills"
+                      size="sm"
+                      className="target-switch"
+                      itemClassName="target-switch-item"
+                      value={resourceTarget.id}
+                      onChange={setResourceTargetId}
+                      options={targets.map((target) => ({
+                        value: target.id,
+                        label: target.clusterName,
+                        icon: <DeploymentTargetLogo target={target} />,
+                      }))}
+                    />
                   )}
                   <ResourceExplorer
                     key={resourceTarget.id}

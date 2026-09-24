@@ -7,6 +7,7 @@ import { Button } from '../../components/ui/Button'
 import { DataTable, type Column } from '../../components/ui/DataTable'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { PageHeader } from '../../components/ui/PageHeader'
+import { Pagination } from '../../components/ui/Pagination'
 import { RefreshIndicator } from '../../components/ui/RefreshIndicator'
 import { SearchInput } from '../../components/ui/SearchInput'
 import { SegmentedControl } from '../../components/ui/SegmentedControl'
@@ -62,7 +63,6 @@ export function ClustersPage() {
 
   const fleetTotal = providers.reduce((sum, item) => sum + counts[item], 0)
   const activeSources = sources.filter((item) => item.enabled).length
-  const totalPages = Math.max(1, Math.ceil(total / pageSize))
   // Sources that failed outright, or whose last success is old enough that the
   // inventory can no longer be trusted.
   const staleSources = sources.filter(
@@ -339,42 +339,17 @@ export function ClustersPage() {
           )}
         </div>
 
-        <div className="table-footer">
-          <span>
-            Page {page} of {totalPages} · {plural(total, 'cluster')}
-          </span>
-          <div className="table-footer-controls">
-            <label>
-              <span>Rows</span>
-              <select
-                className="select"
-                aria-label="Clusters per page"
-                value={pageSize}
-                onChange={(event) => updateFilter(() => setPageSize(Number(event.target.value)))}
-              >
-                {pageSizes.map((size) => (
-                  <option key={size} value={size}>
-                    {size}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <Button
-              size="sm"
-              disabled={page === 1}
-              onClick={() => setPage((current) => current - 1)}
-            >
-              Previous
-            </Button>
-            <Button
-              size="sm"
-              disabled={page >= totalPages}
-              onClick={() => setPage((current) => current + 1)}
-            >
-              Next
-            </Button>
-          </div>
-        </div>
+        <Pagination
+          page={page}
+          pageSize={pageSize}
+          total={total}
+          pageSizeOptions={pageSizes}
+          onPageChange={setPage}
+          onPageSizeChange={(size) => updateFilter(() => setPageSize(size))}
+          noun={['cluster', 'clusters']}
+          pageSizeLabel="Clusters per page"
+          label="Clusters pagination"
+        />
       </div>
 
       {selectedCluster && (

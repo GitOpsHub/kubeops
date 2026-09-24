@@ -150,8 +150,6 @@ export function useApplicationsQuery() {
     statusCounts,
     filteredGroups,
     visibleGroups,
-    totalPages,
-    firstIndex,
     hasFilters: Boolean(search || status || environment),
   }
 }

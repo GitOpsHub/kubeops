@@ -5,6 +5,7 @@ import { Button } from '../../components/ui/Button'
 import { buttonClass } from '../../components/ui/button-class'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { PageHeader } from '../../components/ui/PageHeader'
+import { Pagination } from '../../components/ui/Pagination'
 import { RefreshIndicator } from '../../components/ui/RefreshIndicator'
 import { SegmentedControl } from '../../components/ui/SegmentedControl'
 import { SkeletonCards, SkeletonRows } from '../../components/ui/Skeleton'
@@ -40,7 +41,7 @@ export function ApplicationsPage() {
   // who want columns to sort and compare.
   const [view, setView] = useStoredPreference<ViewMode>('kubeops.applications.view', 'tiles')
   const apps = useApplicationsQuery()
-  const { query, items, filters, filteredGroups, visibleGroups, firstIndex, totalPages } = apps
+  const { query, items, filters, filteredGroups, visibleGroups } = apps
   const { page, pageSize } = filters
   const waiting = query.loading || (query.error !== null && items.length === 0)
 
@@ -156,46 +157,18 @@ export function ApplicationsPage() {
           />
         )}
 
-        <div className="table-footer">
-          <span>
-            {filteredGroups.length === 0
-              ? 'No applications'
-              : `Showing ${firstIndex + 1}–${Math.min(firstIndex + pageSize, filteredGroups.length)} of ${
-                  filteredGroups.length
-                } ${filteredGroups.length === 1 ? 'application' : 'applications'}`}
-          </span>
-          <div className="table-footer-controls">
-            <label>
-              <span>Rows</span>
-              <select
-                className="select"
-                aria-label="Applications per page"
-                value={pageSize}
-                onChange={(event) => apps.updateParams({ pageSize: event.target.value })}
-              >
-                {pageSizeOptions.map((option) => (
-                  <option value={option} key={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <Button
-              size="sm"
-              disabled={page === 1}
-              onClick={() => apps.updateParams({ page: String(page - 1) }, false)}
-            >
-              Previous
-            </Button>
-            <Button
-              size="sm"
-              disabled={page >= totalPages}
-              onClick={() => apps.updateParams({ page: String(page + 1) }, false)}
-            >
-              Next
-            </Button>
-          </div>
-        </div>
+        <Pagination
+          page={page}
+          pageSize={pageSize}
+          total={filteredGroups.length}
+          pageSizeOptions={pageSizeOptions}
+          onPageChange={(next) => apps.updateParams({ page: String(next) }, false)}
+          onPageSizeChange={(size) => apps.updateParams({ pageSize: String(size) })}
+          noun={['application', 'applications']}
+          summary="range"
+          pageSizeLabel="Applications per page"
+          label="Applications pagination"
+        />
       </div>
     </section>
   )

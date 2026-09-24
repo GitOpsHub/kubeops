@@ -8,6 +8,8 @@ type Props = {
   title: ReactNode
   kicker?: ReactNode
   description?: ReactNode
+  /** A mark beside the title, e.g. the resource's logo. */
+  icon?: ReactNode
   /** Controls beside the close button. */
   actions?: ReactNode
   /** Width of the panel: sm 400, md 560, lg 720, xl 960, full the viewport. */
@@ -30,6 +32,7 @@ export function Sheet({
   title,
   kicker,
   description,
+  icon,
   actions,
   size = 'md',
   closeLabel = 'Close',
@@ -51,6 +54,7 @@ export function Sheet({
           title={title}
           kicker={kicker}
           description={description}
+          icon={icon}
           actions={actions}
           closeLabel={closeLabel}
         />

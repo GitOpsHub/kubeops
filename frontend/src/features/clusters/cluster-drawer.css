@@ -1,15 +1,17 @@
-.cluster-sheet-header {
+/* The logo is identity, not a tone: drop the tinted tile the header gives
+   icons. */
+.cluster-detail-modal .dialog-header {
   border-bottom: 1px solid var(--border);
+}
+
+.cluster-detail-modal .dialog-header-icon {
+  background: none;
 }
 
 .cluster-sheet-logo {
   width: 36px;
   height: 36px;
   flex: 0 0 auto;
-}
-
-.cluster-sheet-header .dialog-title-group {
-  flex: 1;
 }
 
 .cluster-sheet-body {
@@ -31,14 +33,6 @@
   gap: var(--space-2);
   align-items: center;
   justify-content: space-between;
-}
-
-.sheet-empty {
-  padding: var(--space-3);
-  color: var(--text-muted);
-  background: var(--surface-sunken);
-  border-radius: var(--radius-md);
-  font-size: var(--text-xs);
 }
 
 .node-pool-list {
@@ -92,11 +86,11 @@
   font-size: var(--text-2xs);
 }
 
-.scale-message {
-  padding: var(--space-2) var(--space-3);
-  color: var(--text);
-  background: var(--accent-soft);
-  border-radius: var(--radius-md);
+.sheet-loading-line {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  color: var(--text-muted);
   font-size: var(--text-xs);
 }
 
