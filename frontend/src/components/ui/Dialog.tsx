@@ -24,8 +24,11 @@ type DialogProps = {
   onOpenChange: (open: boolean) => void
   /** Extra panel class for dialog-specific layout. */
   className?: string
-  /** Panel width: sm for confirmations, xl for code and diff viewers. */
-  size?: 'sm' | 'md' | 'lg' | 'xl'
+  /**
+   * Panel width: sm for confirmations, xl for code and diff viewers. `full`
+   * only applies to sheets.
+   */
+  size?: 'sm' | 'md' | 'lg' | 'xl' | 'full'
   /** `sheet` slides in from the right edge, `drawer` from the left. */
   variant?: 'center' | 'sheet' | 'drawer'
   /** Destructive confirmations announce as alertdialog. */
@@ -35,8 +38,12 @@ type DialogProps = {
    * flight, so the dialog cannot be dismissed out from under its own progress.
    */
   dismissible?: boolean
-  /** Set when the dialog has no `DialogDescription`, to silence Radix's warning. */
-  describedBy?: string
+  /**
+   * Points `aria-describedby` somewhere other than the `DialogDescription`,
+   * or `false` when the dialog has no description (which also silences
+   * Radix's warning). Omit it to use the `DialogDescription`.
+   */
+  describedBy?: string | false
   children: ReactNode
 }
 
@@ -54,6 +61,12 @@ export function Dialog({
   // Radix fires these for Escape and for pointer-down outside the panel. Both
   // are cancellable, which is how a dialog stays put mid-request.
   const block = dismissible ? undefined : (event: Event) => event.preventDefault()
+  // Toasts float above every dialog. Dismissing one is not a click "outside"
+  // that should also close the dialog underneath it.
+  const guardOutside = (event: Event) => {
+    if ((event.target as Element | null)?.closest?.('.toast-region')) event.preventDefault()
+    else block?.(event)
+  }
 
   /*
    * Radix restores focus to `Dialog.Trigger`, but every dialog here is opened
@@ -84,10 +97,14 @@ export function Dialog({
             // role="dialog" and then spreads our props over it, so passing an
             // explicit undefined deletes the role instead of leaving the default.
             {...(alert ? { role: 'alertdialog' as const } : {})}
-            aria-describedby={describedBy}
+            // Only overridden when asked: passing `undefined` through would
+            // erase the id Radix wires to `DialogDescription`.
+            {...(describedBy === undefined
+              ? {}
+              : { 'aria-describedby': describedBy === false ? undefined : describedBy })}
             onEscapeKeyDown={block}
-            onPointerDownOutside={block}
-            onInteractOutside={block}
+            onPointerDownOutside={guardOutside}
+            onInteractOutside={guardOutside}
             onCloseAutoFocus={(event) => {
               const target = restoreTo.current
               if (!target?.isConnected) return

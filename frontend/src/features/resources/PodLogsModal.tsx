@@ -66,7 +66,7 @@ export function PodLogsModal({ node, onboardingId, targetId, onClose }: Props) {
       onOpenChange={(next) => !next && onClose()}
       size="xl"
       className="pod-logs-modal"
-      describedBy={undefined}
+      describedBy={false}
     >
       <header className="dialog-header">
         <div className="dialog-title-group">

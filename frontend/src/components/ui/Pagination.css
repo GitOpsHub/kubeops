@@ -1,0 +1,7 @@
+.pagination-summary {
+  font-variant-numeric: tabular-nums;
+}
+
+.pagination-size {
+  color: var(--text-subtle);
+}

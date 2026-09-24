@@ -78,15 +78,25 @@ export function Tabs({ items, activeId, onChange, label }: Props) {
           )
         })}
       </div>
-      <div
-        className="tabpanel"
-        role="tabpanel"
-        id={`${baseId}-panel-${active.id}`}
-        aria-labelledby={`${baseId}-tab-${active.id}`}
-        tabIndex={0}
-      >
-        {active.content}
-      </div>
+      {/* Every panel is in the DOM so each tab's aria-controls resolves, but
+          only the active one renders its content: the others may poll or
+          fetch, and hidden panels should not. */}
+      {items.map((item) => {
+        const selected = item.id === active.id
+        return (
+          <div
+            key={item.id}
+            className="tabpanel"
+            role="tabpanel"
+            id={`${baseId}-panel-${item.id}`}
+            aria-labelledby={`${baseId}-tab-${item.id}`}
+            tabIndex={selected ? 0 : -1}
+            hidden={!selected}
+          >
+            {selected && item.content}
+          </div>
+        )
+      })}
     </>
   )
 }

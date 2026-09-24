@@ -1,14 +1,6 @@
-import type { ReactNode } from 'react'
-import './SegmentedControl.css'
+import { ToggleGroup, type ToggleOption } from './ToggleGroup'
 
-export type SegmentOption<T extends string> = {
-  value: T
-  label: ReactNode
-  icon?: ReactNode
-  /** Accessible name when the label alone is not enough, e.g. with a count. */
-  ariaLabel?: string
-  title?: string
-}
+export type SegmentOption<T extends string> = ToggleOption<T>
 
 type Props<T extends string> = {
   /** Names the group for assistive technology. */
@@ -20,39 +12,14 @@ type Props<T extends string> = {
   className?: string
 }
 
-/**
- * A row of toggle buttons where exactly one is on. Rendered as buttons with
- * `aria-pressed` rather than radios: every option is reachable with Tab and
- * activation is immediate, which matches how the views it switches behave.
- */
-export function SegmentedControl<T extends string>({
-  label,
-  options,
-  value,
-  onChange,
-  size = 'md',
-  className = '',
-}: Props<T>) {
+/** A joined toggle group: view switches such as Tree / List. */
+export function SegmentedControl<T extends string>({ className = '', ...props }: Props<T>) {
   return (
-    <div
-      className={`segmented segmented--${size} ${className}`.trim()}
-      role="group"
-      aria-label={label}
-    >
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          className={option.value === value ? 'segmented-option is-active' : 'segmented-option'}
-          aria-pressed={option.value === value}
-          aria-label={option.ariaLabel}
-          title={option.title}
-          onClick={() => onChange(option.value)}
-        >
-          {option.icon}
-          {option.label}
-        </button>
-      ))}
-    </div>
+    <ToggleGroup
+      {...props}
+      appearance="segmented"
+      className={`segmented ${className}`.trim()}
+      itemClassName="segmented-option"
+    />
   )
 }

@@ -228,6 +228,11 @@ pre,
   font-size: var(--text-2xs);
 }
 
+.field-error {
+  color: var(--err-fg);
+  font-size: var(--text-xs);
+}
+
 /* Utilities ------------------------------------------------------------ */
 
 .sr-only {
@@ -308,7 +313,6 @@ pre,
   .chip,
   .tag,
   .status-badge,
-  .segmented-option.is-active,
   .toggle-group-item[aria-pressed='true'],
   .banner,
   .toast {

@@ -2,6 +2,7 @@ import { lazy } from 'react'
 import { Route, Routes } from 'react-router-dom'
 import { AppShell } from './app/AppShell'
 import { NotFound } from './app/NotFound'
+import { ToastProvider } from './components/ui/Toast'
 
 // Every page is its own chunk, so the resource graph, the manifest diff, and
 // the YAML parser only download when a page that uses them is opened.
@@ -31,18 +32,22 @@ const OnboardingPage = lazy(() =>
 )
 
 function App() {
+  // The provider lives here rather than in main.tsx so every test that
+  // renders <App /> inside a MemoryRouter gets toasts too.
   return (
-    <Routes>
-      <Route path="/" element={<AppShell />}>
-        <Route index element={<OverviewPage />} />
-        <Route path="clusters" element={<ClustersPage />} />
-        <Route path="sources" element={<SourcesPage />} />
-        <Route path="applications" element={<ApplicationsPage />} />
-        <Route path="applications/new" element={<OnboardingPage />} />
-        <Route path="applications/:id" element={<ApplicationDetailPage />} />
-        <Route path="*" element={<NotFound />} />
-      </Route>
-    </Routes>
+    <ToastProvider>
+      <Routes>
+        <Route path="/" element={<AppShell />}>
+          <Route index element={<OverviewPage />} />
+          <Route path="clusters" element={<ClustersPage />} />
+          <Route path="sources" element={<SourcesPage />} />
+          <Route path="applications" element={<ApplicationsPage />} />
+          <Route path="applications/new" element={<OnboardingPage />} />
+          <Route path="applications/:id" element={<ApplicationDetailPage />} />
+          <Route path="*" element={<NotFound />} />
+        </Route>
+      </Routes>
+    </ToastProvider>
   )
 }
 

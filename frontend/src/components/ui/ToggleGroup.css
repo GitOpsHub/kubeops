@@ -1,0 +1,79 @@
+.toggle-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.toggle-group-item {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 var(--space-3);
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.toggle-group-item:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.toggle-group-item:disabled {
+  opacity: 0.5;
+}
+
+.toggle-group-item svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.toggle-group--sm .toggle-group-item {
+  min-height: 26px;
+  padding: 0 var(--space-2);
+}
+
+/* Segmented: one joined control on a sunken track. */
+.toggle-group--segmented {
+  padding: 2px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.toggle-group--segmented .toggle-group-item.is-active {
+  color: var(--text);
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: var(--shadow-xs);
+}
+
+/* Pills: separate options, for choices that carry identity (a cluster). */
+.toggle-group--pills {
+  gap: var(--space-2);
+}
+
+.toggle-group--pills .toggle-group-item {
+  background: var(--surface);
+  border-color: var(--border);
+  border-radius: var(--radius-pill);
+}
+
+.toggle-group--pills .toggle-group-item:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.toggle-group--pills .toggle-group-item.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+}

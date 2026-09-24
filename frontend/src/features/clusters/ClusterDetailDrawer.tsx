@@ -219,7 +219,7 @@ export function ClusterDetailDrawer({
         onOpenChange={(next) => !next && onClose()}
         variant="sheet"
         className="cluster-detail-modal"
-        describedBy={undefined}
+        describedBy={false}
       >
         <header className="dialog-header cluster-sheet-header">
           <KubernetesLogo className="cluster-sheet-logo" />

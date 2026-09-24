@@ -53,7 +53,7 @@ export function ResourceManifestModal({ node, onboardingId, targetId, onClose, o
       onOpenChange={(next) => !next && onClose()}
       size="lg"
       className="resource-modal"
-      describedBy={undefined}
+      describedBy={false}
     >
       <header className="dialog-header">
         <div className="resource-modal-title">
