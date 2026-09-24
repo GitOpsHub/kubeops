@@ -1,0 +1,150 @@
+.source-list,
+.run-list {
+  list-style: none;
+}
+
+.source-row {
+  display: grid;
+  gap: var(--space-2) var(--space-4);
+  grid-template-columns: 36px minmax(0, 1.6fr) 80px minmax(0, 1.2fr) auto;
+  align-items: center;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.source-row:last-child {
+  border-bottom: 0;
+}
+
+.source-logo {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.source-logo svg {
+  width: 22px;
+  height: 22px;
+}
+
+.source-identity {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.source-identity strong {
+  font-weight: 600;
+}
+
+.source-meta {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-regions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: 2px;
+}
+
+.source-count {
+  display: grid;
+  line-height: 1.2;
+}
+
+.source-count strong {
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-variant-numeric: tabular-nums;
+}
+
+.source-count span,
+.source-sync span {
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+}
+
+.source-sync {
+  display: grid;
+  gap: var(--space-1);
+  justify-items: start;
+}
+
+.source-error {
+  grid-column: 2 / -1;
+  padding: var(--space-2) var(--space-3);
+  overflow-wrap: anywhere;
+  color: var(--err);
+  background: var(--err-soft);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+
+.run-list li {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  min-height: 52px;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.run-list li:last-child {
+  border-bottom: 0;
+}
+
+.run-copy {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.run-copy strong {
+  font-weight: 500;
+}
+
+.run-copy small {
+  overflow: hidden;
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-list time {
+  flex: 0 0 auto;
+  width: 72px;
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+  text-align: right;
+}
+
+@media (max-width: 860px) {
+  .source-row {
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+  }
+
+  .source-count {
+    display: none;
+  }
+
+  .source-sync {
+    grid-column: 2 / 3;
+  }
+
+  .source-row > .btn {
+    grid-row: 1;
+    grid-column: 3;
+  }
+}

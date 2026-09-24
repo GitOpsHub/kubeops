@@ -1,0 +1,197 @@
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  display: grid;
+  place-items: center;
+  padding: var(--space-5);
+  overflow-y: auto;
+  background: var(--scrim);
+  animation: dialog-fade var(--duration-med) var(--ease-out);
+}
+
+.dialog-backdrop--sheet {
+  place-items: stretch end;
+  padding: 0;
+  overflow: hidden;
+}
+
+.dialog {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: calc(100vh - 48px);
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  outline: none;
+  animation: dialog-rise var(--duration-med) var(--ease-out);
+}
+
+.dialog--sm {
+  max-width: 440px;
+}
+
+.dialog--md {
+  max-width: 560px;
+}
+
+.dialog--lg {
+  max-width: 820px;
+}
+
+.dialog--xl {
+  max-width: 1180px;
+  height: min(820px, calc(100vh - 48px));
+}
+
+.dialog--sheet {
+  width: min(640px, 100vw);
+  max-width: none;
+  height: 100vh;
+  max-height: none;
+  border-width: 0 0 0 1px;
+  border-radius: 0;
+  animation: dialog-slide var(--duration-slow) var(--ease-out);
+}
+
+/* Structural parts every dialog composes from. */
+.dialog-header {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: var(--space-5) var(--space-5) var(--space-3);
+}
+
+.dialog-header h2,
+.dialog-header h3 {
+  font-size: var(--text-lg);
+  overflow-wrap: anywhere;
+}
+
+.dialog-title-group {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.dialog-body {
+  display: grid;
+  flex: 1;
+  gap: var(--space-4);
+  align-content: start;
+  min-height: 0;
+  padding: var(--space-2) var(--space-5) var(--space-5);
+  overflow-y: auto;
+  color: var(--text-muted);
+}
+
+.dialog-body strong {
+  color: var(--text);
+}
+
+.dialog-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: flex-end;
+  padding: var(--space-3) var(--space-5);
+  background: var(--surface-sunken);
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+.dialog--sheet .dialog-footer {
+  border-radius: 0;
+}
+
+.dialog-footer-note {
+  margin-right: auto;
+  color: var(--text-subtle);
+  font-size: var(--text-xs);
+}
+
+.dialog-close {
+  flex: 0 0 auto;
+  margin: -4px -8px 0 0;
+}
+
+.dialog-warning {
+  padding: var(--space-3);
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+}
+
+@keyframes dialog-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes dialog-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+}
+
+@keyframes dialog-slide {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+
+@media (max-width: 720px) {
+  .dialog-backdrop {
+    place-items: end stretch;
+    padding: 0;
+  }
+
+  .dialog {
+    max-width: none;
+    max-height: 92vh;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+
+  .dialog--xl {
+    height: 92vh;
+  }
+
+  .dialog--sheet {
+    width: 100vw;
+    height: 100vh;
+    max-height: none;
+    border-radius: 0;
+  }
+}
+
+.dialog-backdrop--drawer {
+  place-items: stretch start;
+  padding: 0;
+  overflow: hidden;
+}
+
+.dialog--drawer {
+  width: min(280px, 86vw);
+  max-width: none;
+  height: 100vh;
+  max-height: none;
+  border-width: 0 1px 0 0;
+  border-radius: 0;
+  animation: dialog-slide-left var(--duration-slow) var(--ease-out);
+}
+
+@keyframes dialog-slide-left {
+  from {
+    transform: translateX(-24px);
+    opacity: 0;
+  }
+}

@@ -1,4 +1,8 @@
+import { apiUrl, ensureOk, request, requestVoid } from './client'
 import type { Cluster, ClusterPage } from './inventory'
+
+// Re-exported so callers that branch on a 404 keep one import site.
+export { ApiError } from './client'
 
 export type DeploymentStatus = 'creating' | 'progressing' | 'healthy' | 'failed' | 'offboarded'
 export type OnboardingStatus = 'progressing' | 'healthy' | 'partial' | 'failed' | 'offboarded'
@@ -91,30 +95,6 @@ export const onboardingStatuses: OnboardingStatus[] = [
 
 export const applicationsPageSize = 20
 
-export class ApiError extends Error {
-  readonly status: number
-
-  constructor(message: string, status: number) {
-    super(message)
-    this.name = 'ApiError'
-    this.status = status
-  }
-}
-
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api'
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${apiBaseUrl}${path}`, init)
-  if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as { error?: string }
-    throw new ApiError(
-      body.error || `Request failed with status ${response.status}`,
-      response.status,
-    )
-  }
-  return response.json() as Promise<T>
-}
-
 export async function getOnboardingClusters(signal?: AbortSignal) {
   const clusters: Cluster[] = []
   let page = 1
@@ -140,15 +120,48 @@ export function getApplicationOnboardings(
   return request<ApplicationOnboardingPage>(`/application-onboardings?${params}`, { signal })
 }
 
+const allApplicationsPageSize = 200
+// A guard rail, not a target: without it a server that reports a larger `total`
+// than it can page through would spin this loop forever.
+const allApplicationsPageCap = 25
+
+/**
+ * Every onboarding the list would show, fetched page by page. Offboarded
+ * releases are excluded server-side unless asked for, which is why that one
+ * status is the only filter passed through.
+ */
+export async function getAllApplicationOnboardings(
+  { includeOffboarded = false }: { includeOffboarded?: boolean } = {},
+  signal?: AbortSignal,
+) {
+  const loaded: ApplicationOnboarding[] = []
+  let page = 1
+  let total: number
+  do {
+    const result = await getApplicationOnboardings(
+      {
+        status: includeOffboarded ? 'offboarded' : '',
+        page,
+        pageSize: allApplicationsPageSize,
+      },
+      signal,
+    )
+    if (result.items.length === 0) break
+    loaded.push(...result.items)
+    total = result.total
+    page += 1
+  } while (loaded.length < total && page <= allApplicationsPageCap)
+  return loaded
+}
+
 export function getOnboardingDefaults(signal?: AbortSignal) {
   return request<OnboardingDefaults>('/application-onboardings/defaults', { signal })
 }
 
 export function getApplicationOnboarding(id: string, signal?: AbortSignal) {
-  return request<ApplicationOnboarding>(
-    `/application-onboardings/${encodeURIComponent(id)}`,
-    { signal },
-  )
+  return request<ApplicationOnboarding>(`/application-onboardings/${encodeURIComponent(id)}`, {
+    signal,
+  })
 }
 
 export function createApplicationOnboarding(input: CreateOnboardingInput) {
@@ -183,10 +196,7 @@ export type ResourceNode = {
 }
 
 /** The tuple Argo CD addresses a resource by. */
-export type ResourceRef = Pick<
-  ResourceNode,
-  'group' | 'version' | 'kind' | 'namespace' | 'name'
->
+export type ResourceRef = Pick<ResourceNode, 'group' | 'version' | 'kind' | 'namespace' | 'name'>
 
 function resourceQuery(ref: ResourceRef) {
   return new URLSearchParams({
@@ -210,10 +220,9 @@ export async function getTargetResources(
   targetId: string,
   signal?: AbortSignal,
 ) {
-  const response = await request<{ items: ResourceNode[] }>(
-    resourcePath(onboardingId, targetId),
-    { signal },
-  )
+  const response = await request<{ items: ResourceNode[] }>(resourcePath(onboardingId, targetId), {
+    signal,
+  })
   return response.items ?? []
 }
 
@@ -247,20 +256,10 @@ export function getResourceManifestComparison(
   )
 }
 
-export async function deleteResource(
-  onboardingId: string,
-  targetId: string,
-  ref: ResourceRef,
-) {
-  const url = `${apiBaseUrl}${resourcePath(onboardingId, targetId)}?${resourceQuery(ref)}`
-  const response = await fetch(url, { method: 'DELETE' })
-  if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as { error?: string }
-    throw new ApiError(
-      body.error || `Request failed with status ${response.status}`,
-      response.status,
-    )
-  }
+export function deleteResource(onboardingId: string, targetId: string, ref: ResourceRef) {
+  return requestVoid(`${resourcePath(onboardingId, targetId)}?${resourceQuery(ref)}`, {
+    method: 'DELETE',
+  })
 }
 
 export type PodLogEntry = {
@@ -280,16 +279,11 @@ export async function streamPodLogs(
   onEntry: (entry: PodLogEntry) => void,
   signal: AbortSignal,
 ) {
-  const url =
-    `${apiBaseUrl}${resourcePath(onboardingId, targetId)}/logs?${resourceQuery(ref)}`
-  const response = await fetch(url, { signal })
-  if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as { error?: string }
-    throw new ApiError(
-      body.error || `Request failed with status ${response.status}`,
-      response.status,
-    )
-  }
+  const response = await ensureOk(
+    await fetch(apiUrl(`${resourcePath(onboardingId, targetId)}/logs?${resourceQuery(ref)}`), {
+      signal,
+    }),
+  )
   if (!response.body) throw new Error('The Pod log stream is unavailable')
 
   const reader = response.body.getReader()
@@ -314,10 +308,9 @@ export async function streamPodLogs(
 }
 
 export function syncApplicationOnboarding(id: string) {
-  return request<ApplicationOnboarding>(
-    `/application-onboardings/${encodeURIComponent(id)}/sync`,
-    { method: 'POST' },
-  )
+  return request<ApplicationOnboarding>(`/application-onboardings/${encodeURIComponent(id)}/sync`, {
+    method: 'POST',
+  })
 }
 
 export function scaleApplicationOnboarding(id: string, replicas: number) {

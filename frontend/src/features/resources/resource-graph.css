@@ -1,0 +1,496 @@
+/* The Argo-style topology canvas: tiered cards joined by owner and route edges. */
+
+.graph-shell {
+  display: grid;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.graph-toolbar {
+  display: flex;
+  gap: var(--space-4);
+  align-items: center;
+  justify-content: space-between;
+  min-height: 64px;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.graph-toolbar-title {
+  display: grid;
+  gap: 2px;
+}
+
+.graph-toolbar-kicker {
+  color: var(--text-subtle);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.graph-toolbar strong {
+  font-size: var(--text-sm);
+  font-weight: 650;
+}
+
+.graph-toolbar-summary {
+  display: inline-flex;
+  gap: var(--space-3);
+  align-items: center;
+  color: var(--text-subtle);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+
+.graph-toolbar-summary span {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.graph-toolbar-summary span + span {
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--border);
+}
+
+.graph-summary-dot {
+  width: 7px;
+  height: 7px;
+  background: var(--ok);
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px var(--ok-soft);
+}
+
+/* Without `min-width: 0` this grid item refuses to shrink below the canvas's
+   min-content width, so the scroll container grows past the panel instead of
+   scrolling inside it — and the fit calculation measures the overflowed box. */
+.graph-viewport {
+  position: relative;
+  min-width: 0;
+}
+
+/* The canvas scrolls inside its own box, so a wide graph never pushes the
+   page sideways. */
+.graph-scroll {
+  min-height: 340px;
+  max-height: 720px;
+  /* The side padding is kept in step with `canvasPadding` in ResourceGraph.tsx,
+     which subtracts it when fitting the graph to the viewport. The deeper
+     bottom padding reserves the strip the floating controls sit in, so they
+     never cover the last row of cards. */
+  padding: 24px 24px 56px;
+  overflow: auto;
+  background-color: var(--surface-sunken);
+  background-image: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--border-strong) 42%, transparent) 0.7px,
+    transparent 0.8px
+  );
+  background-size: 16px 16px;
+}
+
+/* `transform: scale()` leaves layout size untouched, so the scrollable area is
+   sized here instead — otherwise zooming in clips rather than scrolls. */
+.graph-sizer {
+  position: relative;
+  margin-inline: auto;
+}
+
+.graph-canvas {
+  position: absolute;
+  inset: 0 auto auto 0;
+  transform-origin: top left;
+  transition: transform var(--duration-med);
+}
+
+.graph-lanes {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.graph-lane {
+  position: absolute;
+  top: 0;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface) 64%, transparent),
+    color-mix(in srgb, var(--surface) 20%, transparent) 78%,
+    transparent
+  );
+  border-radius: var(--radius-sm);
+}
+
+.graph-lane-label {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  height: 28px;
+  padding: 0 var(--space-2);
+  color: var(--text-muted);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.graph-lane-label i {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-style: normal;
+  letter-spacing: 0;
+}
+
+.graph-edges {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.graph-edge {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.graph-edge--owns {
+  stroke: color-mix(in srgb, var(--text-subtle) 58%, var(--border));
+}
+
+.graph-arrow--owns {
+  fill: color-mix(in srgb, var(--text-subtle) 58%, var(--border));
+}
+
+.graph-edge--routes {
+  stroke: var(--accent);
+  stroke-width: 2.4;
+}
+
+.graph-arrow--routes {
+  fill: var(--accent);
+}
+
+.graph-nodes {
+  position: relative;
+  z-index: 2;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.graph-node {
+  position: absolute;
+}
+
+/* Card ----------------------------------------------------------------- */
+
+.graph-card {
+  --resource-tone: var(--idle);
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  padding: 0 7px 0 0;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  /* Health reads as a colour bar down the leading edge, the way Argo tints its
+     nodes, instead of a rule across the top. */
+  border-left: 3px solid var(--resource-tone);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  transition:
+    transform var(--duration-fast),
+    border-color var(--duration-fast),
+    box-shadow var(--duration-fast);
+}
+
+.graph-card-primary {
+  display: grid;
+  flex: 1;
+  gap: var(--space-2);
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+  padding: 0 5px 0 9px;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: inherit;
+}
+
+.graph-card--virtual {
+  padding-right: var(--space-2);
+}
+
+.graph-card--ok {
+  --resource-tone: var(--ok);
+}
+
+.graph-card--warn {
+  --resource-tone: var(--warn);
+}
+
+.graph-card--err {
+  --resource-tone: var(--err);
+}
+
+.graph-card:not(.graph-card--virtual):hover {
+  transform: translateY(-2px);
+  border-color: var(--accent);
+  border-left-color: var(--resource-tone);
+  box-shadow: var(--shadow-md);
+}
+
+.graph-card--virtual {
+  border-color: color-mix(in srgb, var(--docker) 24%, var(--border));
+  border-left-color: var(--docker);
+  background: color-mix(in srgb, var(--surface) 94%, var(--accent-soft));
+}
+
+.graph-card.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft), var(--shadow-md);
+}
+
+.graph-card:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft), var(--shadow-md);
+}
+
+.graph-card-mark {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  border-radius: 50%;
+}
+
+.graph-resource-logo,
+.graph-cloud-logo {
+  width: 16px;
+  height: 16px;
+}
+
+.graph-cloud-logo {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.graph-card--category-network .graph-card-mark {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.graph-card--category-workload .graph-card-mark {
+  color: var(--ok);
+  background: var(--ok-soft);
+  border-color: color-mix(in srgb, var(--ok) 26%, transparent);
+}
+
+.graph-card--category-controller .graph-card-mark {
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-color: color-mix(in srgb, var(--warn) 26%, transparent);
+}
+
+.graph-card--category-pod .graph-card-mark {
+  color: var(--docker);
+  background: color-mix(in srgb, var(--docker) 11%, transparent);
+  border-color: color-mix(in srgb, var(--docker) 24%, transparent);
+}
+
+.graph-card--category-identity .graph-card-mark {
+  color: color-mix(in srgb, var(--accent) 55%, var(--err));
+  background: color-mix(in srgb, var(--accent-soft) 58%, var(--err-soft));
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--err));
+}
+
+.graph-card-copy {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.graph-card-kind {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  overflow: hidden;
+  color: var(--text-subtle);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.graph-card-kind i {
+  color: var(--border-strong);
+  font-style: normal;
+}
+
+/* The kind is uppercased; an age is not — "18H" reads as a unit, not a time. */
+.graph-card-age {
+  color: var(--text-subtle);
+  text-transform: none;
+}
+
+.graph-card-name {
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 550;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graph-card-state {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.graph-health-dot {
+  width: 9px;
+  height: 9px;
+  background: var(--border-strong);
+  border-radius: 50%;
+}
+
+.graph-health-dot--ok {
+  background: var(--ok);
+}
+
+.graph-health-dot--warn {
+  background: var(--warn);
+}
+
+.graph-health-dot--err {
+  background: var(--err);
+}
+
+.graph-sync-mark {
+  display: inline-flex;
+  color: var(--text-subtle);
+}
+
+.graph-sync-mark svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
+}
+
+.graph-sync-mark--synced {
+  color: var(--ok);
+}
+
+.graph-sync-mark--outofsync {
+  color: var(--warn);
+}
+
+/* Floating controls ---------------------------------------------------- */
+
+/* Over the canvas rather than in the toolbar, so zoom stays within reach
+   however far the graph has been scrolled. */
+.graph-controls {
+  position: absolute;
+  bottom: var(--space-3);
+  left: var(--space-3);
+  z-index: 3;
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-1) var(--space-2);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(6px);
+}
+
+.graph-legend {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  padding-left: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+
+.graph-legend span {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.graph-legend-line {
+  display: inline-block;
+  width: 20px;
+  border-top: 2px solid var(--border-strong);
+}
+
+.graph-legend-line--routes {
+  border-color: var(--accent);
+}
+
+.graph-zoom {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  padding-left: var(--space-2);
+  border-left: 1px solid var(--border);
+}
+
+.graph-zoom button {
+  min-width: 26px;
+  min-height: 26px;
+  padding: 0 var(--space-2);
+  color: var(--text-muted);
+  background: none;
+  border: 0;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+}
+
+.graph-zoom button:hover:not(:disabled) {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.graph-zoom-value {
+  min-width: 40px;
+  color: var(--text-subtle);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  text-align: center;
+}
+

@@ -1,4 +1,5 @@
-import { normalise, type Tone } from '../lib/status'
+import { healthTone, normalise, syncTone } from '../lib/status'
+import './ArgoStateIcons.css'
 
 /**
  * Argo CD's own visual vocabulary: a heart for workload health and circular
@@ -6,21 +7,6 @@ import { normalise, type Tone } from '../lib/status'
  * the Argo UI read these two glyphs faster than any words, so the tile view
  * leads with them and keeps the words as captions.
  */
-
-function healthTone(status: string): Tone {
-  const health = normalise(status)
-  if (health === 'healthy') return 'ok'
-  if (health === 'progressing' || health === 'suspended') return 'warn'
-  if (health === 'degraded' || health === 'missing') return 'err'
-  return 'idle'
-}
-
-function syncTone(status: string): Tone {
-  const sync = normalise(status)
-  if (sync === 'synced') return 'ok'
-  if (sync === 'outofsync') return 'warn'
-  return 'idle'
-}
 
 type Props = {
   status: string

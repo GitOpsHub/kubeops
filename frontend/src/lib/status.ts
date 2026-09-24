@@ -48,6 +48,23 @@ export function isInFlight(status: string) {
   return inFlight.has(normalise(status))
 }
 
+/** Argo CD workload health, as the heart glyph and graph cards colour it. */
+export function healthTone(status: string): Tone {
+  const health = normalise(status)
+  if (health === 'healthy') return 'ok'
+  if (health === 'progressing' || health === 'suspended') return 'warn'
+  if (health === 'degraded' || health === 'missing') return 'err'
+  return 'idle'
+}
+
+/** Argo CD sync state: matches Git, drifted, or not yet known. */
+export function syncTone(status: string): Tone {
+  const sync = normalise(status)
+  if (sync === 'synced') return 'ok'
+  if (sync === 'outofsync') return 'warn'
+  return 'idle'
+}
+
 /**
  * Reads Argo CD's two axes as one verdict: converged when the loop has closed,
  * reconciling while it is still converging, diverged when the ends came apart.

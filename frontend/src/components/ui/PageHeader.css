@@ -1,0 +1,89 @@
+.page-header {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.page-back {
+  display: inline-flex;
+  gap: var(--space-1);
+  align-items: center;
+  justify-self: start;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  text-decoration: none;
+  border-radius: var(--radius-xs);
+}
+
+.page-back:hover {
+  color: var(--text);
+}
+
+.page-back svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
+}
+
+.page-header-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-5);
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.page-header-identity {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  min-width: 0;
+}
+
+.page-header-copy {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.page-header-copy h1 {
+  overflow-wrap: anywhere;
+}
+
+.page-description {
+  max-width: 72ch;
+  color: var(--text-muted);
+}
+
+.page-header-side {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: end;
+}
+
+.page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.page-meta {
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+}
+
+@media (max-width: 720px) {
+  .page-header-side {
+    justify-items: start;
+    width: 100%;
+  }
+
+  .page-actions {
+    justify-content: flex-start;
+  }
+}

@@ -1,0 +1,44 @@
+.argo-state {
+  --state-tone: var(--idle);
+
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  height: 24px;
+  padding: 0 var(--space-2) 0 6px;
+  background: color-mix(in srgb, var(--state-tone) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--state-tone) 24%, transparent);
+  border-radius: var(--radius-pill);
+}
+
+.argo-state svg {
+  width: 14px;
+  height: 14px;
+  color: var(--state-tone);
+}
+
+.argo-state-label {
+  color: var(--text);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+}
+
+.argo-state--ok {
+  --state-tone: var(--ok);
+}
+
+.argo-state--warn {
+  --state-tone: var(--warn);
+}
+
+.argo-state--err {
+  --state-tone: var(--err);
+}
+
+.argo-state-icon--spin {
+  animation: spin 1.4s linear infinite;
+}
+
+.argo-state-icon--pulse {
+  animation: pulse 1.6s ease-in-out infinite;
+}

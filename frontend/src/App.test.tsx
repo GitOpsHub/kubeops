@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
-import { mockAPI } from './test/mock-api'
+import { buildApplication, mockAPI } from './test/mock-api'
 
 function renderApp(route = '/') {
   return render(
@@ -18,36 +18,52 @@ describe('App', () => {
     vi.restoreAllMocks()
   })
 
-  it('renders the cross-cloud fleet inventory', async () => {
-    mockAPI()
+  it('renders the overview from the inventory and onboarding APIs', async () => {
+    mockAPI({
+      applications: [
+        buildApplication({ status: 'failed' }),
+        buildApplication({ id: 'billing', name: 'billing-api', status: 'healthy' }),
+      ],
+    })
     renderApp()
 
-    expect(await screen.findByRole('heading', { name: 'Fleet control center' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Overview', level: 1 })).toBeInTheDocument()
+    const needsAttention = await screen.findByRole('region', { name: 'Needs attention' })
+    expect(
+      await within(needsAttention).findByRole('link', { name: /payments-api/ }),
+    ).toHaveAttribute('href', '/applications/onboarding-1')
+    expect(within(needsAttention).queryByText('billing-api')).not.toBeInTheDocument()
+    const providers = screen.getByRole('region', { name: 'Clusters by provider' })
+    expect(within(providers).getByText('EKS')).toBeInTheDocument()
+    expect(within(providers).getByText('3')).toBeInTheDocument()
+    const runs = screen.getByRole('region', { name: 'Recent sync runs' })
+    expect(within(runs).getByText('AWS Platform')).toBeInTheDocument()
+
+    // The sidebar owns the sync heartbeat on every page.
+    const sidebar = screen.getByRole('complementary', { name: 'Sidebar' })
+    expect(await within(sidebar).findByText('Synced')).toBeInTheDocument()
+  })
+
+  it('renders the cross-cloud cluster inventory', async () => {
+    mockAPI()
+    renderApp('/clusters')
+
+    expect(await screen.findByRole('heading', { name: 'Clusters', level: 1 })).toBeInTheDocument()
     expect(await screen.findByText('prod-us-east')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'All, 6 clusters' })).toHaveAttribute(
+    expect(await screen.findByRole('button', { name: 'All, 6 clusters' })).toHaveAttribute(
       'aria-pressed',
       'true',
     )
-    expect(screen.queryByText('Kubernetes estate')).not.toBeInTheDocument()
-    expect(
-      screen.queryByText(/Search, filter, and reconcile every managed/),
-    ).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'EKS, 1 cluster' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'AKS, 3 clusters' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'GKE, 2 clusters' })).toBeInTheDocument()
     expect(screen.getByLabelText('6 clusters across 3 sources')).toBeInTheDocument()
     expect(screen.queryByRole('combobox', { name: 'Source' })).not.toBeInTheDocument()
-
-    const topbarActions = screen
-      .getByRole('button', { name: 'Switch to dark theme' })
-      .closest('.topbar-actions')
-    expect(topbarActions).not.toBeNull()
-    expect(within(topbarActions as HTMLElement).getByText('Synced')).toBeInTheDocument()
   })
 
   it('shows discovered clusters as active in the inventory health column', async () => {
     mockAPI({ clusterStatus: 'succeeded' })
-    renderApp()
+    renderApp('/clusters')
 
     const cluster = await screen.findByRole('button', { name: /^prod-us-east/ })
     const row = cluster.closest('tr')
@@ -59,7 +75,7 @@ describe('App', () => {
 
   it('filters and searches within a selected cloud provider', async () => {
     const { fetchMock } = mockAPI()
-    renderApp()
+    renderApp('/clusters')
     const user = userEvent.setup()
 
     await user.click(await screen.findByRole('button', { name: 'AKS, 3 clusters' }))
@@ -77,7 +93,7 @@ describe('App', () => {
 
   it('returns to the complete fleet through the All provider option', async () => {
     const { fetchMock } = mockAPI()
-    renderApp()
+    renderApp('/clusters')
     const user = userEvent.setup()
     const aks = await screen.findByRole('button', { name: 'AKS, 3 clusters' })
     const all = screen.getByRole('button', { name: 'All, 6 clusters' })
@@ -100,7 +116,7 @@ describe('App', () => {
 
   it('uses the global search across all providers', async () => {
     const { fetchMock } = mockAPI()
-    renderApp()
+    renderApp('/clusters')
     const user = userEvent.setup()
 
     await user.click(await screen.findByRole('button', { name: 'EKS, 1 cluster' }))
@@ -123,7 +139,7 @@ describe('App', () => {
 
   it('queues a manual cloud source sync', async () => {
     const { fetchMock } = mockAPI()
-    renderApp()
+    renderApp('/sources')
     const user = userEvent.setup()
 
     const syncButtons = await screen.findAllByRole('button', { name: 'Sync now' })
@@ -137,16 +153,16 @@ describe('App', () => {
 
   it('shows live networking and confirms node-pool scaling', async () => {
     const { fetchMock } = mockAPI()
-    renderApp()
+    renderApp('/clusters')
     const user = userEvent.setup()
 
     // Each row offers two ways in: the cluster name, and "Open details for …"
     // in the actions cell. Anchoring the name picks out the former.
     await user.click(await screen.findByRole('button', { name: /^prod-us-east/ }))
 
-    expect(
-      await screen.findByRole('dialog', { name: 'prod-us-east' }),
-    ).toHaveClass('cluster-detail-modal')
+    expect(await screen.findByRole('dialog', { name: 'prod-us-east' })).toHaveClass(
+      'cluster-detail-modal',
+    )
     expect(document.querySelector('.detail-drawer')).not.toBeInTheDocument()
     expect(await screen.findByRole('heading', { name: 'Node pools' })).toBeInTheDocument()
     expect(await screen.findByText('vpc-123')).toBeInTheDocument()
@@ -185,7 +201,7 @@ describe('App', () => {
   // delivered to the top one.
   it('dismisses only the scale confirmation when Escape is pressed inside it', async () => {
     mockAPI()
-    renderApp()
+    renderApp('/clusters')
     const user = userEvent.setup()
 
     await user.click(await screen.findByRole('button', { name: /^prod-us-east/ }))
@@ -224,15 +240,19 @@ describe('App', () => {
     renderApp()
     const user = userEvent.setup()
 
-    expect(await screen.findByRole('heading', { name: 'Fleet control center' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Overview', level: 1 })).toBeInTheDocument()
+    const nav = screen.getByRole('navigation', { name: 'Primary' })
 
-    await user.click(screen.getByRole('link', { name: 'Applications' }))
-    expect(
-      await screen.findByRole('heading', { name: 'Onboarded applications' }),
-    ).toBeInTheDocument()
-
-    await user.click(screen.getByRole('link', { name: 'Fleet' }))
-    expect(await screen.findByRole('heading', { name: 'Fleet control center' })).toBeInTheDocument()
+    for (const [link, heading] of [
+      ['Clusters', 'Clusters'],
+      ['Applications', 'Applications'],
+      ['Cloud sources', 'Cloud sources'],
+      ['Overview', 'Overview'],
+    ]) {
+      await user.click(within(nav).getByRole('link', { name: link }))
+      expect(await screen.findByRole('heading', { name: heading, level: 1 })).toBeInTheDocument()
+      expect(within(nav).getByRole('link', { name: link })).toHaveAttribute('aria-current', 'page')
+    }
   })
 
   it('renders a not-found panel for unknown routes', async () => {
