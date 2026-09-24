@@ -26,9 +26,7 @@ function pruneLiveToDesired(desired: unknown, live: unknown): unknown {
     const liveRecord = live as Record<string, unknown>
     return Object.fromEntries(
       Object.keys(desiredRecord).flatMap((key) =>
-        key in liveRecord
-          ? [[key, pruneLiveToDesired(desiredRecord[key], liveRecord[key])]]
-          : [],
+        key in liveRecord ? [[key, pruneLiveToDesired(desiredRecord[key], liveRecord[key])]] : [],
       ),
     )
   }
@@ -76,19 +74,13 @@ type DiffOperation = {
 }
 
 function operations(left: string[], right: string[]): DiffOperation[] {
-  const matrix = Array.from(
-    { length: left.length + 1 },
-    () => new Uint32Array(right.length + 1),
-  )
+  const matrix = Array.from({ length: left.length + 1 }, () => new Uint32Array(right.length + 1))
   for (let leftIndex = left.length - 1; leftIndex >= 0; leftIndex--) {
     for (let rightIndex = right.length - 1; rightIndex >= 0; rightIndex--) {
       matrix[leftIndex][rightIndex] =
         left[leftIndex] === right[rightIndex]
           ? matrix[leftIndex + 1][rightIndex + 1] + 1
-          : Math.max(
-              matrix[leftIndex + 1][rightIndex],
-              matrix[leftIndex][rightIndex + 1],
-            )
+          : Math.max(matrix[leftIndex + 1][rightIndex], matrix[leftIndex][rightIndex + 1])
     }
   }
 

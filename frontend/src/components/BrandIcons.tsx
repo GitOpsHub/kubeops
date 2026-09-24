@@ -9,10 +9,7 @@ export function KubernetesLogo({ title, ...props }: IconProps) {
   return (
     <svg viewBox="0 0 48 48" role={title ? 'img' : undefined} aria-hidden={!title} {...props}>
       {title && <title>{title}</title>}
-      <path
-        fill="#326CE5"
-        d="M24 2.8 42.4 13.4v21.2L24 45.2 5.6 34.6V13.4L24 2.8Z"
-      />
+      <path fill="#326CE5" d="M24 2.8 42.4 13.4v21.2L24 45.2 5.6 34.6V13.4L24 2.8Z" />
       <g fill="none" stroke="#fff" strokeLinecap="round">
         <circle cx="24" cy="24" r="7.1" strokeWidth="3" />
         <path

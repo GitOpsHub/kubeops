@@ -67,8 +67,7 @@ describe('layoutResourceGraph', () => {
     for (const a of nodes) {
       for (const b of nodes) {
         if (a.uid === b.uid) continue
-        const apart =
-          Math.abs(a.x - b.x) >= cardWidth || Math.abs(a.y - b.y) >= cardHeight
+        const apart = Math.abs(a.x - b.x) >= cardWidth || Math.abs(a.y - b.y) >= cardHeight
         expect(apart, `${a.uid} overlaps ${b.uid}`).toBe(true)
       }
     }
@@ -136,9 +135,7 @@ describe('layoutResourceGraph', () => {
       'Controllers',
       'Pods',
     ])
-    expect(edges.map((edge) => edge.id)).toContain(
-      'routes:external-load-balancer:svc->svc',
-    )
+    expect(edges.map((edge) => edge.id)).toContain('routes:external-load-balancer:svc->svc')
     expect(edges.map((edge) => edge.id)).toContain('routes:svc->dep')
   })
 
@@ -196,10 +193,7 @@ describe('sortResources', () => {
       node({ uid: 'new', name: 'new', createdAt: '2026-07-01T00:00:00Z' }),
     ]
 
-    expect(sortResources(nodes, 'createdAt', 'asc').map((item) => item.uid)).toEqual([
-      'old',
-      'new',
-    ])
+    expect(sortResources(nodes, 'createdAt', 'asc').map((item) => item.uid)).toEqual(['old', 'new'])
     expect(sortResources(nodes, 'createdAt', 'desc').map((item) => item.uid)).toEqual([
       'new',
       'old',
@@ -212,10 +206,7 @@ describe('sortResources', () => {
       node({ uid: '2', kind: 'Pod', name: 'alpha' }),
     ]
 
-    expect(sortResources(nodes, 'kind', 'asc').map((item) => item.name)).toEqual([
-      'alpha',
-      'zebra',
-    ])
+    expect(sortResources(nodes, 'kind', 'asc').map((item) => item.name)).toEqual(['alpha', 'zebra'])
     // Reversing the column must not reshuffle rows that tie on it.
     expect(sortResources(nodes, 'kind', 'desc').map((item) => item.name)).toEqual([
       'alpha',

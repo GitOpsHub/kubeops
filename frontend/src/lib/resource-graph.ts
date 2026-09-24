@@ -153,28 +153,30 @@ function externalLoadBalancers(nodes: ResourceTreeNode[]): GraphResourceNode[] {
       return []
     }
     const address = node.exposure?.addresses[0]
-    return [{
-      ...node,
-      group: 'kubeops.io',
-      version: 'v1',
-      kind: 'LoadBalancer',
-      name: address || 'Pending external address',
-      uid: `external-load-balancer:${node.uid}`,
-      parentUid: '',
-      healthStatus: address ? 'Healthy' : 'Progressing',
-      syncStatus: '',
-      images: [],
-      info: [
-        { name: 'Managed by', value: 'Cloud provider' },
-        ...(node.exposure?.ports?.length
-          ? [{ name: 'Ports', value: node.exposure.ports.join(', ') }]
-          : []),
-      ],
-      children: [],
-      depth: 0,
-      virtual: true as const,
-      sourceUid: node.uid,
-    }]
+    return [
+      {
+        ...node,
+        group: 'kubeops.io',
+        version: 'v1',
+        kind: 'LoadBalancer',
+        name: address || 'Pending external address',
+        uid: `external-load-balancer:${node.uid}`,
+        parentUid: '',
+        healthStatus: address ? 'Healthy' : 'Progressing',
+        syncStatus: '',
+        images: [],
+        info: [
+          { name: 'Managed by', value: 'Cloud provider' },
+          ...(node.exposure?.ports?.length
+            ? [{ name: 'Ports', value: node.exposure.ports.join(', ') }]
+            : []),
+        ],
+        children: [],
+        depth: 0,
+        virtual: true as const,
+        sourceUid: node.uid,
+      },
+    ]
   })
 }
 
@@ -192,17 +194,10 @@ function workloadStem(name: string) {
  * links use a deliberately conservative summary: a matching namespace and name
  * stem, or the namespace's only workload when there is no ambiguity.
  */
-function relatedWorkloadUid(
-  service: ResourceTreeNode,
-  workloads: ResourceTreeNode[],
-) {
-  const candidates = workloads.filter(
-    (workload) => workload.namespace === service.namespace,
-  )
+function relatedWorkloadUid(service: ResourceTreeNode, workloads: ResourceTreeNode[]) {
+  const candidates = workloads.filter((workload) => workload.namespace === service.namespace)
   const serviceStem = workloadStem(service.name)
-  const stemMatches = candidates.filter(
-    (workload) => workloadStem(workload.name) === serviceStem,
-  )
+  const stemMatches = candidates.filter((workload) => workloadStem(workload.name) === serviceStem)
 
   if (stemMatches.length === 1) return stemMatches[0].uid
   if (candidates.length === 1) return candidates[0].uid
@@ -267,9 +262,7 @@ export function layoutResourceGraph(nodes: ResourceNode[]): ResourceGraphLayout 
 
   const auxiliaryNodes = allNodes.filter((node) => !positionedByUid.has(node.uid))
   const routedServices = auxiliaryNodes.filter((node) => serviceTargets.has(node.uid))
-  const remainingAuxiliaries = auxiliaryNodes.filter(
-    (node) => !serviceTargets.has(node.uid),
-  )
+  const remainingAuxiliaries = auxiliaryNodes.filter((node) => !serviceTargets.has(node.uid))
 
   for (const node of routedServices) {
     const target = positionedByUid.get(serviceTargets.get(node.uid) ?? '')
@@ -282,10 +275,7 @@ export function layoutResourceGraph(nodes: ResourceNode[]): ResourceGraphLayout 
 
   for (const loadBalancer of loadBalancers) {
     const service = positionedByUid.get(loadBalancer.sourceUid ?? '')
-    reservePosition(
-      loadBalancer,
-      service?.y ?? laneHeaderHeight + auxiliaryRow++ * rowPitch,
-    )
+    reservePosition(loadBalancer, service?.y ?? laneHeaderHeight + auxiliaryRow++ * rowPitch)
   }
 
   for (const node of allNodes) {
@@ -375,9 +365,7 @@ export function edgePath(edge: GraphEdge, radius = 10): string {
 
 export function resourceCategory(kind: string) {
   const normalized = normalizedKind(kind)
-  if (
-    ['loadbalancer', 'ingress', 'gateway', 'httproute', 'service'].includes(normalized)
-  ) {
+  if (['loadbalancer', 'ingress', 'gateway', 'httproute', 'service'].includes(normalized)) {
     return 'network'
   }
   if (workloadKinds.has(normalized)) return 'workload'

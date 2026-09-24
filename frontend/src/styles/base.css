@@ -141,7 +141,9 @@ pre,
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   font-size: var(--text-sm);
-  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+  transition:
+    border-color var(--duration-fast),
+    box-shadow var(--duration-fast);
 }
 
 .input:hover,
