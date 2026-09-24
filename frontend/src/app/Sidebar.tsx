@@ -6,7 +6,6 @@ import { Tooltip } from '../components/ui/Tooltip'
 import { CollapseIcon } from './nav-icons'
 import { navItems } from './navigation'
 import { SyncReadout } from './SyncReadout'
-import { ThemeToggle } from './ThemeToggle'
 
 type Props = {
   collapsed: boolean
@@ -62,7 +61,6 @@ export function SidebarContent({
       <div className="sidebar-footer">
         <SyncReadout run={latestRun} unavailable={syncUnavailable} />
         <div className="sidebar-controls">
-          <ThemeToggle />
           {onToggleCollapsed && (
             <Button
               variant="ghost"

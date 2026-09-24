@@ -23,8 +23,10 @@ import { PageHeader } from '../../components/ui/PageHeader'
 import { RefreshIndicator } from '../../components/ui/RefreshIndicator'
 import { Skeleton } from '../../components/ui/Skeleton'
 import { StatCard } from '../../components/ui/StatCard'
+import { StatusDot } from '../../components/ui/StatusDot'
 import { usePolledResource } from '../../hooks/usePolledResource'
 import { isOlderThan, plural, relativeTime } from '../../lib/format'
+import { statusMeta } from '../../lib/status'
 import {
   emptyProviderCounts,
   providerLabels,
@@ -286,6 +288,7 @@ export function OverviewPage() {
                         <span
                           key={status}
                           className={`health-bar-segment health-bar-segment--${status}`}
+                          data-tone={statusMeta('lifecycle', status).tone}
                           style={{ flexGrow: count }}
                         />
                       ) : null
@@ -297,6 +300,7 @@ export function OverviewPage() {
                         <Link to={`/applications?status=${status}`}>
                           <span
                             className={`health-swatch health-bar-segment--${status}`}
+                            data-tone={statusMeta('lifecycle', status).tone}
                             aria-hidden="true"
                           />
                           <span className="health-legend-label">{status}</span>
@@ -333,7 +337,7 @@ export function OverviewPage() {
                             {plural(group.targets.length, 'target')}
                           </small>
                         </span>
-                        <StatusBadge status={group.status} />
+                        <StatusBadge domain="lifecycle" status={group.status} />
                       </Link>
                     </li>
                   ))}
@@ -349,6 +353,7 @@ export function OverviewPage() {
                           </small>
                         </span>
                         <StatusBadge
+                          domain="run"
                           status={source.lastSyncStatus === 'failed' ? 'failed' : 'stale'}
                         />
                       </Link>
@@ -379,7 +384,7 @@ export function OverviewPage() {
                 <ul className="overview-list">
                   {(data?.runs ?? []).slice(0, 6).map((run) => (
                     <li key={run.id} className="overview-list-row">
-                      <span className={`sync-dot sync-dot--${run.status}`} aria-hidden="true" />
+                      <StatusDot domain="run" status={run.status} className="sync-dot" />
                       <span className="overview-list-copy">
                         <strong>{run.sourceName}</strong>
                         <small>

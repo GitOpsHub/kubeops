@@ -4,24 +4,29 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Onboard applications to Kubernetes with KubeOps." />
+    <meta name="color-scheme" content="light dark" />
     <title>KubeOps</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap"
-    />
     <script>
-      // Applies the stored theme before first paint so a dark-theme reload
-      // never flashes light. useTheme owns it from mount onwards.
-      try {
-        var stored = localStorage.getItem('kubeops-theme')
-        if (stored === 'light' || stored === 'dark') {
-          document.documentElement.dataset.theme = stored
+      // Resolves the theme before first paint so a dark reload never flashes
+      // light. The stored choice may be "system" (or absent, which means the
+      // same), so the system preference is read here too; the resolved value
+      // is always written because the token sheet keys off it. useTheme owns
+      // the attribute from mount onwards.
+      ;(function () {
+        var preference = 'system'
+        try {
+          var stored = localStorage.getItem('kubeops-theme')
+          if (stored === 'light' || stored === 'dark' || stored === 'system') preference = stored
+        } catch (error) {
+          // Blocked storage just means we follow the system preference.
         }
-      } catch (error) {
-        // Blocked storage just means we fall back to prefers-color-scheme.
-      }
+        var dark =
+          preference === 'dark' ||
+          (preference === 'system' &&
+            typeof window.matchMedia === 'function' &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches)
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+      })()
     </script>
   </head>
   <body>

@@ -11,6 +11,7 @@ import { EmptyState } from '../../components/ui/EmptyState'
 import { RefreshIndicator } from '../../components/ui/RefreshIndicator'
 import { SegmentedControl } from '../../components/ui/SegmentedControl'
 import { Skeleton } from '../../components/ui/Skeleton'
+import { useToast } from '../../components/ui/toast-context'
 import { usePolledResource } from '../../hooks/usePolledResource'
 import { useStoredPreference } from '../../hooks/useStoredPreference'
 import { buildResourceTree } from '../../lib/resource-tree'
@@ -43,8 +44,7 @@ export function ResourceExplorer({ onboardingId, target }: Props) {
   const [pendingDelete, setPendingDelete] = useState<ResourceNode | null>(null)
   const [logNode, setLogNode] = useState<ResourceNode | null>(null)
   const [deleting, setDeleting] = useState(false)
-  const [deleteError, setDeleteError] = useState('')
-  const [notice, setNotice] = useState('')
+  const toast = useToast()
 
   const load = useCallback(
     (signal: AbortSignal) => getTargetResources(onboardingId, target.id, signal),
@@ -58,15 +58,17 @@ export function ResourceExplorer({ onboardingId, target }: Props) {
     setDeleting(true)
     try {
       await deleteResource(onboardingId, target.id, toRef(pendingDelete))
-      setNotice(
+      toast.success(
         `${pendingDelete.kind} ${pendingDelete.name} was deleted from ${target.clusterName}.`,
+        { description: 'Argo CD restores it on the next sync if Git still declares it.' },
       )
-      setDeleteError('')
       if (selected?.uid === pendingDelete.uid) setSelected(null)
       setPendingDelete(null)
       await resources.reload()
     } catch (error) {
-      setDeleteError(errorMessage(error, 'The resource could not be deleted'))
+      toast.error('The resource could not be deleted', {
+        description: errorMessage(error, 'The cluster rejected the request.'),
+      })
       setPendingDelete(null)
     } finally {
       setDeleting(false)
@@ -95,20 +97,6 @@ export function ResourceExplorer({ onboardingId, target }: Props) {
           onRetry={() => void resources.reload()}
         >
           {resources.error.message}
-        </Banner>
-      )}
-      {deleteError && (
-        <Banner
-          tone="error"
-          title="The resource could not be deleted"
-          onDismiss={() => setDeleteError('')}
-        >
-          {deleteError}
-        </Banner>
-      )}
-      {notice && (
-        <Banner tone="success" title="Resource deleted" onDismiss={() => setNotice('')}>
-          {notice} Argo CD restores it on the next sync if Git still declares it.
         </Banner>
       )}
 

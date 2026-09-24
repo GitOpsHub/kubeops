@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import { ArgoHealthState, ArgoSyncState } from '../../components/ArgoStateIcons'
 import { StatusBadge } from '../../components/ui/Badge'
 import { plural } from '../../lib/format'
-import { deltaTone, rollupState } from '../../lib/status'
+import { deltaTone, deltaToneColour, rollupState } from '../../lib/status'
 import { namespaceLabel, type ApplicationGroup } from './application-groups'
 import { EnvironmentTags, PlatformIds } from './PlatformIds'
 
@@ -18,7 +18,11 @@ export function ApplicationTiles({ groups }: { groups: ApplicationGroup[] }) {
           (target) => target.argoApplicationUrl,
         )?.argoApplicationUrl
         return (
-          <article className={`application-tile application-tile--${tone}`} key={group.key}>
+          <article
+            className={`application-tile application-tile--${tone}`}
+            data-tone={deltaToneColour(tone)}
+            key={group.key}
+          >
             <header className="application-tile-head">
               <div className="cell-stack">
                 <Link
@@ -32,7 +36,7 @@ export function ApplicationTiles({ groups }: { groups: ApplicationGroup[] }) {
                   {namespace}
                 </small>
               </div>
-              <StatusBadge status={group.status} />
+              <StatusBadge domain="lifecycle" status={group.status} />
             </header>
             <div className="application-tile-states">
               <ArgoHealthState status={rollup.healthStatus} />

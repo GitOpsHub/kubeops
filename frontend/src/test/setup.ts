@@ -1,5 +1,8 @@
 import '@testing-library/jest-dom/vitest'
-import { afterEach, vi } from 'vitest'
+import { afterEach, expect, vi } from 'vitest'
+import * as axeMatchers from 'vitest-axe/matchers'
+
+expect.extend(axeMatchers)
 
 afterEach(() => {
   // Preferences are browser state, so they must not leak between otherwise

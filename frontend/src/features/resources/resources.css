@@ -86,11 +86,10 @@
   height: min(760px, calc(100vh - 48px));
 }
 
-.resource-modal-title {
-  display: flex;
-  gap: var(--space-3);
-  align-items: center;
-  min-width: 0;
+/* Resource kinds read in the accent, not a status tone. */
+.resource-modal-header .dialog-header-icon {
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .resource-mark {
@@ -140,8 +139,8 @@
   align-items: center;
   height: 26px;
   padding: 0 var(--space-3);
-  color: var(--text-muted);
-  background: var(--surface-sunken);
+  color: var(--tone-fg);
+  background: var(--tone-soft);
   border-radius: var(--radius-pill);
   font-size: var(--text-2xs);
   font-weight: 600;
@@ -150,27 +149,12 @@
 .pod-logs-state i {
   width: 7px;
   height: 7px;
-  background: var(--text-subtle);
+  background: var(--tone-solid);
   border-radius: 50%;
 }
 
-.pod-logs-state--live {
-  color: var(--ok);
-  background: var(--ok-soft);
-}
-
 .pod-logs-state--live i {
-  background: var(--ok);
   animation: pulse 1.6s ease-in-out infinite;
-}
-
-.pod-logs-state--error {
-  color: var(--err);
-  background: var(--err-soft);
-}
-
-.pod-logs-state--error i {
-  background: var(--err);
 }
 
 .pod-logs-output-wrap {
@@ -201,4 +185,8 @@
 
 .pod-logs-overlay--error {
   color: var(--code-err);
+}
+
+.pod-logs-namespace {
+  padding: 0 var(--space-5) var(--space-3);
 }

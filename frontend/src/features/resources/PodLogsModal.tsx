@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { errorMessage, isAbortError } from '../../api/client'
 import { streamPodLogs, type ResourceNode } from '../../api/onboarding'
 import { Button } from '../../components/ui/Button'
-import { Dialog, DialogClose, DialogTitle } from '../../components/ui/Dialog'
+import { Dialog, DialogClose } from '../../components/ui/Dialog'
+import { DialogFooter, DialogHeader } from '../../components/ui/DialogParts'
+import type { Tone } from '../../lib/status'
 import { toRef } from './resource-ref'
 
 type Props = {
@@ -13,6 +15,13 @@ type Props = {
 }
 
 type StreamState = 'connecting' | 'live' | 'ended' | 'error'
+
+const stateTones: Record<StreamState, Tone> = {
+  connecting: 'info',
+  live: 'ok',
+  ended: 'idle',
+  error: 'err',
+}
 
 const stateLabels: Record<StreamState, string> = {
   connecting: 'Connecting',
@@ -66,23 +75,21 @@ export function PodLogsModal({ node, onboardingId, targetId, onClose }: Props) {
       onOpenChange={(next) => !next && onClose()}
       size="xl"
       className="pod-logs-modal"
-      describedBy={undefined}
+      describedBy={false}
     >
-      <header className="dialog-header">
-        <div className="dialog-title-group">
-          <p className="kicker">Pod log stream</p>
-          <DialogTitle asChild>
-            <h2 className="mono truncate" title={node.name}>
-              {node.name}
-            </h2>
-          </DialogTitle>
-          <span className="subtle mono">{node.namespace || 'default'}</span>
-        </div>
-        <span className={`pod-logs-state pod-logs-state--${state}`}>
-          <i aria-hidden="true" />
-          {stateLabels[state]}
-        </span>
-      </header>
+      <DialogHeader
+        kicker="Pod log stream"
+        title={node.name}
+        titleClassName="mono truncate"
+        titleTooltip={node.name}
+        actions={
+          <span className={`pod-logs-state pod-logs-state--${state}`} data-tone={stateTones[state]}>
+            <i aria-hidden="true" />
+            {stateLabels[state]}
+          </span>
+        }
+      />
+      <p className="pod-logs-namespace subtle mono">{node.namespace || 'default'}</p>
 
       <div className="pod-logs-output-wrap">
         {state === 'connecting' && lines.length === 0 && (
@@ -100,17 +107,14 @@ export function PodLogsModal({ node, onboardingId, targetId, onClose }: Props) {
         </pre>
       </div>
 
-      <footer className="dialog-footer">
-        <span className="dialog-footer-note">
-          Showing the latest {lines.length.toLocaleString()} lines
-        </span>
+      <DialogFooter note={`Showing the latest ${lines.length.toLocaleString()} lines`}>
         <Button variant="ghost" onClick={() => setLines([])}>
           Clear
         </Button>
         <DialogClose asChild>
           <Button variant="primary">Close</Button>
         </DialogClose>
-      </footer>
+      </DialogFooter>
     </Dialog>
   )
 }

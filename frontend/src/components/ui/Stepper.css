@@ -1,0 +1,114 @@
+.stepper {
+  display: flex;
+  gap: var(--space-2);
+  list-style: none;
+  counter-reset: step;
+}
+
+.stepper-step {
+  display: flex;
+  flex: 1;
+  gap: var(--space-2);
+  align-items: center;
+  min-width: 0;
+}
+
+/* The connector between steps fills in as the flow moves past it. */
+.stepper-step:not(:last-child)::after {
+  content: '';
+  flex: 1;
+  min-width: var(--space-4);
+  height: 1px;
+  background: var(--border-strong);
+}
+
+.stepper-step--complete:not(:last-child)::after {
+  background: var(--accent);
+}
+
+.stepper-button {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  min-width: 0;
+  padding: var(--space-1);
+  color: inherit;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+
+button.stepper-button:hover .stepper-label {
+  color: var(--text);
+}
+
+.stepper-marker {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  color: var(--text-subtle);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-semibold);
+  transition:
+    background var(--dur-base) var(--ease-out),
+    border-color var(--dur-base) var(--ease-out),
+    color var(--dur-base) var(--ease-out);
+}
+
+.stepper-marker svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2.5;
+}
+
+.stepper-step--current .stepper-marker {
+  color: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.stepper-step--complete .stepper-marker {
+  color: var(--accent-fg);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.stepper-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.stepper-label {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stepper-step--current .stepper-label {
+  color: var(--text);
+}
+
+.stepper-description {
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+}
+
+@media (max-width: 640px) {
+  .stepper-copy {
+    display: none;
+  }
+
+  .stepper-step--current .stepper-copy {
+    display: grid;
+  }
+}

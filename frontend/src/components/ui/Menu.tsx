@@ -6,6 +6,7 @@
 
 import * as RadixMenu from '@radix-ui/react-dropdown-menu'
 import type { ReactNode } from 'react'
+import { CheckIcon } from '../icons'
 import './Menu.css'
 
 type MenuProps = {
@@ -50,4 +51,58 @@ export function MenuItem({ danger = false, disabled, onSelect, children }: MenuI
       {children}
     </RadixMenu.Item>
   )
+}
+
+type MenuRadioGroupProps<T extends string> = {
+  value: T
+  onValueChange: (value: T) => void
+  /** Names the group, e.g. "Theme", for assistive technology. */
+  label: string
+  children: ReactNode
+}
+
+/** A set of mutually exclusive choices; items announce as `menuitemradio`. */
+export function MenuRadioGroup<T extends string>({
+  value,
+  onValueChange,
+  label,
+  children,
+}: MenuRadioGroupProps<T>) {
+  return (
+    <RadixMenu.RadioGroup
+      value={value}
+      onValueChange={(next) => onValueChange(next as T)}
+      aria-label={label}
+    >
+      {children}
+    </RadixMenu.RadioGroup>
+  )
+}
+
+export function MenuRadioItem({
+  value,
+  icon,
+  children,
+}: {
+  value: string
+  icon?: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <RadixMenu.RadioItem className="menu-item menu-item--radio" value={value}>
+      {icon && <span className="menu-item-icon">{icon}</span>}
+      <span className="menu-item-label">{children}</span>
+      <RadixMenu.ItemIndicator className="menu-item-indicator">
+        <CheckIcon />
+      </RadixMenu.ItemIndicator>
+    </RadixMenu.RadioItem>
+  )
+}
+
+export function MenuLabel({ children }: { children: ReactNode }) {
+  return <RadixMenu.Label className="menu-label">{children}</RadixMenu.Label>
+}
+
+export function MenuSeparator() {
+  return <RadixMenu.Separator className="menu-separator" />
 }

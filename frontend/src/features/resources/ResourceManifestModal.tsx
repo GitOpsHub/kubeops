@@ -4,7 +4,9 @@ import { getResourceManifest, type ResourceNode } from '../../api/onboarding'
 import { KubernetesResourceIcon } from '../../components/KubernetesResourceIcon'
 import { StatusBadge, Tag } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
-import { Dialog, DialogClose, DialogTitle } from '../../components/ui/Dialog'
+import { DeleteIcon } from '../../components/icons'
+import { Dialog, DialogClose } from '../../components/ui/Dialog'
+import { DialogFooter, DialogHeader } from '../../components/ui/DialogParts'
 import { Skeleton } from '../../components/ui/Skeleton'
 import { formatResourceManifest } from '../../lib/resource-manifest'
 import { toRef } from './resource-ref'
@@ -53,29 +55,23 @@ export function ResourceManifestModal({ node, onboardingId, targetId, onClose, o
       onOpenChange={(next) => !next && onClose()}
       size="lg"
       className="resource-modal"
-      describedBy={undefined}
+      describedBy={false}
     >
-      <header className="dialog-header">
-        <div className="resource-modal-title">
-          <span className="resource-mark" aria-hidden="true">
-            <KubernetesResourceIcon kind={node.kind} />
-          </span>
-          <div className="dialog-title-group">
-            <p className="kicker">{node.kind} YAML</p>
-            <DialogTitle asChild>
-              <h2 className="mono truncate" title={node.name}>
-                {node.name}
-              </h2>
-            </DialogTitle>
-          </div>
-        </div>
-      </header>
+      <DialogHeader
+        className="resource-modal-header"
+        icon={<KubernetesResourceIcon kind={node.kind} />}
+        kicker={`${node.kind} YAML`}
+        title={node.name}
+        titleClassName="mono truncate"
+        titleTooltip={node.name}
+        closeLabel="Close YAML"
+      />
 
       <div className="resource-modal-meta">
         <Tag mono>{node.group ? `${node.group}/${node.version}` : node.version}</Tag>
         <Tag mono>{node.namespace || 'cluster-scoped'}</Tag>
         {node.healthStatus && node.healthStatus !== 'Unknown' && (
-          <StatusBadge status={node.healthStatus} />
+          <StatusBadge domain="health" status={node.healthStatus} />
         )}
         {node.syncStatus && <Tag>{node.syncStatus}</Tag>}
       </div>
@@ -99,7 +95,7 @@ export function ResourceManifestModal({ node, onboardingId, targetId, onClose, o
         )}
       </div>
 
-      <footer className="dialog-footer">
+      <DialogFooter>
         <Button
           variant="danger"
           iconOnly
@@ -108,14 +104,12 @@ export function ResourceManifestModal({ node, onboardingId, targetId, onClose, o
           aria-label="Delete resource"
           title="Delete resource"
         >
-          <svg viewBox="0 0 20 20" aria-hidden="true">
-            <path d="M3.5 5.5h13M8 3.5h4M5.5 5.5l.7 11h7.6l.7-11M8 8.5v5M12 8.5v5" />
-          </svg>
+          <DeleteIcon />
         </Button>
         <DialogClose asChild>
           <Button>Close</Button>
         </DialogClose>
-      </footer>
+      </DialogFooter>
     </Dialog>
   )
 }

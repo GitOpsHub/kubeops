@@ -10,12 +10,16 @@ import {
 } from '../../api/inventory'
 import { errorMessage, isAbortError } from '../../api/client'
 import { KubernetesLogo } from '../../components/BrandIcons'
-import { Banner } from '../../components/ui/Banner'
+import { ExternalLinkIcon } from '../../components/icons'
 import { StatusBadge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { buttonClass } from '../../components/ui/button-class'
-import { Dialog, DialogClose, DialogDescription, DialogTitle } from '../../components/ui/Dialog'
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
+import { EmptyState } from '../../components/ui/EmptyState'
+import { ErrorState } from '../../components/ui/ErrorState'
+import { Sheet } from '../../components/ui/Sheet'
 import { Skeleton } from '../../components/ui/Skeleton'
+import { useToast } from '../../components/ui/toast-context'
 import { providerLabels } from '../../lib/providers'
 import './cluster-drawer.css'
 
@@ -111,7 +115,9 @@ export function ClusterDetailDrawer({
   const [desiredCounts, setDesiredCounts] = useState<Record<string, string>>({})
   const [pending, setPending] = useState<PendingScale | null>(null)
   const [submitting, setSubmitting] = useState(false)
-  const [scaleMessage, setScaleMessage] = useState('')
+  // Validation stays beside the input; what the provider did is a toast.
+  const [scaleError, setScaleError] = useState('')
+  const toast = useToast()
   const [pollTarget, setPollTarget] = useState<PendingScale | null>(null)
   const pollStartedAt = useRef(0)
 
@@ -159,40 +165,39 @@ export function ClusterDetailDrawer({
     if (!pollTarget) return
     const poll = async () => {
       if (Date.now() - pollStartedAt.current >= 120_000) {
-        setScaleMessage('Scaling is still continuing in the cloud provider.')
+        toast.info('Scaling is still continuing in the cloud provider.')
         setPollTarget(null)
         return
       }
       const next = await loadDetails(undefined, true)
       const pool = next?.nodePools.find((item) => item.id === pollTarget.pool.id)
       if (pool && pool.desiredCount === pollTarget.desiredCount && settled(pool.status)) {
-        setScaleMessage(`${pool.name} is now configured for ${pool.desiredCount} nodes.`)
+        toast.success(`${pool.name} is now configured for ${pool.desiredCount} nodes.`)
         setPollTarget(null)
       }
     }
     const interval = window.setInterval(() => void poll(), 5_000)
     return () => window.clearInterval(interval)
-  }, [loadDetails, pollTarget])
+  }, [loadDetails, pollTarget, toast])
 
   async function confirmScale() {
     if (!pending) return
     setSubmitting(true)
-    setScaleMessage('')
     try {
       const result = await scaleNodePool(cluster.id, pending.pool.id, pending.desiredCount)
       if (result.status === 'unchanged') {
-        setScaleMessage(
-          `${pending.pool.name} is already configured for ${pending.desiredCount} nodes.`,
-        )
+        toast.info(`${pending.pool.name} is already configured for ${pending.desiredCount} nodes.`)
       } else {
-        setScaleMessage(`Scaling ${pending.pool.name} to ${pending.desiredCount} nodes…`)
+        toast.info(`Scaling ${pending.pool.name} to ${pending.desiredCount} nodes…`)
         pollStartedAt.current = Date.now()
         setPollTarget(pending)
       }
       setPending(null)
       await loadDetails(undefined, true)
     } catch (error) {
-      setScaleMessage(error instanceof Error ? error.message : 'The scaling request failed')
+      toast.error('The scaling request failed', {
+        description: errorMessage(error, 'The provider rejected the request.'),
+      })
     } finally {
       setSubmitting(false)
     }
@@ -201,10 +206,10 @@ export function ClusterDetailDrawer({
   function reviewScale(pool: NodePool) {
     const value = Number(desiredCounts[pool.id])
     if (!Number.isInteger(value) || value < 0) {
-      setScaleMessage('Enter a nonnegative whole number of nodes.')
+      setScaleError('Enter a nonnegative whole number of nodes.')
       return
     }
-    setScaleMessage('')
+    setScaleError('')
     setPending({ pool, desiredCount: value })
   }
 
@@ -214,38 +219,17 @@ export function ClusterDetailDrawer({
 
   return (
     <>
-      <Dialog
+      <Sheet
         open
         onOpenChange={(next) => !next && onClose()}
-        variant="sheet"
+        size="lg"
         className="cluster-detail-modal"
-        describedBy={undefined}
+        icon={<KubernetesLogo className="cluster-sheet-logo" />}
+        kicker={providerLabels[cluster.provider]}
+        title={cluster.name}
+        description={`${cluster.sourceName} · ${cluster.location}`}
+        closeLabel="Close cluster details"
       >
-        <header className="dialog-header cluster-sheet-header">
-          <KubernetesLogo className="cluster-sheet-logo" />
-          <div className="dialog-title-group">
-            <p className="kicker">{providerLabels[cluster.provider]}</p>
-            <DialogTitle asChild>
-              <h2>{cluster.name}</h2>
-            </DialogTitle>
-            <p className="subtle">
-              {cluster.sourceName} · {cluster.location}
-            </p>
-          </div>
-          <DialogClose asChild>
-            <Button
-              variant="ghost"
-              iconOnly
-              className="dialog-close"
-              aria-label="Close cluster details"
-            >
-              <svg viewBox="0 0 16 16" aria-hidden="true">
-                <path d="m4 4 8 8M12 4l-8 8" />
-              </svg>
-            </Button>
-          </DialogClose>
-        </header>
-
         <div className="dialog-body cluster-sheet-body">
           <section className="sheet-section" aria-labelledby="cluster-state-heading">
             <h3 id="cluster-state-heading">Cluster state</h3>
@@ -254,8 +238,8 @@ export function ClusterDetailDrawer({
                 <dt>Status</dt>
                 <dd>
                   <StatusBadge
+                    domain="cluster"
                     status={cluster.removedAt ? 'removed' : cluster.status}
-                    tone={cluster.removedAt ? 'idle' : undefined}
                   />
                 </dd>
               </div>
@@ -285,7 +269,7 @@ export function ClusterDetailDrawer({
           <section className="sheet-section" aria-labelledby="node-pools-heading">
             <div className="sheet-section-heading">
               <h3 id="node-pools-heading">Node pools</h3>
-              {pollTarget && <StatusBadge status="updating" />}
+              {pollTarget && <StatusBadge domain="cluster" status="updating" />}
             </div>
             {loading ? (
               <div role="status" className="sheet-loading">
@@ -293,14 +277,13 @@ export function ClusterDetailDrawer({
                 <Skeleton height={120} radius="var(--radius-md)" />
               </div>
             ) : detailError ? (
-              <Banner
-                tone="error"
+              <ErrorState
+                compact
                 title="Live details could not be loaded"
+                message={detailError}
                 onRetry={() => void loadDetails()}
                 retryLabel="Retry"
-              >
-                {detailError}
-              </Banner>
+              />
             ) : details?.nodePools.length ? (
               <div className="node-pool-list">
                 {details.nodePools.map((pool) => {
@@ -316,7 +299,7 @@ export function ClusterDetailDrawer({
                             {pool.machineType || 'Machine type not reported'}
                           </small>
                         </div>
-                        <StatusBadge status={pool.status} />
+                        <StatusBadge domain="cluster" status={pool.status} />
                       </div>
                       <dl className="node-pool-facts">
                         <div>
@@ -348,6 +331,7 @@ export function ClusterDetailDrawer({
                             step="1"
                             value={desiredCounts[pool.id] ?? pool.desiredCount}
                             disabled={!pool.scalable || busy}
+                            aria-invalid={scaleError ? true : undefined}
                             onChange={(event) =>
                               setDesiredCounts((current) => ({
                                 ...current,
@@ -375,13 +359,17 @@ export function ClusterDetailDrawer({
                 })}
               </div>
             ) : (
-              <p className="sheet-empty">
-                {details?.capability.reason || 'No provider-managed node pools were found.'}
-              </p>
+              <EmptyState
+                compact
+                title="No node pools to manage"
+                description={
+                  details?.capability.reason || 'No provider-managed node pools were found.'
+                }
+              />
             )}
-            {scaleMessage && (
-              <p className="scale-message" role="status">
-                {scaleMessage}
+            {scaleError && (
+              <p className="field-error" role="alert">
+                {scaleError}
               </p>
             )}
           </section>
@@ -408,7 +396,11 @@ export function ClusterDetailDrawer({
                 )}
               </>
             ) : (
-              <p className="sheet-empty">Networking details are unavailable.</p>
+              <EmptyState
+                compact
+                title="Networking details are unavailable"
+                description="The provider did not report connectivity for this cluster."
+              />
             )}
           </section>
 
@@ -424,10 +416,16 @@ export function ClusterDetailDrawer({
                   rel="noreferrer"
                 >
                   Open in Argo CD
+                  <ExternalLinkIcon />
                 </a>
               </div>
+            ) : argoError ? (
+              <ErrorState compact title="Argo CD access is unavailable" message={argoError} />
             ) : (
-              <p className="sheet-empty">{argoError || 'Loading Argo CD access…'}</p>
+              <p className="sheet-loading-line" role="status">
+                <span className="spinner" aria-hidden="true" />
+                Loading Argo CD access…
+              </p>
             )}
           </section>
 
@@ -436,61 +434,46 @@ export function ClusterDetailDrawer({
             <code>{cluster.providerResourceId}</code>
           </div>
         </div>
-      </Dialog>
+      </Sheet>
 
       {/* A sibling of the sheet rather than a child of it. Radix stacks
           dismissable layers, so Escape here closes only this confirmation. */}
-      <Dialog
+      <ConfirmDialog
         open={pending !== null}
         onOpenChange={(next) => !next && setPending(null)}
-        size="sm"
-        alert
-        dismissible={!submitting}
+        kicker="Review change"
+        title={pending ? `Scale ${pending.pool.name}?` : ''}
+        description={
+          pending && (
+            <>
+              This changes the configured capacity for <strong>{cluster.name}</strong> by{' '}
+              {pending.desiredCount - pending.pool.desiredCount} nodes.
+            </>
+          )
+        }
+        confirmLabel="Confirm scale"
+        submittingLabel="Requesting…"
+        submitting={submitting}
+        onConfirm={() => void confirmScale()}
       >
         {pending && (
           <>
-            <header className="dialog-header">
-              <div className="dialog-title-group">
-                <p className="kicker">Review change</p>
-                <DialogTitle asChild>
-                  <h3>Scale {pending.pool.name}?</h3>
-                </DialogTitle>
-              </div>
-            </header>
-            <div className="dialog-body">
-              <div className="scale-delta">
-                <span>{pending.pool.desiredCount}</span>
-                <i aria-hidden="true">→</i>
-                <strong>{pending.desiredCount}</strong>
-              </div>
-              <DialogDescription asChild>
-                <p>
-                  This changes the configured capacity for <strong>{cluster.name}</strong> by{' '}
-                  {pending.desiredCount - pending.pool.desiredCount} nodes.
-                </p>
-              </DialogDescription>
-              {pending.desiredCount < pending.pool.desiredCount && (
-                <p className="dialog-warning">
-                  Scaling down can evict workloads from removed nodes.
-                </p>
-              )}
-              {pending.pool.autoscaling !== 'disabled' && (
-                <p className="dialog-warning">
-                  Autoscaling is {pending.pool.autoscaling} and may override this size.
-                </p>
-              )}
+            <div className="scale-delta">
+              <span>{pending.pool.desiredCount}</span>
+              <i aria-hidden="true">→</i>
+              <strong>{pending.desiredCount}</strong>
             </div>
-            <footer className="dialog-footer">
-              <Button onClick={() => setPending(null)} disabled={submitting}>
-                Cancel
-              </Button>
-              <Button variant="primary" onClick={() => void confirmScale()} loading={submitting}>
-                {submitting ? 'Requesting…' : 'Confirm scale'}
-              </Button>
-            </footer>
+            {pending.desiredCount < pending.pool.desiredCount && (
+              <p className="dialog-warning">Scaling down can evict workloads from removed nodes.</p>
+            )}
+            {pending.pool.autoscaling !== 'disabled' && (
+              <p className="dialog-warning">
+                Autoscaling is {pending.pool.autoscaling} and may override this size.
+              </p>
+            )}
           </>
         )}
-      </Dialog>
+      </ConfirmDialog>
     </>
   )
 }

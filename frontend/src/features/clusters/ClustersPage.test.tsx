@@ -1,16 +1,11 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import App from '../../App'
+import { renderApp } from '../../test/render'
 import { buildCluster, mockAPI } from '../../test/mock-api'
 
 function renderClusters() {
-  return render(
-    <MemoryRouter initialEntries={['/clusters']}>
-      <App />
-    </MemoryRouter>,
-  )
+  return renderApp('/clusters')
 }
 
 function clusterRequests(fetchMock: ReturnType<typeof mockAPI>['fetchMock']) {

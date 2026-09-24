@@ -11,6 +11,8 @@ import {
 import { ProviderLogo } from '../../components/BrandIcons'
 import { Banner } from '../../components/ui/Banner'
 import { StatusBadge, Tag } from '../../components/ui/Badge'
+import { StatusDot } from '../../components/ui/StatusDot'
+import { useToast } from '../../components/ui/toast-context'
 import { Button } from '../../components/ui/Button'
 import { Card } from '../../components/ui/Card'
 import { EmptyState } from '../../components/ui/EmptyState'
@@ -37,7 +39,7 @@ function displayedStatus(source: CloudSource) {
 export function SourcesPage() {
   const { refreshSyncStatus } = useOutletContext<AppShellContext>()
   const [syncing, setSyncing] = useState('')
-  const [actionError, setActionError] = useState('')
+  const toast = useToast()
 
   const load = useCallback(async (signal: AbortSignal) => {
     const [sources, runs] = await Promise.all([getSources(signal), getSyncRuns(signal)])
@@ -56,12 +58,14 @@ export function SourcesPage() {
 
   async function syncSource(source: CloudSource) {
     setSyncing(source.id)
-    setActionError('')
     try {
       await queueSourceSync(source.id)
+      toast.success(`Sync queued for ${source.name}.`)
       await Promise.all([inventory.reload(), refreshSyncStatus()])
     } catch (error) {
-      setActionError(errorMessage(error, 'Sync could not be started'))
+      toast.error('Sync could not be started', {
+        description: errorMessage(error, 'The request was rejected.'),
+      })
     } finally {
       setSyncing('')
     }
@@ -89,11 +93,6 @@ export function SourcesPage() {
           onRetry={() => void inventory.reload()}
         >
           {inventory.error.message}
-        </Banner>
-      )}
-      {actionError && (
-        <Banner tone="error" title="Sync could not be started" onDismiss={() => setActionError('')}>
-          {actionError}
         </Banner>
       )}
 
@@ -144,7 +143,7 @@ export function SourcesPage() {
                     <span>{source.clusterCount === 1 ? 'cluster' : 'clusters'}</span>
                   </div>
                   <div className="source-sync">
-                    <StatusBadge status={displayedStatus(source)} />
+                    <StatusBadge domain="run" status={displayedStatus(source)} />
                     <span>
                       {source.lastSyncAt
                         ? `Synced ${relativeTime(source.lastSyncAt)}`
@@ -189,7 +188,7 @@ export function SourcesPage() {
           <ul className="run-list">
             {runs.map((run) => (
               <li key={run.id}>
-                <span className={`sync-dot sync-dot--${run.status}`} aria-hidden="true" />
+                <StatusDot domain="run" status={run.status} className="sync-dot" />
                 <span className="run-copy">
                   <strong>{run.sourceName}</strong>
                   <small>
@@ -198,7 +197,7 @@ export function SourcesPage() {
                     {run.error ? ` · ${run.error}` : ''}
                   </small>
                 </span>
-                <StatusBadge status={run.status} />
+                <StatusBadge domain="run" status={run.status} />
                 <time dateTime={run.queuedAt}>{relativeTime(run.queuedAt)}</time>
               </li>
             ))}

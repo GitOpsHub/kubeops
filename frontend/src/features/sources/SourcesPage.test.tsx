@@ -1,16 +1,11 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import App from '../../App'
+import { renderApp } from '../../test/render'
 import { buildSource, buildSyncRun, mockAPI } from '../../test/mock-api'
 
 function renderSources() {
-  return render(
-    <MemoryRouter initialEntries={['/sources']}>
-      <App />
-    </MemoryRouter>,
-  )
+  return renderApp('/sources')
 }
 
 afterEach(() => {

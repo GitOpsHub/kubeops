@@ -1,4 +1,5 @@
 import { Tag } from '../../components/ui/Badge'
+import { environmentTone } from '../../lib/status'
 
 const visiblePlatformIds = 2
 
@@ -27,7 +28,11 @@ export function EnvironmentTags({ environments }: { environments: string[] }) {
   return (
     <span className="environment-tags">
       {environments.map((item) => (
-        <span className={`environment-tag environment-tag--${item}`} key={item}>
+        <span
+          className={`environment-tag environment-tag--${item}`}
+          data-tone={environmentTone(item)}
+          key={item}
+        >
           {item}
         </span>
       ))}

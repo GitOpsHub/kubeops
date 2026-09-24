@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useNow } from '../../hooks/useNow'
 import { relativeTime } from '../../lib/format'
+import { StatusDot } from './StatusDot'
 import './RefreshIndicator.css'
 
 type Props = {
@@ -22,23 +23,14 @@ export function RefreshIndicator({
   failed = false,
   idleLabel = 'Loading…',
 }: Props) {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 15_000)
-    return () => window.clearInterval(timer)
-  }, [])
+  const now = Math.max(useNow(), lastUpdated ?? 0)
 
   return (
     <span className="refresh-indicator">
       {refreshing ? (
         <span className="spinner refresh-indicator-spinner" aria-hidden="true" />
       ) : (
-        <span
-          className={
-            failed ? 'refresh-indicator-dot refresh-indicator-dot--failed' : 'refresh-indicator-dot'
-          }
-          aria-hidden="true"
-        />
+        <StatusDot tone={failed ? 'err' : 'ok'} size="sm" />
       )}
       {failed && !refreshing && !lastUpdated
         ? 'Not loaded'

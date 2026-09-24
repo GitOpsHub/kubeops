@@ -8,7 +8,7 @@ import {
   resourceCategory,
 } from '../../lib/resource-graph'
 import { age } from '../../lib/format'
-import { healthTone } from '../../lib/status'
+import { healthTone, syncTone } from '../../lib/status'
 import { KubernetesResourceIcon } from '../../components/KubernetesResourceIcon'
 import { Menu, MenuItem } from '../../components/ui/Menu'
 import './resource-graph.css'
@@ -51,6 +51,7 @@ function SyncMark({ status }: { status: string }) {
   return (
     <span
       className={`graph-sync-mark graph-sync-mark--${normalized}`}
+      data-tone={syncTone(status)}
       title={`Sync: ${status}`}
       aria-label={`Sync ${status}`}
       role="img"
@@ -216,8 +217,9 @@ export function ResourceGraph({ nodes, selectedUid, onSelect, onDelete, onLogs, 
 
               <ul className="graph-nodes" aria-label={label}>
                 {layout.nodes.map((node) => {
+                  const tone = healthTone(node.healthStatus)
                   const className =
-                    `graph-card graph-card--${healthTone(node.healthStatus)} ` +
+                    `graph-card graph-card--${tone} ` +
                     `graph-card--category-${resourceCategory(node.kind)} ` +
                     `${node.virtual ? 'graph-card--virtual' : ''} ` +
                     `${selectedUid === node.uid ? 'is-selected' : ''}`
@@ -249,9 +251,7 @@ export function ResourceGraph({ nodes, selectedUid, onSelect, onDelete, onLogs, 
                       <span className="graph-card-state">
                         {node.healthStatus && node.healthStatus !== 'Unknown' && (
                           <span
-                            className={`graph-health-dot graph-health-dot--${healthTone(
-                              node.healthStatus,
-                            )}`}
+                            className={`graph-health-dot graph-health-dot--${tone}`}
                             title={`Health: ${node.healthStatus}`}
                             aria-label={node.healthStatus}
                             role="img"
@@ -276,12 +276,13 @@ export function ResourceGraph({ nodes, selectedUid, onSelect, onDelete, onLogs, 
                       {node.virtual ? (
                         <article
                           className={className}
+                          data-tone={tone}
                           aria-label={`External load balancer ${node.name}`}
                         >
                           <div className="graph-card-primary">{content}</div>
                         </article>
                       ) : (
-                        <article className={className}>
+                        <article className={className} data-tone={tone}>
                           <Menu
                             trigger={
                               <button

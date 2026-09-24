@@ -1,41 +1,24 @@
 .banner {
-  --tone: var(--accent);
-  --tone-soft: var(--accent-soft);
-
   display: flex;
   gap: var(--space-3);
   align-items: flex-start;
   padding: var(--space-3) var(--space-4);
   background: var(--tone-soft);
-  border: 1px solid color-mix(in srgb, var(--tone) 28%, transparent);
+  border: 1px solid var(--tone-border);
   border-radius: var(--radius-md);
 }
 
-.banner--error {
-  --tone: var(--err);
-  --tone-soft: var(--err-soft);
-}
-
-.banner--warn {
-  --tone: var(--warn);
-  --tone-soft: var(--warn-soft);
-}
-
-.banner--success {
-  --tone: var(--ok);
-  --tone-soft: var(--ok-soft);
-}
-
 .banner-icon {
+  display: inline-flex;
   flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--tone-fg);
+}
+
+.banner-icon svg {
   width: 16px;
   height: 16px;
-  margin-top: 2px;
-  fill: none;
-  stroke: var(--tone);
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.6;
+  stroke-width: 1.75;
 }
 
 .banner-copy {
@@ -47,7 +30,7 @@
 }
 
 .banner-copy strong {
-  color: var(--tone);
+  color: var(--tone-fg);
   font-weight: 600;
 }
 

@@ -9,7 +9,7 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-xs);
 }
 
 .panel-toolbar {
@@ -127,7 +127,7 @@
   font-size: var(--text-sm);
 }
 
-@media (max-width: 720px) {
+@media (max-width: 640px) {
   .panel-toolbar-search {
     justify-content: stretch;
   }
@@ -135,4 +135,8 @@
   .panel-toolbar-search .search-input {
     max-width: none;
   }
+}
+
+.fact-grid--stacked {
+  grid-template-columns: minmax(0, 1fr);
 }

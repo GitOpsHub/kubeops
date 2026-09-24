@@ -58,7 +58,7 @@ export function AppShell() {
         onOpenChange={setDrawerOpen}
         variant="drawer"
         className="sidebar sidebar--drawer"
-        describedBy={undefined}
+        describedBy={false}
       >
         <DialogTitle className="sr-only">Navigation</DialogTitle>
         <SidebarContent

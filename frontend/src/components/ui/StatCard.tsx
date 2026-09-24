@@ -34,12 +34,18 @@ export function StatCard({ label, value, hint, tone, icon, to, children, ...rest
   )
   const className = `stat-card${tone ? ` stat-card--${tone}` : ''}`
   return to ? (
-    <Link className={`${className} stat-card--link`} to={to} aria-label={rest['aria-label']}>
+    <Link
+      className={`${className} stat-card--link`}
+      to={to}
+      aria-label={rest['aria-label']}
+      data-tone={tone}
+    >
       {body}
     </Link>
   ) : (
     <div
       className={className}
+      data-tone={tone}
       aria-label={rest['aria-label']}
       role={rest['aria-label'] ? 'group' : undefined}
     >

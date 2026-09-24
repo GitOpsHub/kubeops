@@ -1,4 +1,5 @@
 import type { SyncRun } from '../api/inventory'
+import { StatusDot } from '../components/ui/StatusDot'
 import { relativeTime } from '../lib/format'
 
 function statusLabel(run: SyncRun | null) {
@@ -12,10 +13,9 @@ function statusLabel(run: SyncRun | null) {
  * would otherwise talk over whatever the operator is doing.
  */
 export function SyncReadout({ run, unavailable }: { run: SyncRun | null; unavailable: boolean }) {
-  const tone = unavailable ? 'idle' : (run?.status ?? 'idle')
   return (
     <div className="sync-readout" title={run ? `${run.sourceName} · ${run.trigger}` : undefined}>
-      <span className={`sync-dot sync-dot--${tone}`} aria-hidden="true" />
+      <StatusDot domain="run" status={unavailable ? null : run?.status} className="sync-dot" />
       <div className="sync-readout-copy">
         <strong>{unavailable && !run ? 'Sync status unavailable' : statusLabel(run)}</strong>
         <span>{run ? relativeTime(run.queuedAt) : 'No activity yet'}</span>

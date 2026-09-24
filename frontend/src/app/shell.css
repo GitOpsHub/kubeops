@@ -169,31 +169,6 @@
   font-size: var(--text-2xs);
 }
 
-.sync-dot {
-  width: 8px;
-  height: 8px;
-  flex: 0 0 auto;
-  background: var(--idle);
-  border-radius: 50%;
-}
-
-.sync-dot--succeeded {
-  background: var(--ok);
-  box-shadow: 0 0 0 3px var(--ok-soft);
-}
-
-.sync-dot--running,
-.sync-dot--queued {
-  background: var(--warn);
-  box-shadow: 0 0 0 3px var(--warn-soft);
-  animation: pulse 1.6s ease-in-out infinite;
-}
-
-.sync-dot--failed {
-  background: var(--err);
-  box-shadow: 0 0 0 3px var(--err-soft);
-}
-
 /* Collapsed rail: icons only, labels stay in the DOM for their names. */
 .is-collapsed .sidebar {
   padding-inline: var(--space-2);
@@ -248,9 +223,18 @@
   align-items: center;
   height: var(--header-height);
   padding: 0 var(--space-6);
-  background: color-mix(in srgb, var(--canvas) 86%, transparent);
+  background: var(--canvas);
   border-bottom: 1px solid var(--border);
-  backdrop-filter: blur(8px);
+}
+
+/* Glass only where the blur is real; a translucent header without it lets
+   scrolled content bleed through and hurts legibility. */
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .app-header {
+    background: var(--glass);
+    -webkit-backdrop-filter: saturate(1.4) blur(12px);
+    backdrop-filter: saturate(1.4) blur(12px);
+  }
 }
 
 .app-header-menu {
@@ -318,12 +302,6 @@
   border-color: var(--border-strong);
 }
 
-.app-header-sync .sync-dot {
-  width: 6px;
-  height: 6px;
-  box-shadow: none;
-}
-
 /* Content ----------------------------------------------------------------- */
 
 .app-content {
@@ -367,14 +345,14 @@
   gap: var(--space-2);
 }
 
-@media (max-width: 1024px) {
+@media (max-width: 960px) {
   .app-header,
   .app-content {
     padding-inline: var(--space-5);
   }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 640px) {
   .app-shell,
   .app-shell.is-collapsed {
     grid-template-columns: minmax(0, 1fr);

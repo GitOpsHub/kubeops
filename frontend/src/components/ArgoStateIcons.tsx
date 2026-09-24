@@ -1,4 +1,4 @@
-import { healthTone, normalise, syncTone } from '../lib/status'
+import { statusMeta } from '../lib/status'
 import './ArgoStateIcons.css'
 
 /**
@@ -12,14 +12,18 @@ type Props = {
   status: string
 }
 
+// The accessible names keep Argo CD's own spelling ("Sync OutOfSync") so they
+// match what an operator searches for in Argo; the visible caption uses the
+// canonical label.
 export function ArgoHealthState({ status }: Props) {
-  const label = status || 'Unknown'
-  const spinning = normalise(status) === 'progressing'
+  const meta = statusMeta('health', status)
+  const spinning = meta.inFlight
   return (
     <span
-      className={`argo-state argo-state--${healthTone(status)}`}
-      title={`Health: ${label}`}
-      aria-label={`Health ${label}`}
+      className={`argo-state argo-state--${meta.tone}`}
+      data-tone={meta.tone}
+      title={`Health: ${meta.label}`}
+      aria-label={`Health ${status || 'Unknown'}`}
     >
       <svg
         viewBox="0 0 24 24"
@@ -29,19 +33,20 @@ export function ArgoHealthState({ status }: Props) {
       >
         <path d="M12 20.4C7.6 16.9 3.5 13.4 3.5 9.3 3.5 6.6 5.6 4.5 8.2 4.5c1.5 0 3 .8 3.8 2.1.8-1.3 2.3-2.1 3.8-2.1 2.6 0 4.7 2.1 4.7 4.8 0 4.1-4.1 7.6-8.5 11.1z" />
       </svg>
-      <span className="argo-state-label">{label}</span>
+      <span className="argo-state-label">{meta.label}</span>
     </span>
   )
 }
 
 export function ArgoSyncState({ status }: Props) {
-  const label = status || 'Unknown'
-  const spinning = normalise(status) === 'progressing'
+  const meta = statusMeta('sync', status)
+  const spinning = meta.inFlight
   return (
     <span
-      className={`argo-state argo-state--${syncTone(status)}`}
-      title={`Sync: ${label}`}
-      aria-label={`Sync ${label}`}
+      className={`argo-state argo-state--${meta.tone}`}
+      data-tone={meta.tone}
+      title={`Sync: ${meta.label}`}
+      aria-label={`Sync ${status || 'Unknown'}`}
     >
       <svg
         viewBox="0 0 24 24"
@@ -56,7 +61,7 @@ export function ArgoSyncState({ status }: Props) {
         <path d="M20 12a8 8 0 1 1-2.34-5.66" />
         <path d="M20 3v5h-5" />
       </svg>
-      <span className="argo-state-label">{label}</span>
+      <span className="argo-state-label">{meta.label}</span>
     </span>
   )
 }

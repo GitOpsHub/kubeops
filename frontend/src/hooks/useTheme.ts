@@ -1,66 +1,74 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useSyncExternalStore } from 'react'
+import { useMediaQuery } from './useMediaQuery'
 
-export type Theme = 'light' | 'dark'
+export type ThemePreference = 'light' | 'dark' | 'system'
+export type ResolvedTheme = 'light' | 'dark'
 
 export const themeStorageKey = 'kubeops-theme'
 
-/** Absent in jsdom and some embedded webviews, so every use goes through here. */
-function darkQuery(): MediaQueryList | null {
-  return typeof window.matchMedia === 'function'
-    ? window.matchMedia('(prefers-color-scheme: dark)')
-    : null
+const listeners = new Set<() => void>()
+
+// Only used when storage throws, so a choice still holds for the session in
+// private browsing instead of silently snapping back.
+let sessionPreference: ThemePreference | null = null
+
+function isPreference(value: unknown): value is ThemePreference {
+  return value === 'light' || value === 'dark' || value === 'system'
 }
 
-function systemTheme(): Theme {
-  return darkQuery()?.matches ? 'dark' : 'light'
-}
-
-function storedTheme(): Theme | null {
+function readPreference(): ThemePreference {
   try {
-    const value = window.localStorage.getItem(themeStorageKey)
-    return value === 'light' || value === 'dark' ? value : null
+    const stored = window.localStorage.getItem(themeStorageKey)
+    return isPreference(stored) ? stored : (sessionPreference ?? 'system')
   } catch {
-    // Private browsing and blocked storage both throw; the system preference
-    // is a fine answer in that case.
-    return null
+    return sessionPreference ?? 'system'
   }
 }
 
+function subscribe(onChange: () => void) {
+  listeners.add(onChange)
+  // Another tab changing the theme should restyle this one too.
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === themeStorageKey) onChange()
+  }
+  window.addEventListener('storage', onStorage)
+  return () => {
+    listeners.delete(onChange)
+    window.removeEventListener('storage', onStorage)
+  }
+}
+
+function writePreference(next: ThemePreference) {
+  try {
+    window.localStorage.setItem(themeStorageKey, next)
+    sessionPreference = null
+  } catch {
+    sessionPreference = next
+  }
+  listeners.forEach((listener) => listener())
+}
+
 /**
- * Resolves the active theme from the stored choice, falling back to the system
- * preference, and writes it to `data-theme` so the token layer can override the
- * `prefers-color-scheme` defaults in both directions.
+ * The theme the user chose (light, dark, or follow the system) and what that
+ * resolves to right now. Nothing stored means "system". The resolved value is
+ * always written to `html[data-theme]`, because the token sheet derives its
+ * colour scheme from the attribute; the pre-paint script in index.html writes
+ * the same value before React mounts.
+ *
+ * State lives in a module-level store rather than per hook, so the theme menu,
+ * the command palette, and anything else reading it can never disagree.
  */
 export function useTheme() {
-  const [theme, setTheme] = useState<Theme>(() => storedTheme() ?? systemTheme())
-  const [explicit, setExplicit] = useState(() => storedTheme() !== null)
+  const preference = useSyncExternalStore(subscribe, readPreference, () => 'system' as const)
+  const systemDark = useMediaQuery('(prefers-color-scheme: dark)')
+  const resolved: ResolvedTheme =
+    preference === 'system' ? (systemDark ? 'dark' : 'light') : preference
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme
-  }, [theme])
+    document.documentElement.dataset.theme = resolved
+  }, [resolved])
 
-  // Keep following the system while the user has not made a choice.
-  useEffect(() => {
-    if (explicit) return
-    const query = darkQuery()
-    if (!query) return
-    const handleChange = () => setTheme(query.matches ? 'dark' : 'light')
-    query.addEventListener('change', handleChange)
-    return () => query.removeEventListener('change', handleChange)
-  }, [explicit])
+  const setPreference = useCallback((next: ThemePreference) => writePreference(next), [])
 
-  const toggle = useCallback(() => {
-    setTheme((current) => {
-      const next = current === 'dark' ? 'light' : 'dark'
-      try {
-        window.localStorage.setItem(themeStorageKey, next)
-      } catch {
-        // A theme that does not survive reload still beats a crash.
-      }
-      return next
-    })
-    setExplicit(true)
-  }, [])
-
-  return { theme, toggle }
+  return { preference, resolved, setPreference }
 }

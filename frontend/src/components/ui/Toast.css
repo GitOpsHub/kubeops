@@ -1,0 +1,106 @@
+.toast-region {
+  position: fixed;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  z-index: var(--z-toast);
+  width: min(380px, calc(100vw - 2 * var(--space-4)));
+  /* The region spans empty space; only the toasts themselves take clicks,
+     and they must still take them while a modal has disabled the page. */
+  pointer-events: none;
+}
+
+.toast-list {
+  display: grid;
+  gap: var(--space-2);
+  list-style: none;
+}
+
+.toast {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  pointer-events: auto;
+  animation: toast-in var(--dur-slow) var(--ease-out);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+.toast-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--tone-fg);
+}
+
+.toast-icon svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.75;
+}
+
+.toast-spinner {
+  animation: spin 900ms linear infinite;
+}
+
+.toast-copy {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+  padding-top: 1px;
+}
+
+.toast-message {
+  overflow-wrap: anywhere;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.toast-description {
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.toast-dismiss {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--text-subtle);
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+
+.toast-dismiss:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.toast-dismiss svg {
+  width: 14px;
+  height: 14px;
+}
+
+@media (max-width: 640px) {
+  .toast-region {
+    right: var(--space-3);
+    bottom: var(--space-3);
+    left: var(--space-3);
+    width: auto;
+  }
+}

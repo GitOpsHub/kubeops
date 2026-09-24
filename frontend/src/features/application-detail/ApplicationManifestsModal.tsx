@@ -145,7 +145,7 @@ export function ApplicationManifestsModal({ onboardingId, namespace, targets, on
             <strong>{target.clusterName}</strong>
             <small className="mono">{namespace}</small>
           </div>
-          <StatusBadge status={deploymentSync} tone={deploymentSync === 'Synced' ? 'ok' : 'warn'} />
+          <StatusBadge domain="sync" status={deploymentSync} />
         </div>
       </header>
 

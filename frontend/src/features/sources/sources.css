@@ -130,7 +130,7 @@
   text-align: right;
 }
 
-@media (max-width: 860px) {
+@media (max-width: 960px) {
   .source-row {
     grid-template-columns: 36px minmax(0, 1fr) auto;
   }
