@@ -5,11 +5,6 @@
       "GO_BUILD_FLAGS": "-ldflags '-s -w'"
     }
   },
-  "functions": {
-    "cmd/server/main.go": {
-      "maxDuration": 300
-    }
-  },
   "crons": [
     {
       "path": "/api/cloud-sources/sync",
