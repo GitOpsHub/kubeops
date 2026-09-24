@@ -4,6 +4,7 @@ import { Button } from '../components/ui/Button'
 import { relativeTime } from '../lib/format'
 import { breadcrumbsFor } from './navigation'
 import { MenuIcon } from './nav-icons'
+import { ThemeMenu } from './ThemeMenu'
 
 type Props = {
   applicationName?: string
@@ -50,6 +51,7 @@ export function AppHeader({ applicationName, latestRun, onOpenNavigation }: Prop
         <span className={`sync-dot sync-dot--${latestRun?.status ?? 'idle'}`} aria-hidden="true" />
         {latestRun ? `Last sync ${relativeTime(latestRun.queuedAt)}` : 'No sync yet'}
       </Link>
+      <ThemeMenu />
     </header>
   )
 }

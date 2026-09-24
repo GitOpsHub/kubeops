@@ -1,24 +1,30 @@
 /*
  * Design tokens — the only file allowed to hold raw colour values.
  *
- * Components reference semantic names ("the border", "the ok tone") so a
- * retheme is an edit here alone. Themes resolve in three steps and the order
- * matters: light defaults, then the system preference, then an explicit
- * `data-theme` attribute, which comes last so a manual toggle beats the system
- * in both directions.
+ * Components reference semantic roles ("the border", "the ok tone's soft
+ * fill") so a retheme is an edit here alone. Every colour is a `light-dark()`
+ * pair resolved against `color-scheme`, which is what lets one declaration
+ * serve both themes: the pre-paint script in index.html always writes the
+ * resolved `data-theme`, and the rules at the bottom of this file turn that
+ * into a colour scheme. Without the attribute the system preference decides.
  *
- * Status tones are checked for WCAG AA (≥ 4.5:1) as text on the page, on a
- * card, and on their own soft tint, in both themes.
+ * Tone foregrounds are checked for WCAG AA (≥ 4.5:1) as text on the page, on
+ * a card, and on their own soft tint, in both themes. Solids are for dots and
+ * bars and clear 3:1 against a card.
  */
 
 :root {
-  /* Type. Families are loaded from Google Fonts in index.html; the fallbacks
-     are deliberate so a blocked font degrades to something close. */
-  --font-display: 'Space Grotesk', 'Avenir Next', ui-sans-serif, system-ui, sans-serif;
-  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
-  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  color-scheme: light dark;
 
-  /* Dense but readable: body copy is 14px, labels never drop below 12px. */
+  /* Type. Both families are variable fonts bundled from @fontsource-variable
+     in main.tsx, so every weight between 100 and 900 is real, not synthesised.
+     The fallbacks are metric-close so a slow font load barely reflows. */
+  --font-sans:
+    'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-display: var(--font-sans);
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* Dense but readable: body copy is 14px and nothing drops below 12px. */
   --text-2xs: 0.75rem;
   --text-xs: 0.8125rem;
   --text-sm: 0.875rem;
@@ -26,6 +32,12 @@
   --text-lg: 1.0625rem;
   --text-xl: 1.25rem;
   --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
 
   /* 4px grid. */
   --space-1: 4px;
@@ -40,13 +52,20 @@
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 12px;
+  --radius-xl: 16px;
   --radius-pill: 999px;
 
-  /* Motion: short, eased out, and switched off for reduced motion in base.css. */
+  /* Motion: opacity and transform only, never on a poll refresh, and all of
+     it switched off for reduced motion in base.css. */
+  --dur-instant: 80ms;
+  --dur-fast: 160ms;
+  --dur-base: 200ms;
+  --dur-slow: 240ms;
+  --dur-flash: 600ms;
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
-  --duration-fast: 120ms;
-  --duration-med: 200ms;
-  --duration-slow: 320ms;
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-emphasized: cubic-bezier(0.3, 1.2, 0.4, 1);
 
   /* Shell geometry. */
   --sidebar-width: 232px;
@@ -59,169 +78,177 @@
   --z-shell: 20;
   --z-overlay: 50;
   --z-popover: 60;
-
-  color-scheme: light;
+  --z-toast: 70;
 
   /* Surfaces — near-neutral with the faintest cool cast. */
-  --canvas: #f7f8fa;
-  --surface: #ffffff;
-  --surface-raised: #ffffff;
-  --surface-sunken: #f1f3f6;
-  --surface-hover: #f4f5f8;
-  --surface-selected: #eef2fd;
+  --canvas: light-dark(#f7f8fa, #0b0c0f);
+  --surface: light-dark(#ffffff, #111317);
+  --surface-raised: light-dark(#ffffff, #171a1f);
+  --surface-sunken: light-dark(#f1f3f6, #08090b);
+  --surface-hover: light-dark(#f4f5f8, #1a1d23);
+  --surface-selected: light-dark(#eef2fd, #1a2140);
+  --surface-inverse: light-dark(#16181d, #e8eaee);
 
-  --border: #e4e7ec;
-  --border-strong: #d0d5dd;
+  --border: light-dark(#e4e7ec, #23272e);
+  --border-strong: light-dark(#d0d5dd, #343a45);
+  --border-subtle: light-dark(#eef0f3, #1a1d22);
 
-  --text: #16181d;
-  --text-muted: #555c68;
-  --text-subtle: #626977;
-  --text-inverse: #ffffff;
+  --text: light-dark(#16181d, #e8eaee);
+  --text-muted: light-dark(#555c68, #a3a9b4);
+  --text-subtle: light-dark(#626977, #8b919c);
+  --text-inverse: light-dark(#ffffff, #0b0c0f);
 
-  /* The single accent. */
-  --accent: #3056d3;
-  --accent-hover: #2446b5;
-  --accent-soft: rgb(48 86 211 / 9%);
-  --accent-fg: #ffffff;
+  /* The single accent, AA as text and as a button fill in both themes. */
+  --accent: light-dark(#3056d3, #809cff);
+  --accent-hover: light-dark(#2446b5, #9fb4ff);
+  --accent-soft: light-dark(rgb(48 86 211 / 9%), rgb(128 156 255 / 14%));
+  --accent-border: light-dark(rgb(48 86 211 / 30%), rgb(128 156 255 / 34%));
+  --accent-fg: light-dark(#ffffff, #0b0c0f);
 
-  --ok: #07703f;
-  --ok-soft: rgb(7 112 63 / 10%);
-  --warn: #955300;
-  --warn-soft: rgb(149 83 0 / 10%);
-  --err: #b92b27;
-  --err-soft: rgb(185 43 39 / 9%);
-  --idle: #5f6673;
-  --idle-soft: rgb(95 102 115 / 10%);
+  /* Tone roles. `fg` is text and icons, `soft` a tinted fill, `border` the
+     edge of that fill, `solid` a dot or bar. */
+  --ok-fg: light-dark(#07703f, #3ecf8e);
+  --ok-soft: light-dark(rgb(7 112 63 / 10%), rgb(62 207 142 / 13%));
+  --ok-border: light-dark(rgb(7 112 63 / 28%), rgb(62 207 142 / 32%));
+  --ok-solid: light-dark(#15a05a, #3ecf8e);
+
+  --warn-fg: light-dark(#955300, #f2b33d);
+  --warn-soft: light-dark(rgb(149 83 0 / 10%), rgb(242 179 61 / 13%));
+  --warn-border: light-dark(rgb(149 83 0 / 28%), rgb(242 179 61 / 32%));
+  --warn-solid: light-dark(#c07400, #f2b33d);
+
+  --err-fg: light-dark(#b92b27, #ff7a72);
+  --err-soft: light-dark(rgb(185 43 39 / 9%), rgb(255 122 114 / 13%));
+  --err-border: light-dark(rgb(185 43 39 / 28%), rgb(255 122 114 / 32%));
+  --err-solid: light-dark(#d63a35, #ff7a72);
+
+  --info-fg: var(--accent);
+  --info-soft: var(--accent-soft);
+  --info-border: var(--accent-border);
+  --info-solid: light-dark(#3a63e6, #809cff);
+
+  --idle-fg: light-dark(#5f6673, #949ba6);
+  --idle-soft: light-dark(rgb(95 102 115 / 10%), rgb(148 155 166 / 14%));
+  --idle-border: light-dark(rgb(95 102 115 / 26%), rgb(148 155 166 / 30%));
+  --idle-solid: light-dark(#8a919d, #6d7480);
+
+  /* Categorical series, ordered so neighbours differ in hue and lightness and
+     stay apart for the common colour-vision deficiencies in both themes. */
+  --chart-1: light-dark(#3056d3, #809cff);
+  --chart-2: light-dark(#0f8a8c, #2ec4c6);
+  --chart-3: light-dark(#c47400, #f2b33d);
+  --chart-4: light-dark(#7a4fe0, #b69cff);
+  --chart-5: light-dark(#cc2f6b, #f37aa6);
+  --chart-6: light-dark(#4f7d12, #9fd65a);
+  --chart-grid: var(--border-subtle);
+  --chart-axis: var(--text-subtle);
 
   /* Cloud provider marks. Identity, not decoration, so they stay literal. */
-  --aws: #ff9900;
-  --gcp: #4285f4;
-  --azure: #0078d4;
-  --docker: #2496ed;
-  --minikube: #d9a300;
+  --aws: light-dark(#ff9900, #ffb340);
+  --gcp: light-dark(#4285f4, #7aa7f8);
+  --azure: light-dark(#0078d4, #4aa3e8);
+  --docker: light-dark(#2496ed, #5cb4f2);
+  --minikube: light-dark(#d9a300, #ffd75e);
 
-  /* Log and code panes stay dark in both themes: terminals read that way. */
-  --code-bg: #0e1116;
+  /* Log and code panes stay dark in both themes: terminals read that way, so
+     their colours are single values rather than pairs. */
+  --code-bg: light-dark(#0e1116, #07080a);
   --code-fg: #d9e1ec;
   --code-muted: #8b96a8;
+  --code-border: #1f252e;
   --code-err: #ff9a94;
+  --log-err: #ff9a94;
+  --log-warn: #f4c56e;
+  --log-info: #92b4ff;
+  --log-debug: #8b96a8;
+  --log-highlight: rgb(244 197 110 / 32%);
 
   /* Elevation: borders do the separating, shadows only lift what floats. */
-  --shadow-sm: 0 1px 2px rgb(16 24 40 / 5%);
-  --shadow-md: 0 4px 12px -2px rgb(16 24 40 / 8%), 0 2px 4px -2px rgb(16 24 40 / 4%);
-  --shadow-lg: 0 20px 40px -12px rgb(16 24 40 / 22%), 0 4px 8px -4px rgb(16 24 40 / 6%);
+  --shadow-xs: 0 1px 1px light-dark(rgb(16 24 40 / 4%), rgb(0 0 0 / 30%));
+  --shadow-sm: 0 1px 2px light-dark(rgb(16 24 40 / 5%), rgb(0 0 0 / 40%));
+  --shadow-md:
+    0 4px 12px -2px light-dark(rgb(16 24 40 / 8%), rgb(0 0 0 / 50%)),
+    0 2px 4px -2px light-dark(rgb(16 24 40 / 4%), rgb(0 0 0 / 30%));
+  --shadow-lg:
+    0 20px 40px -12px light-dark(rgb(16 24 40 / 22%), rgb(0 0 0 / 70%)),
+    0 4px 8px -4px light-dark(rgb(16 24 40 / 6%), rgb(0 0 0 / 40%));
+  --shadow-xl:
+    0 32px 64px -16px light-dark(rgb(16 24 40 / 28%), rgb(0 0 0 / 75%)),
+    0 8px 16px -8px light-dark(rgb(16 24 40 / 8%), rgb(0 0 0 / 45%));
 
-  --focus-ring-color: rgb(48 86 211 / 55%);
+  /* Opaque, so the ring clears 3:1 on any surface; drawn as an outline so it
+     survives forced colours. */
+  --focus-ring-color: var(--accent);
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+
+  --scrim: light-dark(rgb(12 14 18 / 44%), rgb(0 0 0 / 62%));
+  --glass: color-mix(in srgb, var(--canvas) 78%, transparent);
+  --skeleton: light-dark(#eceff3, #1b1e24);
+  --skeleton-shine: light-dark(#f6f7f9, #242831);
+
+  /* Default tone for anything that reads `--tone-*` without a data-tone. */
+  --tone-fg: var(--idle-fg);
+  --tone-soft: var(--idle-soft);
+  --tone-border: var(--idle-border);
+  --tone-solid: var(--idle-solid);
+
+  /* Pre-v2 names, kept as aliases for one release so nothing breaks while
+     components move onto the roles above. */
+  --ok: var(--ok-fg);
+  --warn: var(--warn-fg);
+  --err: var(--err-fg);
+  --idle: var(--idle-fg);
+  --duration-fast: var(--dur-fast);
+  --duration-med: var(--dur-base);
+  --duration-slow: var(--dur-slow);
   --focus-ring: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring-color);
-
-  --scrim: rgb(12 14 18 / 44%);
-  --skeleton: #eceff3;
-  --skeleton-shine: #f6f7f9;
 }
 
-/* Dark values are declared twice — once for the system preference, once for
-   the explicit attribute — because plain CSS cannot share a declaration block
-   between a media query and a selector. Edit both together. */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) {
-    color-scheme: dark;
-
-    --canvas: #0b0c0f;
-    --surface: #111317;
-    --surface-raised: #171a1f;
-    --surface-sunken: #08090b;
-    --surface-hover: #181b21;
-    --surface-selected: #1a2140;
-
-    --border: #23272e;
-    --border-strong: #323843;
-
-    --text: #e8eaee;
-    --text-muted: #a3a9b4;
-    --text-subtle: #868c97;
-    --text-inverse: #0b0c0f;
-
-    --accent: #809cff;
-    --accent-hover: #9fb4ff;
-    --accent-soft: rgb(128 156 255 / 14%);
-    --accent-fg: #0b0c0f;
-
-    --ok: #3ecf8e;
-    --ok-soft: rgb(62 207 142 / 13%);
-    --warn: #f2b33d;
-    --warn-soft: rgb(242 179 61 / 13%);
-    --err: #ff7a72;
-    --err-soft: rgb(255 122 114 / 13%);
-    --idle: #949ba6;
-    --idle-soft: rgb(148 155 166 / 14%);
-
-    --aws: #ffb340;
-    --gcp: #7aa7f8;
-    --azure: #4aa3e8;
-    --docker: #5cb4f2;
-    --minikube: #ffd75e;
-
-    --code-bg: #07080a;
-
-    --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
-    --shadow-md: 0 4px 12px -2px rgb(0 0 0 / 50%);
-    --shadow-lg: 0 24px 48px -12px rgb(0 0 0 / 70%);
-
-    --focus-ring-color: rgb(128 156 255 / 70%);
-
-    --scrim: rgb(0 0 0 / 62%);
-    --skeleton: #1b1e24;
-    --skeleton-shine: #242831;
-  }
+:root[data-theme='light'] {
+  color-scheme: light;
 }
 
 :root[data-theme='dark'] {
   color-scheme: dark;
+}
 
-  --canvas: #0b0c0f;
-  --surface: #111317;
-  --surface-raised: #171a1f;
-  --surface-sunken: #08090b;
-  --surface-hover: #181b21;
-  --surface-selected: #1a2140;
+/*
+ * One tone attribute for every status surface: a component sets `data-tone`
+ * and reads `--tone-*`, and "failed" is the same red wherever it is drawn.
+ */
+[data-tone='ok'] {
+  --tone-fg: var(--ok-fg);
+  --tone-soft: var(--ok-soft);
+  --tone-border: var(--ok-border);
+  --tone-solid: var(--ok-solid);
+}
 
-  --border: #23272e;
-  --border-strong: #323843;
+[data-tone='warn'] {
+  --tone-fg: var(--warn-fg);
+  --tone-soft: var(--warn-soft);
+  --tone-border: var(--warn-border);
+  --tone-solid: var(--warn-solid);
+}
 
-  --text: #e8eaee;
-  --text-muted: #a3a9b4;
-  --text-subtle: #868c97;
-  --text-inverse: #0b0c0f;
+[data-tone='err'] {
+  --tone-fg: var(--err-fg);
+  --tone-soft: var(--err-soft);
+  --tone-border: var(--err-border);
+  --tone-solid: var(--err-solid);
+}
 
-  --accent: #809cff;
-  --accent-hover: #9fb4ff;
-  --accent-soft: rgb(128 156 255 / 14%);
-  --accent-fg: #0b0c0f;
+[data-tone='info'],
+[data-tone='accent'] {
+  --tone-fg: var(--info-fg);
+  --tone-soft: var(--info-soft);
+  --tone-border: var(--info-border);
+  --tone-solid: var(--info-solid);
+}
 
-  --ok: #3ecf8e;
-  --ok-soft: rgb(62 207 142 / 13%);
-  --warn: #f2b33d;
-  --warn-soft: rgb(242 179 61 / 13%);
-  --err: #ff7a72;
-  --err-soft: rgb(255 122 114 / 13%);
-  --idle: #949ba6;
-  --idle-soft: rgb(148 155 166 / 14%);
-
-  --aws: #ffb340;
-  --gcp: #7aa7f8;
-  --azure: #4aa3e8;
-  --docker: #5cb4f2;
-  --minikube: #ffd75e;
-
-  --code-bg: #07080a;
-
-  --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
-  --shadow-md: 0 4px 12px -2px rgb(0 0 0 / 50%);
-  --shadow-lg: 0 24px 48px -12px rgb(0 0 0 / 70%);
-
-  --focus-ring-color: rgb(128 156 255 / 70%);
-
-  --scrim: rgb(0 0 0 / 62%);
-  --skeleton: #1b1e24;
-  --skeleton-shine: #242831;
+[data-tone='idle'] {
+  --tone-fg: var(--idle-fg);
+  --tone-soft: var(--idle-soft);
+  --tone-border: var(--idle-border);
+  --tone-solid: var(--idle-solid);
 }

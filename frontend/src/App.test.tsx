@@ -253,7 +253,7 @@ describe('App', () => {
     expect(await screen.findByText('Page not found')).toBeInTheDocument()
   })
 
-  it('switches the theme and remembers the choice', async () => {
+  it('switches the theme from the theme menu and remembers the choice', async () => {
     // This environment provides no localStorage, which is also why the hook
     // guards every access to it.
     const store = new Map<string, string>()
@@ -266,15 +266,25 @@ describe('App', () => {
     renderApp()
     const user = userEvent.setup()
 
-    // With no stored choice and no matchMedia, the hook resolves to light —
+    // With no stored choice and no matchMedia, "system" resolves to light —
     // the same answer as a browser reporting no dark preference.
     expect(document.documentElement.dataset.theme).toBe('light')
 
-    await user.click(await screen.findByRole('button', { name: 'Switch to dark theme' }))
+    await user.click(await screen.findByRole('button', { name: 'Theme' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: 'Dark' }))
 
     expect(document.documentElement.dataset.theme).toBe('dark')
     expect(store.get('kubeops-theme')).toBe('dark')
-    expect(screen.getByRole('button', { name: 'Switch to light theme' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Theme' }))
+    expect(await screen.findByRole('menuitemradio', { name: 'Dark' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    )
+    await user.click(screen.getByRole('menuitemradio', { name: 'System' }))
+
+    expect(store.get('kubeops-theme')).toBe('system')
+    expect(document.documentElement.dataset.theme).toBe('light')
 
     vi.unstubAllGlobals()
   })
