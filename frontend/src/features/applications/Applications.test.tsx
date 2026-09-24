@@ -1,17 +1,8 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import App from '../../App'
+import { renderApp } from '../../test/render'
 import { buildApplication, buildResource, buildTarget, mockAPI } from '../../test/mock-api'
-
-function renderApp(route: string) {
-  return render(
-    <MemoryRouter initialEntries={[route]}>
-      <App />
-    </MemoryRouter>,
-  )
-}
 
 function onboardingRequests(fetchMock: ReturnType<typeof mockAPI>['fetchMock']) {
   return fetchMock.mock.calls
