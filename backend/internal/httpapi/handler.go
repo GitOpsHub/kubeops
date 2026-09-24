@@ -31,6 +31,7 @@ type Repository interface {
 	ListSyncRuns(context.Context, int) ([]model.SyncRun, error)
 	QueueSync(context.Context, string, string) (model.SyncRun, error)
 	GetKubespinArgoDetails(context.Context, string) (model.KubespinArgoCDDetails, error)
+	Overview(context.Context, []string) (model.OverviewStats, error)
 }
 
 type ClusterManager interface {
@@ -118,6 +119,7 @@ func newHandler(
 	mux.HandleFunc("GET /{$}", api.health)
 	mux.HandleFunc("GET /api/health", api.health)
 	mux.HandleFunc("GET /api/ready", api.ready)
+	mux.HandleFunc("GET /api/overview", api.overview)
 	mux.HandleFunc("GET /api/clusters", api.clusters)
 	mux.HandleFunc("GET /api/clusters/{id}/details", api.clusterDetails)
 	mux.HandleFunc("GET /api/clusters/{id}/argo-access", api.clusterArgoAccess)

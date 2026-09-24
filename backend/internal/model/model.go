@@ -296,3 +296,79 @@ type ApplicationOnboardingPage struct {
 	Page     int                     `json:"page"`
 	PageSize int                     `json:"pageSize"`
 }
+
+// OverviewStats is the fleet summary behind the dashboard. Every count is
+// computed in SQL so the UI no longer pages through whole collections to draw
+// a handful of tiles.
+type OverviewStats struct {
+	GeneratedAt  time.Time            `json:"generatedAt"`
+	Clusters     OverviewClusters     `json:"clusters"`
+	Applications OverviewApplications `json:"applications"`
+	SyncRuns     OverviewSyncRuns     `json:"syncRuns"`
+	Attention    []AttentionItem      `json:"attention"`
+}
+
+type OverviewClusters struct {
+	Total      int            `json:"total"`
+	ByProvider map[string]int `json:"byProvider"`
+	ByStatus   map[string]int `json:"byStatus"`
+	// Series14d is the fleet size at the end of each of the last 14 UTC days,
+	// oldest first, reconstructed from first_seen_at and removed_at.
+	Series14d []DailyCount `json:"series14d"`
+}
+
+type DailyCount struct {
+	Date  string `json:"date"`
+	Total int    `json:"total"`
+}
+
+type OverviewApplications struct {
+	Total    int             `json:"total"`
+	ByStatus map[string]int  `json:"byStatus"`
+	Targets  OverviewTargets `json:"targets"`
+}
+
+type OverviewTargets struct {
+	Total    int            `json:"total"`
+	ByHealth map[string]int `json:"byHealth"`
+	BySync   map[string]int `json:"bySync"`
+}
+
+type OverviewSyncRuns struct {
+	Last24h   SyncRunCounts `json:"last24h"`
+	Series14d []SyncRunDay  `json:"series14d"`
+	Recent    []SyncRun     `json:"recent"`
+}
+
+type SyncRunCounts struct {
+	Succeeded int `json:"succeeded"`
+	Failed    int `json:"failed"`
+	Running   int `json:"running"`
+}
+
+// SyncRunDay buckets completed runs by the UTC day they finished. The
+// percentiles cover succeeded runs only and are null on a day without one: an
+// abandoned run is failed at the stale timeout, which would otherwise dominate
+// p95.
+type SyncRunDay struct {
+	Date      string `json:"date"`
+	Succeeded int    `json:"succeeded"`
+	Failed    int    `json:"failed"`
+	P50Ms     *int64 `json:"p50Ms"`
+	P95Ms     *int64 `json:"p95Ms"`
+}
+
+const (
+	AttentionApplication = "application"
+	AttentionCluster     = "cluster"
+	AttentionSource      = "source"
+)
+
+type AttentionItem struct {
+	Kind    string `json:"kind"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Status  string `json:"status"`
+	Message string `json:"message,omitempty"`
+	Href    string `json:"href"`
+}

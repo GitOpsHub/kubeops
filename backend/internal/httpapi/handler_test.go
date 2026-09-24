@@ -31,6 +31,16 @@ type fakeRepository struct {
 	sources     []model.SourceSummary
 	kubespin    model.KubespinArgoCDDetails
 	kubespinErr error
+	overview    model.OverviewStats
+	overviewErr error
+	// overviewSources records the scope the handler asked for; nil means the
+	// handler never called Overview.
+	overviewSources []string
+}
+
+func (f *fakeRepository) Overview(_ context.Context, sourceIDs []string) (model.OverviewStats, error) {
+	f.overviewSources = sourceIDs
+	return f.overview, f.overviewErr
 }
 
 func (f *fakeRepository) Ready(context.Context) error { return f.readyErr }
