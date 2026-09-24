@@ -1,0 +1,138 @@
+/*
+ * Layout pieces shared by the list pages: the framed panel a table sits in,
+ * its toolbar, and removable filter chips.
+ */
+
+.panel {
+  min-width: 0;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.panel-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-toolbar-search {
+  display: flex;
+  flex: 1 1 260px;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+
+.panel-toolbar-search .search-input {
+  flex: 1 1 220px;
+  max-width: 360px;
+}
+
+.panel-subheader {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  min-height: 44px;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-subheader h2 {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  font-size: var(--text-sm);
+}
+
+.panel-subheader h2 span {
+  color: var(--text-subtle);
+  font-family: var(--font-sans);
+  font-size: var(--text-2xs);
+  font-weight: 400;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.chip {
+  display: inline-flex;
+  gap: var(--space-1);
+  align-items: center;
+  height: 26px;
+  padding: 0 2px 0 var(--space-2);
+  color: var(--text-muted);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-2xs);
+}
+
+.chip strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.chip-remove {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  color: var(--text-muted);
+  background: none;
+  border: 0;
+  border-radius: 50%;
+  font-size: var(--text-sm);
+  line-height: 1;
+}
+
+.chip-remove:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+/* Label-over-value facts, used by drawers and detail tabs. */
+.fact-grid {
+  display: grid;
+  gap: var(--space-3) var(--space-4);
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+
+.fact-grid > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.fact-grid dt {
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+}
+
+.fact-grid dd {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+
+@media (max-width: 720px) {
+  .panel-toolbar-search {
+    justify-content: stretch;
+  }
+
+  .panel-toolbar-search .search-input {
+    max-width: none;
+  }
+}

@@ -1,0 +1,236 @@
+/* The desired-versus-live manifest diff. */
+
+.manifests-header {
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+}
+
+.manifests-deployment {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.manifests-deployment small {
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+}
+
+.manifests-targets {
+  padding: var(--space-3) var(--space-5) 0;
+}
+
+.manifests-document {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  margin: var(--space-3) var(--space-5) var(--space-4);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.manifests-toolbar {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.manifests-strip {
+  display: flex;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.manifests-strip button {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--space-2);
+  align-items: center;
+  max-width: 220px;
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-2);
+  color: var(--text-muted);
+  text-align: left;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+}
+
+.manifests-strip button:hover {
+  background: var(--surface-hover);
+}
+
+.manifests-strip button.is-active {
+  color: var(--text);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.manifests-strip svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.manifests-strip small {
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+}
+
+.manifests-strip strong {
+  font-size: var(--text-2xs);
+  font-weight: 500;
+}
+
+.manifests-toolbar-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.manifest-filter.is-active {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+
+.manifests-document .code-pane-state {
+  flex: 1;
+}
+
+.manifest-diff {
+  display: grid;
+  flex: 1;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.manifest-diff-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid var(--border);
+}
+
+.manifest-diff-columns > div {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+}
+
+.manifest-diff-columns > div + div {
+  border-left: 1px solid var(--border);
+}
+
+.manifest-diff-columns strong {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manifest-diff-source {
+  flex: 0 0 auto;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.manifest-diff-source--desired {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.manifest-diff-source--live {
+  color: var(--ok);
+  background: var(--ok-soft);
+}
+
+.manifest-diff-summary {
+  display: flex;
+  gap: var(--space-4);
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+  padding: var(--space-2) var(--space-4);
+  color: var(--text-subtle);
+  background: var(--surface-sunken);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-2xs);
+}
+
+.manifest-diff-clean {
+  color: var(--ok);
+  font-weight: 700;
+}
+
+.manifest-diff-code {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: 1.65;
+}
+
+.manifest-diff-row {
+  display: grid;
+  grid-template-columns: 44px minmax(360px, 1fr) 44px minmax(360px, 1fr);
+  min-width: 808px;
+}
+
+.manifest-diff-row:hover {
+  background: var(--surface-hover);
+}
+
+.manifest-diff-line {
+  padding: 0 var(--space-2);
+  color: var(--text-subtle);
+  text-align: right;
+  user-select: none;
+  background: var(--surface-sunken);
+  border-right: 1px solid var(--border);
+}
+
+.manifest-diff-cell {
+  min-height: 18px;
+  padding: 0 var(--space-3);
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+.manifest-diff-cell:nth-child(4) {
+  border-left: 1px solid var(--border);
+}
+
+.manifest-diff-row--changed .manifest-diff-cell:nth-child(2),
+.manifest-diff-row--removed .manifest-diff-cell:nth-child(2) {
+  color: var(--err);
+  background: var(--err-soft);
+}
+
+.manifest-diff-row--changed .manifest-diff-cell:nth-child(4),
+.manifest-diff-row--added .manifest-diff-cell:nth-child(4) {
+  color: var(--ok);
+  background: var(--ok-soft);
+}

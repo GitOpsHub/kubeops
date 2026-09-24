@@ -1,0 +1,148 @@
+.cluster-sheet-header {
+  border-bottom: 1px solid var(--border);
+}
+
+.cluster-sheet-logo {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+}
+
+.cluster-sheet-header .dialog-title-group {
+  flex: 1;
+}
+
+.cluster-sheet-body {
+  gap: var(--space-5);
+  padding-top: var(--space-5);
+}
+
+.sheet-section {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.sheet-section h3 {
+  font-size: var(--text-sm);
+}
+
+.sheet-section-heading {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sheet-empty {
+  padding: var(--space-3);
+  color: var(--text-muted);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+}
+
+.node-pool-list {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.node-pool {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.node-pool-title {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.node-pool-facts {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.node-pool-facts dt {
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+}
+
+.node-pool-facts dd {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.node-pool-scale {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-end;
+}
+
+.node-pool-scale .field {
+  width: 140px;
+}
+
+.node-pool-note {
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+}
+
+.scale-message {
+  padding: var(--space-2) var(--space-3);
+  color: var(--text);
+  background: var(--accent-soft);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+}
+
+.scale-delta {
+  display: flex;
+  gap: var(--space-3);
+  align-items: baseline;
+  font-family: var(--font-display);
+  font-size: var(--text-2xl);
+}
+
+.scale-delta i {
+  color: var(--text-subtle);
+  font-style: normal;
+}
+
+.scale-delta strong {
+  color: var(--accent);
+}
+
+.argo-access {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text-muted);
+}
+
+.resource-id {
+  display: grid;
+  gap: var(--space-1);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.resource-id span {
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+}
+
+.resource-id code {
+  overflow-wrap: anywhere;
+  font-size: var(--text-2xs);
+}
+
+.cluster-detail-modal .btn svg {
+  stroke-width: 1.8;
+}

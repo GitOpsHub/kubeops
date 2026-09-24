@@ -1,4 +1,5 @@
 import { vi } from 'vitest'
+import type { CloudSource, Cluster, SyncRun } from '../api/inventory'
 import type {
   ApplicationDeployment,
   ApplicationOnboarding,
@@ -70,6 +71,14 @@ export type MockState = {
   /** Refs the UI asked to delete, in order. */
   deletedResources: ResourceRef[]
   scaledReplicas: number | null
+  /** Inventory the cluster, source, and sync-run routes serve. */
+  clusters: Cluster[]
+  sources: CloudSource[]
+  syncRuns: SyncRun[]
+  /** Source IDs a manual sync was requested for, in order. */
+  syncedSources: string[]
+  /** Makes `POST /cloud-sources/:id/sync` fail with this message. */
+  syncError: string | null
 }
 
 export function buildResource(overrides: Partial<ResourceNode> = {}): ResourceNode {
@@ -99,10 +108,14 @@ export function mockAPI(initial: Partial<MockState> = {}) {
     clusterStatus: initial.clusterStatus ?? 'active',
     resources: initial.resources ?? [],
     manifest: initial.manifest ?? '{"kind":"Deployment"}',
-    desiredManifest:
-      initial.desiredManifest ?? initial.manifest ?? '{"kind":"Deployment"}',
+    desiredManifest: initial.desiredManifest ?? initial.manifest ?? '{"kind":"Deployment"}',
     deletedResources: [],
     scaledReplicas: initial.scaledReplicas ?? null,
+    clusters: initial.clusters ?? [buildCluster(initial.clusterStatus ?? 'active')],
+    sources: initial.sources ?? defaultSources(),
+    syncRuns: initial.syncRuns ?? [buildSyncRun()],
+    syncedSources: [],
+    syncError: initial.syncError ?? null,
   }
 
   const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (request, init) => {
@@ -205,8 +218,7 @@ export function mockAPI(initial: Partial<MockState> = {}) {
         if (status ? item.status !== status : item.status === 'offboarded') return false
         if (!search) return true
         return (
-          item.name.toLowerCase().includes(search) ||
-          item.namespace.toLowerCase().includes(search)
+          item.name.toLowerCase().includes(search) || item.namespace.toLowerCase().includes(search)
         )
       })
       return Response.json({
@@ -236,9 +248,7 @@ export function mockAPI(initial: Partial<MockState> = {}) {
       return Response.json(found)
     }
 
-    const lifecycleMatch = path.match(
-      /^\/application-onboardings\/([^/]+)\/(sync|offboard)$/,
-    )
+    const lifecycleMatch = path.match(/^\/application-onboardings\/([^/]+)\/(sync|offboard)$/)
     if (lifecycleMatch && init?.method === 'POST') {
       const id = decodeURIComponent(lifecycleMatch[1])
       const found = state.applications.find((item) => item.id === id)
@@ -252,9 +262,7 @@ export function mockAPI(initial: Partial<MockState> = {}) {
         status: offboard ? 'offboarded' : 'progressing',
         syncStatus: offboard ? 'Unknown' : 'OutOfSync',
         healthStatus: offboard ? 'Missing' : 'Progressing',
-        message: offboard
-          ? 'Removed from the cluster; GitHub values were preserved'
-          : '',
+        message: offboard ? 'Removed from the cluster; GitHub values were preserved' : '',
       }))
       return Response.json(found)
     }
@@ -327,80 +335,50 @@ export function mockAPI(initial: Partial<MockState> = {}) {
     }
 
     if (path === '/clusters') {
+      const page = Number(query.get('page') ?? '1')
+      const pageSize = Number(query.get('pageSize') ?? '25')
+      const provider = query.get('provider')
+      const search = (query.get('search') ?? '').toLowerCase()
+      const matched = state.clusters.filter(
+        (item) =>
+          (!provider || item.provider === provider) &&
+          (!search || item.name.toLowerCase().includes(search)),
+      )
       return Response.json({
-        items: [buildCluster(state.clusterStatus)],
-        total: 1,
-        page: 1,
-        pageSize: 25,
+        items: matched
+          .slice((page - 1) * pageSize, page * pageSize)
+          .map((item) =>
+            item.id === 'cluster-1' ? { ...item, status: state.clusterStatus } : item,
+          ),
+        total: matched.length,
+        page,
+        pageSize,
       })
     }
 
     if (path === '/cloud-sources') {
-      return Response.json({
-        items: [
-          {
-            id: 'aws-platform',
-            provider: 'aws',
-            name: 'AWS Platform',
-            scopeId: '123',
-            regions: ['us-east-1'],
-            enabled: true,
-            clusterCount: 1,
-            lastSyncStatus: 'succeeded',
-            lastSyncAt: timestamp,
-          },
-          {
-            id: 'gcp-platform',
-            provider: 'gcp',
-            name: 'Google Cloud Platform',
-            scopeId: 'platform-project',
-            regions: ['-'],
-            enabled: true,
-            clusterCount: 2,
-            lastSyncStatus: 'succeeded',
-            lastSyncAt: timestamp,
-          },
-          {
-            id: 'azure-platform',
-            provider: 'azure',
-            name: 'Azure Platform',
-            scopeId: 'subscription',
-            regions: ['*'],
-            enabled: true,
-            clusterCount: 3,
-            lastSyncStatus: 'succeeded',
-            lastSyncAt: timestamp,
-          },
-        ],
-      })
+      return Response.json({ items: state.sources })
     }
 
     if (path === '/sync-runs') {
-      return Response.json({
-        items: [
-          {
-            id: 'run-1',
-            sourceId: 'aws-platform',
-            sourceName: 'AWS Platform',
-            provider: 'aws',
-            trigger: 'scheduled',
-            status: 'succeeded',
-            discoveredCount: 1,
-            changedCount: 0,
-            removedCount: 0,
-            queuedAt: timestamp,
-            startedAt: timestamp,
-            completedAt: timestamp,
-          },
-        ],
-      })
+      return Response.json({ items: state.syncRuns })
     }
 
-    if (path === '/cloud-sources/aws-platform/sync') {
-      return Response.json(
-        { id: 'run-2', sourceId: 'aws-platform', trigger: 'manual', status: 'queued' },
-        { status: 202 },
-      )
+    const sourceSyncMatch = path.match(/^\/cloud-sources\/([^/]+)\/sync$/)
+    if (sourceSyncMatch && init?.method === 'POST') {
+      const sourceId = decodeURIComponent(sourceSyncMatch[1])
+      if (state.syncError) return Response.json({ error: state.syncError }, { status: 409 })
+      state.syncedSources.push(sourceId)
+      const source = state.sources.find((item) => item.id === sourceId)
+      const run = buildSyncRun({
+        id: `run-${state.syncRuns.length + 1}`,
+        sourceId,
+        sourceName: source?.name ?? sourceId,
+        trigger: 'manual',
+        status: 'queued',
+      })
+      state.syncRuns = [run, ...state.syncRuns]
+      return Response.json(run, { status: 202 })
     }
 
     return Response.json({ error: 'not found' }, { status: 404 })
@@ -409,7 +387,62 @@ export function mockAPI(initial: Partial<MockState> = {}) {
   return { fetchMock, state }
 }
 
-function buildCluster(status = 'active') {
+export function buildSyncRun(overrides: Partial<SyncRun> = {}): SyncRun {
+  return {
+    id: 'run-1',
+    sourceId: 'aws-platform',
+    sourceName: 'AWS Platform',
+    provider: 'aws',
+    trigger: 'scheduled',
+    status: 'succeeded',
+    discoveredCount: 1,
+    changedCount: 0,
+    removedCount: 0,
+    queuedAt: timestamp,
+    startedAt: timestamp,
+    completedAt: timestamp,
+    ...overrides,
+  }
+}
+
+export function buildSource(overrides: Partial<CloudSource> = {}): CloudSource {
+  return {
+    id: 'aws-platform',
+    provider: 'aws',
+    name: 'AWS Platform',
+    scopeId: '123',
+    regions: ['us-east-1'],
+    enabled: true,
+    clusterCount: 1,
+    lastSyncStatus: 'succeeded',
+    lastSyncAt: timestamp,
+    ...overrides,
+  }
+}
+
+function defaultSources(): CloudSource[] {
+  return [
+    buildSource(),
+    buildSource({
+      id: 'gcp-platform',
+      provider: 'gcp',
+      name: 'Google Cloud Platform',
+      scopeId: 'platform-project',
+      regions: ['-'],
+      clusterCount: 2,
+    }),
+    buildSource({
+      id: 'azure-platform',
+      provider: 'azure',
+      name: 'Azure Platform',
+      scopeId: 'subscription',
+      regions: ['*'],
+      clusterCount: 3,
+    }),
+  ]
+}
+
+export function buildCluster(status = 'active', overrides: Partial<Cluster> = {}): Cluster {
   return {
     id: 'cluster-1',
     sourceId: 'aws-platform',
@@ -427,5 +460,6 @@ function buildCluster(status = 'active') {
     lastSeenAt: timestamp,
     updatedAt: timestamp,
     removedAt: null,
+    ...overrides,
   }
 }

@@ -1,0 +1,153 @@
+/* The application lifecycle as a dated log, newest first, grouped by day. */
+
+.timeline {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5) var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.timeline-day {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.timeline-day-label {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: var(--space-2) 0;
+  color: var(--text-subtle);
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.timeline-day ul {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timeline-entry {
+  --timeline-tone: var(--idle);
+  position: relative;
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: start;
+  padding-bottom: var(--space-4);
+}
+
+.timeline-entry:last-child {
+  padding-bottom: 0;
+}
+
+.timeline-entry--ok {
+  --timeline-tone: var(--ok);
+}
+
+.timeline-entry--warn {
+  --timeline-tone: var(--warn);
+}
+
+.timeline-entry--err {
+  --timeline-tone: var(--err);
+}
+
+.timeline-marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--timeline-tone);
+  background: color-mix(in srgb, var(--timeline-tone) 12%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--timeline-tone) 28%, transparent);
+  border-radius: 50%;
+}
+
+.timeline-marker svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
+}
+
+/* The connector runs between markers, so it is drawn on every entry but the
+   last one. */
+.timeline-entry:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  top: 30px;
+  bottom: 2px;
+  left: 13px;
+  width: 1px;
+  background: var(--border);
+}
+
+.timeline-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding-top: 3px;
+}
+
+.timeline-headline {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.timeline-entry strong {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.timeline-meta {
+  padding: 1px 7px;
+  color: var(--text-subtle);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+
+.timeline-headline a {
+  color: var(--accent);
+  font-size: var(--text-2xs);
+  text-decoration: none;
+}
+
+.timeline-headline a:hover {
+  text-decoration: underline;
+}
+
+.timeline-detail {
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.timeline-when {
+  padding-top: 4px;
+  color: var(--text-subtle);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  white-space: nowrap;
+}
+
+.timeline-when--pending {
+  color: var(--warn);
+}

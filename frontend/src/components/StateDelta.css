@@ -1,0 +1,97 @@
+/*
+ * Argo CD's two axes as the two ends of one reconciliation loop: solid when it
+ * has closed, marching while it converges, broken when the ends came apart.
+ */
+.state-delta {
+  --tone: var(--idle);
+
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  min-width: 0;
+  line-height: 1;
+}
+
+.state-delta--converged {
+  --tone: var(--ok);
+}
+
+.state-delta--reconciling {
+  --tone: var(--warn);
+}
+
+.state-delta--diverged {
+  --tone: var(--err);
+}
+
+.state-delta-label {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.state-delta-rail {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.state-delta-node {
+  width: 7px;
+  height: 7px;
+  background: var(--tone);
+  border: 1.5px solid var(--tone);
+  border-radius: 50%;
+}
+
+/* Hollow reads as "not there yet". */
+.state-delta-node--pending {
+  background: transparent;
+}
+
+.state-delta-track {
+  width: 20px;
+  height: 2px;
+  background: var(--tone);
+}
+
+.state-delta--reconciling .state-delta-track {
+  background: repeating-linear-gradient(90deg, var(--tone) 0 3px, transparent 3px 6px);
+  background-size: 6px 2px;
+  animation: delta-march 700ms linear infinite;
+}
+
+.state-delta--diverged .state-delta-track {
+  background: linear-gradient(
+    90deg,
+    var(--tone) 0 6px,
+    transparent 6px 14px,
+    var(--tone) 14px 20px
+  );
+}
+
+@keyframes delta-march {
+  to {
+    background-position: 6px 0;
+  }
+}
+
+.delta-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+  align-items: center;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.delta-legend > span {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+}

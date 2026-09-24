@@ -8,6 +8,7 @@
  */
 
 import { deltaTone, normalise } from '../lib/status'
+import './StateDelta.css'
 
 type Props = {
   syncStatus: string

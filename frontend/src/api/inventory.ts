@@ -1,3 +1,5 @@
+import { request } from './client'
+
 export type Provider = 'aws' | 'gcp' | 'azure' | 'docker' | 'minikube'
 
 export type Cluster = {
@@ -37,7 +39,7 @@ export type SyncRun = {
   sourceId: string
   sourceName: string
   provider: Provider
-  trigger: 'startup' | 'scheduled' | 'manual'
+  trigger: 'startup' | 'scheduled' | 'manual' | 'cron'
   status: 'queued' | 'running' | 'succeeded' | 'failed'
   discoveredCount: number
   changedCount: number
@@ -140,17 +142,6 @@ export type ScaleResult = {
   desiredCount: number
   status: 'accepted' | 'unchanged'
   providerOperationId?: string
-}
-
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api'
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${apiBaseUrl}${path}`, init)
-  if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as { error?: string }
-    throw new Error(body.error || `Request failed with status ${response.status}`)
-  }
-  return response.json() as Promise<T>
 }
 
 export function getClusters(filters: ClusterFilters, signal?: AbortSignal) {

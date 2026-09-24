@@ -1,0 +1,159 @@
+/* Scrolls sideways inside its own frame so a wide table never widens the page. */
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--text-sm);
+}
+
+.data-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 36px;
+  padding: 0 var(--space-4);
+  color: var(--text-subtle);
+  background: var(--surface-sunken);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.data-table td {
+  height: 48px;
+  padding: var(--space-2) var(--space-4);
+  vertical-align: middle;
+  border-bottom: 1px solid var(--border);
+}
+
+.data-table tbody tr:last-child > td {
+  border-bottom: 0;
+}
+
+.data-table .is-end {
+  text-align: right;
+}
+
+.data-table tbody tr {
+  transition: background var(--duration-fast);
+}
+
+.data-table tbody tr:hover > td {
+  background: var(--surface-hover);
+}
+
+.data-table tr.is-clickable {
+  cursor: pointer;
+}
+
+/* The row ring is drawn inset so it is not clipped by the scroll frame. */
+.data-table tr:focus-visible {
+  box-shadow: none;
+}
+
+.data-table tr:focus-visible > td {
+  background: var(--surface-selected);
+  box-shadow:
+    inset 0 2px 0 var(--focus-ring-color),
+    inset 0 -2px 0 var(--focus-ring-color);
+}
+
+.data-table tr:focus-visible > td:first-child {
+  box-shadow:
+    inset 2px 2px 0 var(--focus-ring-color),
+    inset 0 -2px 0 var(--focus-ring-color);
+}
+
+.data-table tr:focus-visible > td:last-child {
+  box-shadow:
+    inset -2px 2px 0 var(--focus-ring-color),
+    inset 0 -2px 0 var(--focus-ring-color);
+}
+
+.column-sort {
+  display: inline-flex;
+  gap: var(--space-1);
+  align-items: center;
+  margin-left: -4px;
+  padding: 2px 4px;
+  color: inherit;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-xs);
+  font: inherit;
+}
+
+.column-sort:hover {
+  color: var(--text);
+}
+
+.sort-caret {
+  width: 8px;
+  height: 12px;
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+
+.sort-caret .is-on {
+  stroke: var(--accent);
+}
+
+/* Cell content helpers shared by every table. */
+.cell-stack {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cell-stack > small {
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+}
+
+.cell-muted {
+  color: var(--text-muted);
+}
+
+.cell-numeric {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Pagination footer under a table. */
+.table-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-xs);
+}
+
+.table-footer-controls {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.table-footer-controls label {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.table-footer .select {
+  min-height: 30px;
+}

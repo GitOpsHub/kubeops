@@ -1,0 +1,72 @@
+.status-badge {
+  --tone: var(--idle);
+  --tone-soft: var(--idle-soft);
+
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  height: 22px;
+  padding: 0 var(--space-2);
+  color: var(--tone);
+  background: var(--tone-soft);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.status-badge::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  background: currentcolor;
+  border-radius: 50%;
+}
+
+.status-badge--ok {
+  --tone: var(--ok);
+  --tone-soft: var(--ok-soft);
+}
+
+.status-badge--warn {
+  --tone: var(--warn);
+  --tone-soft: var(--warn-soft);
+}
+
+.status-badge--err {
+  --tone: var(--err);
+  --tone-soft: var(--err-soft);
+}
+
+.status-badge--accent {
+  --tone: var(--accent);
+  --tone-soft: var(--accent-soft);
+}
+
+.status-badge--pulse::before {
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  height: 20px;
+  padding: 0 6px;
+  overflow: hidden;
+  color: var(--text-muted);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag--mono {
+  font-family: var(--font-mono);
+}

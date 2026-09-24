@@ -1,16 +1,7 @@
 /*
- * Style entry point. Import order is load-bearing: tokens define the
- * variables every later file reads, base sets element defaults, and the
- * page files layer on top without raising specificity.
+ * Global styles only: tokens, element defaults, and the shared list-page
+ * layout. Every component and page imports its own stylesheet.
  */
 @import './styles/tokens.css';
 @import './styles/base.css';
-@import './styles/components.css';
-@import './styles/shell.css';
-@import './styles/data-table.css';
-@import './styles/resources.css';
-@import './styles/fleet.css';
-@import './styles/applications.css';
-@import './styles/drawer.css';
-@import './styles/forms.css';
-@import './styles/responsive.css';
+@import './styles/layout.css';

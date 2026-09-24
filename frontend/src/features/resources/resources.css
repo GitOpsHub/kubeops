@@ -1,0 +1,204 @@
+.resource-explorer,
+.resource-loading {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.resource-toolbar {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.resource-kind {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 var(--space-2);
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: var(--radius-xs);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+}
+
+.resource-name {
+  font-weight: 500;
+}
+
+.resource-kind-filter {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.resource-kind-filter .select {
+  min-height: 30px;
+}
+
+.btn.resource-delete:hover:not(:disabled) {
+  color: var(--err);
+  background: var(--err-soft);
+}
+
+/* Code panes: live YAML and pod logs. Dark in both themes, like a terminal. */
+
+.code-pane,
+.pod-logs-output {
+  width: 100%;
+  margin: 0;
+  padding: var(--space-4) var(--space-5);
+  overflow: auto;
+  color: var(--code-fg);
+  background: var(--code-bg);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: 1.65;
+  tab-size: 2;
+}
+
+.code-pane {
+  height: 100%;
+  white-space: pre;
+}
+
+.code-pane-state {
+  display: grid;
+  gap: var(--space-2);
+  align-content: start;
+  height: 100%;
+  padding: var(--space-5);
+  color: var(--text-muted);
+  background: var(--surface-sunken);
+}
+
+.code-pane-state--error {
+  color: var(--err);
+}
+
+/* Resource YAML modal ------------------------------------------------------ */
+
+.resource-modal {
+  height: min(760px, calc(100vh - 48px));
+}
+
+.resource-modal-title {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  min-width: 0;
+}
+
+.resource-mark {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: var(--radius-md);
+}
+
+.resource-mark svg {
+  width: 20px;
+  height: 20px;
+}
+
+.resource-modal-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  padding: 0 var(--space-5) var(--space-3);
+}
+
+.resource-modal-body {
+  flex: 1;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+}
+
+.resource-modal .dialog-footer {
+  justify-content: space-between;
+}
+
+/* Pod logs ------------------------------------------------------------------ */
+
+.pod-logs-modal .dialog-header {
+  align-items: center;
+}
+
+.pod-logs-state {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: var(--space-2);
+  align-items: center;
+  height: 26px;
+  padding: 0 var(--space-3);
+  color: var(--text-muted);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+}
+
+.pod-logs-state i {
+  width: 7px;
+  height: 7px;
+  background: var(--text-subtle);
+  border-radius: 50%;
+}
+
+.pod-logs-state--live {
+  color: var(--ok);
+  background: var(--ok-soft);
+}
+
+.pod-logs-state--live i {
+  background: var(--ok);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.pod-logs-state--error {
+  color: var(--err);
+  background: var(--err-soft);
+}
+
+.pod-logs-state--error i {
+  background: var(--err);
+}
+
+.pod-logs-output-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: var(--code-bg);
+}
+
+.pod-logs-output {
+  height: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.pod-logs-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  padding: var(--space-5);
+  color: var(--code-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-align: center;
+}
+
+.pod-logs-overlay--error {
+  color: var(--code-err);
+}

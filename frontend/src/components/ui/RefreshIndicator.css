@@ -1,0 +1,28 @@
+.refresh-indicator {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+  white-space: nowrap;
+}
+
+.refresh-indicator-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--ok);
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px var(--ok-soft);
+}
+
+.refresh-indicator-spinner {
+  width: 10px;
+  height: 10px;
+  color: var(--accent);
+  border-width: 1.5px;
+}
+
+.refresh-indicator-dot--failed {
+  background: var(--err);
+  box-shadow: 0 0 0 3px var(--err-soft);
+}

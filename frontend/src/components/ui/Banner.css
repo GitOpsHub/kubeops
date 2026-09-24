@@ -1,0 +1,65 @@
+.banner {
+  --tone: var(--accent);
+  --tone-soft: var(--accent-soft);
+
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  padding: var(--space-3) var(--space-4);
+  background: var(--tone-soft);
+  border: 1px solid color-mix(in srgb, var(--tone) 28%, transparent);
+  border-radius: var(--radius-md);
+}
+
+.banner--error {
+  --tone: var(--err);
+  --tone-soft: var(--err-soft);
+}
+
+.banner--warn {
+  --tone: var(--warn);
+  --tone-soft: var(--warn-soft);
+}
+
+.banner--success {
+  --tone: var(--ok);
+  --tone-soft: var(--ok-soft);
+}
+
+.banner-icon {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  fill: none;
+  stroke: var(--tone);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
+}
+
+.banner-copy {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+  font-size: var(--text-sm);
+}
+
+.banner-copy strong {
+  color: var(--tone);
+  font-weight: 600;
+}
+
+.banner-copy span {
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+}
+
+.banner-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--space-3);
+  align-self: center;
+  font-size: var(--text-sm);
+}

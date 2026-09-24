@@ -1,0 +1,22 @@
+.search-input {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.search-input svg {
+  position: absolute;
+  left: 10px;
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: var(--text-subtle);
+  stroke-linecap: round;
+  stroke-width: 1.6;
+  pointer-events: none;
+}
+
+.search-input .input {
+  padding-left: 32px;
+}

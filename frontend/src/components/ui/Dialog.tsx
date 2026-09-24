@@ -9,22 +9,25 @@
  * inside the cluster drawer's confirmation closed the whole drawer, because both
  * listeners fired on the same event.
  *
- * Radix supplies exactly that behaviour and nothing visual, so the existing
- * class names still carry the entire design. Parts are exposed rather than
- * wrapped in props: the dialogs here have real markup in their headers, and
- * `asChild` lets that markup stay as it is while Radix owns the semantics.
+ * Radix supplies exactly that behaviour and nothing visual; Dialog.css carries
+ * the look. Parts are exposed rather than wrapped in props: the dialogs here
+ * have real markup in their headers, and `asChild` lets that markup stay as it
+ * is while Radix owns the semantics.
  */
 
 import * as RadixDialog from '@radix-ui/react-dialog'
 import { useEffect, useRef, type ComponentPropsWithoutRef, type ReactNode } from 'react'
+import './Dialog.css'
 
 type DialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
-  /** Existing backdrop class, e.g. `confirmation-backdrop`. */
-  backdropClassName: string
-  /** Existing panel class, e.g. `offboard-confirmation`. */
-  className: string
+  /** Extra panel class for dialog-specific layout. */
+  className?: string
+  /** Panel width: sm for confirmations, xl for code and diff viewers. */
+  size?: 'sm' | 'md' | 'lg' | 'xl'
+  /** `sheet` slides in from the right edge, `drawer` from the left. */
+  variant?: 'center' | 'sheet' | 'drawer'
   /** Destructive confirmations announce as alertdialog. */
   alert?: boolean
   /**
@@ -40,8 +43,9 @@ type DialogProps = {
 export function Dialog({
   open,
   onOpenChange,
-  backdropClassName,
-  className,
+  className = '',
+  size = 'md',
+  variant = 'center',
   alert = false,
   dismissible = true,
   describedBy,
@@ -68,21 +72,14 @@ export function Dialog({
   return (
     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
       <RadixDialog.Portal>
-        {/* Content is nested INSIDE Overlay, not a sibling of it.
-
-            This is deliberate and load-bearing. Every backdrop class in this app
-            centres its panel with `display: grid; place-items: center` on the
-            backdrop itself (drawer.css:405, drawer.css:3, resources.css:432).
-            Radix's canonical layout puts Overlay and Content side by side, which
-            would leave Content with no positioned parent and render all seven
-            dialogs in the top-left corner. Nesting keeps the existing CSS as the
-            only thing doing layout, so not one rule had to change.
-
-            Outside-click still works: DismissableLayer tests containment against
-            the Content node, so a click landing on the Overlay is still outside. */}
-        <RadixDialog.Overlay className={backdropClassName}>
+        {/* Content is nested inside Overlay rather than beside it, so the
+            backdrop can lay the panel out (centred, or pinned right as a
+            sheet) with plain CSS. Outside-click still works: Radix tests
+            containment against the Content node, so a click on the Overlay is
+            still outside. */}
+        <RadixDialog.Overlay className={`dialog-backdrop dialog-backdrop--${variant}`}>
           <RadixDialog.Content
-            className={className}
+            className={`dialog dialog--${size} dialog--${variant} ${className}`.trim()}
             // Spread, never `role={alert ? 'alertdialog' : undefined}`: Radix sets
             // role="dialog" and then spreads our props over it, so passing an
             // explicit undefined deletes the role instead of leaving the default.
@@ -115,9 +112,7 @@ export function DialogTitle(props: ComponentPropsWithoutRef<typeof RadixDialog.T
   return <RadixDialog.Title {...props} />
 }
 
-export function DialogDescription(
-  props: ComponentPropsWithoutRef<typeof RadixDialog.Description>,
-) {
+export function DialogDescription(props: ComponentPropsWithoutRef<typeof RadixDialog.Description>) {
   return <RadixDialog.Description {...props} />
 }
 

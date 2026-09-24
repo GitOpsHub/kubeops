@@ -1,0 +1,73 @@
+.stat-card {
+  --tone: var(--text);
+
+  display: grid;
+  gap: var(--space-1);
+  align-content: start;
+  min-width: 0;
+  padding: var(--space-4);
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  text-decoration: none;
+}
+
+.stat-card--link {
+  transition:
+    border-color var(--duration-fast),
+    box-shadow var(--duration-fast);
+}
+
+.stat-card--link:hover {
+  color: inherit;
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
+}
+
+.stat-card--ok {
+  --tone: var(--ok);
+}
+
+.stat-card--warn {
+  --tone: var(--warn);
+}
+
+.stat-card--err {
+  --tone: var(--err);
+}
+
+.stat-card-label {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+
+.stat-card-icon {
+  display: inline-flex;
+  color: var(--text-subtle);
+}
+
+.stat-card-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.stat-card-value {
+  color: var(--tone);
+  font-family: var(--font-display);
+  font-size: 1.75rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.stat-card-hint {
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+}
