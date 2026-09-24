@@ -100,6 +100,8 @@ func (api *API) syncApplicationOnboarding(w http.ResponseWriter, r *http.Request
 	var validationError onboarding.ValidationError
 	switch {
 	case err == nil:
+		kind, params := syncOperation(options)
+		api.recordOperation(r, id, "", kind, params, operationSucceeded)
 		writeJSON(w, http.StatusOK, item)
 	case aborted(r):
 	case errors.Is(err, pgx.ErrNoRows):
@@ -108,6 +110,8 @@ func (api *API) syncApplicationOnboarding(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusUnprocessableEntity, validationError.Message)
 	case errors.Is(err, onboarding.ErrDryRunFailed):
 		slog.Error("dry-run sync application onboarding", "onboarding", id, "error", err)
+		kind, params := syncOperation(options)
+		api.recordOperation(r, id, "", kind, params, operationFailed)
 		writeError(w, http.StatusBadGateway, "Argo CD could not start the dry run on every target")
 	default:
 		slog.Error("sync application onboarding", "onboarding", id, "error", err)
@@ -127,6 +131,7 @@ func (api *API) terminateApplicationOperation(w http.ResponseWriter, r *http.Req
 	err := api.onboarder.TerminateOperation(r.Context(), id, targetID)
 	switch {
 	case err == nil:
+		api.recordOperation(r, id, targetID, "terminate", nil, operationSucceeded)
 		w.WriteHeader(http.StatusNoContent)
 	case errors.Is(err, onboarding.ErrNoOperation):
 		writeError(w, http.StatusConflict, "no sync operation is in progress")
@@ -160,6 +165,9 @@ func (api *API) rollbackApplicationOnboarding(w http.ResponseWriter, r *http.Req
 	var externalError onboarding.ExternalError
 	switch {
 	case err == nil:
+		api.recordOperation(r, id, "", "rollback",
+			map[string]any{"commitSha": request.CommitSHA, "valuesCommitSha": item.ValuesCommitSHA},
+			operationSucceeded)
 		writeJSON(w, http.StatusOK, item)
 	case aborted(r):
 	case errors.Is(err, pgx.ErrNoRows):
@@ -168,6 +176,7 @@ func (api *API) rollbackApplicationOnboarding(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusUnprocessableEntity, validationError.Message)
 	case errors.As(err, &externalError):
 		slog.Error("roll back application through GitHub", "onboarding", id, "sha", request.CommitSHA, "error", externalError)
+		api.recordOperation(r, id, "", "rollback", map[string]any{"commitSha": request.CommitSHA}, operationFailed)
 		writeError(w, http.StatusBadGateway, "GitHub could not roll back application values")
 	default:
 		slog.Error("roll back application onboarding", "onboarding", id, "sha", request.CommitSHA, "error", err)

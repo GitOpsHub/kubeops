@@ -38,8 +38,24 @@ type fakeRepository struct {
 	overviewSources []string
 	runLimit        int
 	runSources      []string
+	operations      []model.ApplicationOperation
+	recordErr       error
+	operationsID    string
+	operationsLimit int
 }
 
+func (f *fakeRepository) RecordApplicationOperation(_ context.Context, operation model.ApplicationOperation) error {
+	f.operations = append(f.operations, operation)
+	return f.recordErr
+}
+func (f *fakeRepository) ListApplicationOperations(
+	_ context.Context,
+	onboardingID string,
+	limit int,
+) ([]model.ApplicationOperation, error) {
+	f.operationsID, f.operationsLimit = onboardingID, limit
+	return f.operations, f.listErr
+}
 func (f *fakeRepository) Overview(_ context.Context, sourceIDs []string) (model.OverviewStats, error) {
 	f.overviewSources = sourceIDs
 	return f.overview, f.overviewErr

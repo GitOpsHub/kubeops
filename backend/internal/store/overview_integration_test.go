@@ -305,3 +305,77 @@ func TestClusterSortAndSyncRunScope(t *testing.T) {
 		t.Fatalf("unexpected unscoped runs: %#v, %v", runs, err)
 	}
 }
+
+func TestApplicationOperations(t *testing.T) {
+	databaseURL := integrationDatabaseURL(t)
+
+	ctx := context.Background()
+	repository, err := Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, err := repository.pool.Exec(context.Background(), truncateIntegrationData); err != nil {
+			t.Errorf("clean integration data: %v", err)
+		}
+		repository.Close()
+	})
+	if _, err := repository.pool.Exec(ctx, truncateIntegrationData); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.UpsertSources(ctx, []model.CloudSource{
+		{ID: "aws-a", Provider: model.ProviderAWS, Name: "AWS A", ScopeID: "1", Enabled: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.pool.Exec(ctx, `
+		INSERT INTO clusters (source_id, provider, provider_resource_id, name, location)
+		VALUES ('aws-a', 'aws', 'c1', 'c1', 'x')`); err != nil {
+		t.Fatal(err)
+	}
+	clusters, err := repository.GetClustersByIDs(ctx, clusterIDs(t, repository, "c1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := repository.CreateApplicationOnboarding(ctx, model.ApplicationOnboarding{
+		Name: "payments", Namespace: "payments", ChartRepoURL: "repo", ChartName: "chart",
+		ChartRevision: "1", ValuesDigest: "sha256:test",
+	}, clusters, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetID := record.Targets[0].ID
+	malformed := "not-a-uuid"
+	for _, operation := range []model.ApplicationOperation{
+		{OnboardingID: record.ID, Kind: "sync", Params: map[string]any{"prune": true}, Result: "succeeded"},
+		{OnboardingID: record.ID, TargetID: &targetID, Kind: "terminate", Result: "succeeded"},
+		{OnboardingID: record.ID, TargetID: &malformed, Kind: "rollback",
+			Params: map[string]any{"commitSha": "abc1234"}, Result: "failed"},
+		// A malformed onboarding id is dropped, not an error.
+		{OnboardingID: "missing", Kind: "sync", Result: "succeeded"},
+	} {
+		if err := repository.RecordApplicationOperation(ctx, operation); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	operations, err := repository.ListApplicationOperations(ctx, record.ID, 10)
+	if err != nil || len(operations) != 3 {
+		t.Fatalf("unexpected operations: %#v, %v", operations, err)
+	}
+	kinds := []string{operations[0].Kind, operations[1].Kind, operations[2].Kind}
+	if !reflect.DeepEqual(kinds, []string{"rollback", "terminate", "sync"}) {
+		t.Fatalf("expected newest first, got %v", kinds)
+	}
+	if operations[0].TargetID != nil || operations[0].Params["commitSha"] != "abc1234" ||
+		operations[1].TargetID == nil || *operations[1].TargetID != targetID ||
+		operations[2].Params["prune"] != true {
+		t.Fatalf("unexpected operation details: %#v", operations)
+	}
+	if limited, err := repository.ListApplicationOperations(ctx, record.ID, 1); err != nil || len(limited) != 1 {
+		t.Fatalf("limit ignored: %#v, %v", limited, err)
+	}
+	if none, err := repository.ListApplicationOperations(ctx, "bogus", 10); err != nil || len(none) != 0 {
+		t.Fatalf("a malformed id must list nothing: %#v, %v", none, err)
+	}
+}

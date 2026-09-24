@@ -31,6 +31,8 @@ type Repository interface {
 	QueueSync(context.Context, string, string) (model.SyncRun, error)
 	GetKubespinArgoDetails(context.Context, string) (model.KubespinArgoCDDetails, error)
 	Overview(context.Context, []string) (model.OverviewStats, error)
+	RecordApplicationOperation(context.Context, model.ApplicationOperation) error
+	ListApplicationOperations(context.Context, string, int) ([]model.ApplicationOperation, error)
 }
 
 type ClusterManager interface {
@@ -146,6 +148,7 @@ func newHandler(
 	mux.HandleFunc("POST /api/application-onboardings/{id}/scale", api.scaleApplicationOnboarding)
 	mux.HandleFunc("POST /api/application-onboardings/{id}/offboard", api.offboardApplicationOnboarding)
 	mux.HandleFunc("POST /api/application-onboardings/{id}/rollback", api.rollbackApplicationOnboarding)
+	mux.HandleFunc("GET /api/application-onboardings/{id}/operations", api.applicationOperations)
 	mux.HandleFunc(
 		"DELETE /api/application-onboardings/{id}/targets/{targetId}/operation",
 		api.terminateApplicationOperation,
@@ -841,6 +844,8 @@ func (api *API) scaleApplicationOnboarding(w http.ResponseWriter, r *http.Reques
 		return
 	case errors.As(err, &externalError):
 		slog.Error("scale application through GitHub", "error", externalError)
+		api.recordOperation(r, r.PathValue("id"), "", "scale",
+			map[string]any{"replicas": *input.Replicas}, operationFailed)
 		writeError(w, http.StatusBadGateway, "GitHub could not update application replicas")
 		return
 	case errors.Is(err, pgx.ErrNoRows):
@@ -851,6 +856,8 @@ func (api *API) scaleApplicationOnboarding(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "unable to scale application")
 		return
 	}
+	api.recordOperation(r, r.PathValue("id"), "", "scale",
+		map[string]any{"replicas": *input.Replicas}, operationSucceeded)
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -886,6 +893,11 @@ func (api *API) runApplicationAction(
 		writeError(w, http.StatusInternalServerError, "unable to "+action+" application")
 		return
 	}
+	params := map[string]any{}
+	if action == "sync" {
+		_, params = syncOperation(onboarding.DefaultSyncOptions())
+	}
+	api.recordOperation(r, id, "", action, params, operationSucceeded)
 	writeJSON(w, http.StatusOK, item)
 }
 

@@ -402,6 +402,8 @@ CORS preflight, and caps the body at 4 KiB.
 - `GET /api/application-onboardings/{id}/targets/{targetId}/argo`, `…/events`, `…/logs`, and
   `…/resources/containers` — per-target Argo CD status, events, log stream, and containers
 - `DELETE /api/application-onboardings/{id}/targets/{targetId}/operation` — terminate a running sync
+- `GET /api/application-onboardings/{id}/operations` — audit trail of syncs, dry runs, rollbacks,
+  terminations, scaling, and offboarding requested through KubeOps
 - `POST /api/application-onboardings/{id}/offboard` — remove every target from its cluster while preserving GitHub values
 - `GET /api/application-onboardings` — page, search, and filter onboarded applications with
   `page`, `pageSize`, `search` (case-insensitive over name and namespace), and `status`

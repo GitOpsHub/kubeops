@@ -385,3 +385,15 @@ type AttentionItem struct {
 	Message string `json:"message,omitempty"`
 	Href    string `json:"href"`
 }
+
+// ApplicationOperation is one action taken on an application through this
+// API. Params holds only identifiers and flags, never values content.
+type ApplicationOperation struct {
+	ID           string         `json:"id"`
+	OnboardingID string         `json:"onboardingId"`
+	TargetID     *string        `json:"targetId"`
+	Kind         string         `json:"kind"`
+	Params       map[string]any `json:"params"`
+	Result       string         `json:"result"`
+	CreatedAt    time.Time      `json:"createdAt"`
+}
