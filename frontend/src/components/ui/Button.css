@@ -15,10 +15,16 @@
   line-height: 1;
   text-decoration: none;
   white-space: nowrap;
+  box-shadow: var(--shadow-xs);
   transition:
-    background var(--duration-fast),
-    border-color var(--duration-fast),
-    color var(--duration-fast);
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-instant) var(--ease-out);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(0.5px);
 }
 
 .btn svg {
@@ -61,6 +67,10 @@
   color: var(--accent-fg);
   background: var(--accent);
   border-color: var(--accent);
+  /* A hairline highlight along the top edge lifts the fill off the page. */
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--accent-fg) 16%, transparent),
+    var(--shadow-sm);
 }
 
 .btn--primary:hover:not(:disabled) {
@@ -73,6 +83,7 @@
   color: var(--text-muted);
   background: transparent;
   border-color: transparent;
+  box-shadow: none;
 }
 
 .btn--ghost:hover:not(:disabled) {
@@ -81,15 +92,15 @@
 }
 
 .btn--danger {
-  color: var(--err);
+  color: var(--err-fg);
   background: var(--surface);
-  border-color: color-mix(in srgb, var(--err) 40%, var(--border));
+  border-color: var(--err-border);
 }
 
 .btn--danger:hover:not(:disabled) {
-  color: var(--err);
+  color: var(--err-fg);
   background: var(--err-soft);
-  border-color: var(--err);
+  border-color: var(--err-fg);
 }
 
 /* A borderless inline action, e.g. "Try again" inside a banner. */

@@ -10,6 +10,7 @@
   border-collapse: separate;
   border-spacing: 0;
   font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
 }
 
 .data-table th {
@@ -22,16 +23,17 @@
   background: var(--surface-sunken);
   border-bottom: 1px solid var(--border);
   font-size: var(--text-2xs);
-  font-weight: 500;
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.01em;
   text-align: left;
   white-space: nowrap;
 }
 
 .data-table td {
-  height: 48px;
+  height: 46px;
   padding: var(--space-2) var(--space-4);
   vertical-align: middle;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .data-table tbody tr:last-child > td {
@@ -43,7 +45,7 @@
 }
 
 .data-table tbody tr {
-  transition: background var(--duration-fast);
+  transition: background var(--dur-fast) var(--ease-out);
 }
 
 .data-table tbody tr:hover > td {

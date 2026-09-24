@@ -321,6 +321,11 @@ pre,
     background: CanvasText;
   }
 
+  .data-table tr:focus-visible > td {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+
   .tab[aria-selected='true']::after,
   .nav-link.is-active::before {
     background: Highlight;

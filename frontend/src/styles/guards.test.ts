@@ -2,6 +2,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { breakpoints as breakpointValues } from '../lib/breakpoints'
 
 // Read from disk because Vitest stubs every stylesheet import to an empty
 // string, raw or not.
@@ -24,7 +25,9 @@ const sources = collect(/\.tsx?$/)
 const colourAllowlist = new Set(['styles/tokens.css', 'components/BrandIcons.tsx'])
 const rawColour = /#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?|oklch|oklab|lab|lch|hwb)\(/g
 
-const breakpoints = new Set(['640px', '960px', '1280px'])
+// Mirrors lib/breakpoints.ts, so a layout never switches at a width only one
+// stylesheet knows about.
+const breakpoints = new Set(Object.values(breakpointValues).map((value) => `${value}px`))
 
 function stripComments(source: string) {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
@@ -41,8 +44,7 @@ describe('style guards', () => {
     expect(offenders).toEqual([])
   })
 
-  // Enabled once every stylesheet has moved onto the shared breakpoints.
-  it.skip('only uses the shared breakpoints in width media queries', () => {
+  it('only uses the shared breakpoints in width media queries', () => {
     const offenders = Object.entries(stylesheets).flatMap(([path, source]) =>
       [...stripComments(source).matchAll(/@media[^{]*/g)].flatMap(([query]) =>
         [...query.matchAll(/(?:min|max)-width:\s*([\d.]+\w*)/g)]

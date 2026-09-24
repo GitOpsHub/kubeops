@@ -90,7 +90,7 @@
   opacity: 0.6;
 }
 
-@media (max-width: 720px) {
+@media (max-width: 640px) {
   .cluster-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

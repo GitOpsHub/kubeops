@@ -317,7 +317,7 @@
   box-shadow: inset 3px 0 0 var(--tone-solid);
 }
 
-@media (max-width: 720px) {
+@media (max-width: 640px) {
   .application-filter-row > .field {
     flex: 1 1 140px;
   }

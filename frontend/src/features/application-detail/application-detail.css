@@ -360,13 +360,13 @@
   border-color: var(--err);
 }
 
-@media (max-width: 900px) {
+@media (max-width: 960px) {
   .targets-panel {
     grid-template-columns: minmax(0, 1fr);
   }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 640px) {
   .detail-actions {
     width: 100%;
   }
