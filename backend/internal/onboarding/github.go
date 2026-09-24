@@ -58,6 +58,13 @@ type ValuesRepositoryManager interface {
 		name, revision, environment, region string,
 		replicas int32,
 	) (ValuesUpdate, error)
+	// ValuesHistory lists the newest commits on branch that changed path.
+	ValuesHistory(ctx context.Context, name, branch, path string, limit int) ([]ValuesCommit, error)
+	// ValuesAt reads path at ref, returning ErrRevisionNotFound when absent.
+	ValuesAt(ctx context.Context, name, path, ref string) (string, error)
+	// RestoreValues commits path's content at sha onto branch, returning
+	// ErrValuesUnchanged when the branch already holds that content.
+	RestoreValues(ctx context.Context, name, branch, path, sha string) (ValuesUpdate, error)
 }
 
 type GitHubClient struct {
@@ -332,8 +339,8 @@ func (c *GitHubClient) UpdateReplicas(
 		return ValuesUpdate{}, err
 	}
 	repositoryPath := "/repos/" + url.PathEscape(c.organization) + "/" + url.PathEscape(name)
-	contentPath := repositoryPath + "/contents/" + url.PathEscape(environment) + "/" +
-		url.PathEscape(region) + "/values.yaml"
+	contentPath := repositoryPath + "/contents/" +
+		escapedContentPath(releaseValuesPath(environment, region))
 	var file struct {
 		SHA      string `json:"sha"`
 		Content  string `json:"content"`

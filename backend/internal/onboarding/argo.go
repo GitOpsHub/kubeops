@@ -94,13 +94,16 @@ type NetworkExposure struct {
 type ArgoClient interface {
 	CreateApplication(context.Context, ApplicationSpec) (ApplicationState, error)
 	GetApplication(context.Context, string, string) (ApplicationState, error)
-	SyncApplication(context.Context, string, string) (ApplicationState, error)
+	SyncApplication(context.Context, string, string, SyncOptions) (ApplicationState, error)
 	DeleteApplication(context.Context, string, string) error
 	ApplicationResources(context.Context, string, string) ([]ResourceNode, error)
 	ResourceManifest(context.Context, string, string, ResourceRef) (string, error)
 	DesiredResourceManifest(context.Context, string, string, ResourceRef) (string, error)
 	DeleteResource(context.Context, string, string, ResourceRef) error
-	PodLogs(context.Context, string, string, ResourceRef) (io.ReadCloser, error)
+	Logs(context.Context, string, string, LogQuery) (io.ReadCloser, error)
+	ApplicationStatus(context.Context, string, string) (ArgoAppStatus, error)
+	ApplicationEvents(context.Context, string, string, EventQuery) ([]ArgoEvent, error)
+	TerminateOperation(context.Context, string, string) error
 }
 
 type HTTPArgoClient struct {
@@ -441,12 +444,23 @@ func (c *HTTPArgoClient) GetApplication(
 func (c *HTTPArgoClient) SyncApplication(
 	ctx context.Context,
 	name, argoNamespace string,
+	options SyncOptions,
 ) (ApplicationState, error) {
-	body, err := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"name":         name,
 		"appNamespace": argoNamespace,
-		"prune":        true,
-	})
+		"prune":        options.Prune,
+	}
+	if options.DryRun {
+		payload["dryRun"] = true
+	}
+	if options.Force {
+		payload["strategy"] = map[string]any{"apply": map[string]any{"force": true}}
+	}
+	if options.ApplyOutOfSyncOnly {
+		payload["syncOptions"] = map[string]any{"items": []string{"ApplyOutOfSyncOnly=true"}}
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return ApplicationState{}, err
 	}
@@ -759,54 +773,6 @@ func (c *HTTPArgoClient) DeleteResource(
 		return argoAPIError{status: response.StatusCode}
 	}
 	return nil
-}
-
-// PodLogs opens Argo CD's server-streaming log endpoint. A client copy without
-// an overall timeout is intentional: the request context owns the lifetime of
-// a live stream, while the shared client timeout still protects ordinary API
-// calls.
-func (c *HTTPArgoClient) PodLogs(
-	ctx context.Context,
-	name, argoNamespace string,
-	ref ResourceRef,
-) (io.ReadCloser, error) {
-	query := url.Values{
-		"appNamespace": []string{argoNamespace},
-		"namespace":    []string{ref.Namespace},
-		"follow":       []string{"true"},
-		"tailLines":    []string{"200"},
-	}
-	endpoint := c.serverURL + "/api/v1/applications/" + url.PathEscape(name) +
-		"/pods/" + url.PathEscape(ref.Name) + "/logs?" + query.Encode()
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-	request.Header.Set("Authorization", c.authorization())
-	request.Header.Set("Accept", "application/json")
-
-	streamClient := *c.client
-	streamClient.Timeout = 0
-	response, err := streamClient.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	if response.StatusCode == http.StatusNotFound {
-		defer response.Body.Close()
-		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-		return nil, ErrResourceNotFound
-	}
-	if response.StatusCode == http.StatusForbidden {
-		defer response.Body.Close()
-		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-		return nil, ErrPodLogsForbidden
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		defer response.Body.Close()
-		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-		return nil, argoAPIError{status: response.StatusCode}
-	}
-	return response.Body, nil
 }
 
 func resourceQuery(argoNamespace string, ref ResourceRef) url.Values {

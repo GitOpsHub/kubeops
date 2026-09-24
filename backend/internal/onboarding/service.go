@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/url"
 	"regexp"
@@ -545,25 +544,6 @@ func (s *Service) DeleteResource(
 	return nil
 }
 
-// PodLogs streams one live Pod through Argo CD. Unlike short resource reads,
-// the caller's context controls this operation so it remains open until the UI
-// closes the viewer.
-func (s *Service) PodLogs(
-	ctx context.Context,
-	onboardingID string,
-	targetID string,
-	ref ResourceRef,
-) (io.ReadCloser, error) {
-	if !strings.EqualFold(ref.Kind, "Pod") {
-		return nil, ValidationError{Message: "logs are available only for Pods"}
-	}
-	target, client, err := s.target(ctx, onboardingID, targetID)
-	if err != nil {
-		return nil, err
-	}
-	return client.PodLogs(ctx, target.ArgoApplication, s.config.ArgoNamespace, ref)
-}
-
 func (s *Service) Scale(
 	ctx context.Context,
 	id string,
@@ -583,10 +563,8 @@ func (s *Service) Scale(
 			Message: "offboarded applications cannot be scaled",
 		}
 	}
-	if s.github == nil || record.ValuesRepositoryName == "" || record.ValuesRevision == "" {
-		return model.ApplicationOnboarding{}, ValidationError{
-			Message: "application values repository is not configured",
-		}
+	if _, err := s.valuesPath(record); err != nil {
+		return model.ApplicationOnboarding{}, err
 	}
 	update, err := s.github.UpdateReplicas(
 		ctx,
@@ -640,7 +618,7 @@ func (s *Service) Sync(ctx context.Context, id string) (model.ApplicationOnboard
 		}
 
 		state, syncErr := client.SyncApplication(
-			callCtx, target.ArgoApplication, s.config.ArgoNamespace,
+			callCtx, target.ArgoApplication, s.config.ArgoNamespace, DefaultSyncOptions(),
 		)
 		if syncErr != nil {
 			slog.Error("sync Argo CD application",
