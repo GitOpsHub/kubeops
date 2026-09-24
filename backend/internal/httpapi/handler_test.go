@@ -145,6 +145,11 @@ type fakeApplicationOnboarder struct {
 	valuesErr     error
 	revisionLimit int
 	revisionSHA   string
+	// Console mutations; syncOptions stays nil for a body-less sync.
+	syncOptions *onboarding.SyncOptions
+	terminated  string
+	rollbackID  string
+	rollbackSHA string
 }
 
 func (f *fakeApplicationOnboarder) Reconcile(context.Context) {
@@ -253,6 +258,26 @@ func (f *fakeApplicationOnboarder) Sync(
 	id string,
 ) (model.ApplicationOnboarding, error) {
 	f.syncID = id
+	return f.record, f.err
+}
+func (f *fakeApplicationOnboarder) SyncWithOptions(
+	_ context.Context,
+	id string,
+	options onboarding.SyncOptions,
+) (model.ApplicationOnboarding, error) {
+	f.syncID = id
+	f.syncOptions = &options
+	return f.record, f.err
+}
+func (f *fakeApplicationOnboarder) TerminateOperation(_ context.Context, id, targetID string) error {
+	f.terminated = id + "/" + targetID
+	return f.err
+}
+func (f *fakeApplicationOnboarder) Rollback(
+	_ context.Context,
+	id, sha string,
+) (model.ApplicationOnboarding, error) {
+	f.rollbackID, f.rollbackSHA = id, sha
 	return f.record, f.err
 }
 func (f *fakeApplicationOnboarder) Scale(

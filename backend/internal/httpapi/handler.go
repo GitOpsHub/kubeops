@@ -42,6 +42,9 @@ type ApplicationOnboarder interface {
 	Create(context.Context, onboarding.CreateInput) (model.ApplicationOnboarding, error)
 	Get(context.Context, string) (model.ApplicationOnboarding, error)
 	Sync(context.Context, string) (model.ApplicationOnboarding, error)
+	SyncWithOptions(context.Context, string, onboarding.SyncOptions) (model.ApplicationOnboarding, error)
+	TerminateOperation(context.Context, string, string) error
+	Rollback(context.Context, string, string) (model.ApplicationOnboarding, error)
 	Scale(context.Context, string, int32) (model.ApplicationOnboarding, error)
 	Offboard(context.Context, string) (model.ApplicationOnboarding, error)
 	List(
@@ -142,6 +145,11 @@ func newHandler(
 	mux.HandleFunc("POST /api/application-onboardings/{id}/sync", api.syncApplicationOnboarding)
 	mux.HandleFunc("POST /api/application-onboardings/{id}/scale", api.scaleApplicationOnboarding)
 	mux.HandleFunc("POST /api/application-onboardings/{id}/offboard", api.offboardApplicationOnboarding)
+	mux.HandleFunc("POST /api/application-onboardings/{id}/rollback", api.rollbackApplicationOnboarding)
+	mux.HandleFunc(
+		"DELETE /api/application-onboardings/{id}/targets/{targetId}/operation",
+		api.terminateApplicationOperation,
+	)
 	mux.HandleFunc(
 		"GET /api/application-onboardings/{id}/targets/{targetId}/resources",
 		api.applicationResources,
@@ -844,14 +852,6 @@ func (api *API) scaleApplicationOnboarding(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
-}
-
-func (api *API) syncApplicationOnboarding(w http.ResponseWriter, r *http.Request) {
-	if api.onboarder == nil {
-		writeError(w, http.StatusServiceUnavailable, "application onboarding is not available")
-		return
-	}
-	api.runApplicationAction(w, r, "sync", api.onboarder.Sync)
 }
 
 func (api *API) offboardApplicationOnboarding(w http.ResponseWriter, r *http.Request) {

@@ -592,9 +592,32 @@ func (s *Service) Scale(
 }
 
 func (s *Service) Sync(ctx context.Context, id string) (model.ApplicationOnboarding, error) {
+	return s.SyncWithOptions(ctx, id, DefaultSyncOptions())
+}
+
+// SyncWithOptions runs a manual sync shaped by options. A dry run only asks
+// Argo CD to compute the result: it neither recreates a missing application
+// nor records anything, so the stored deployment state stays what Argo CD last
+// really did. The dry run's outcome is read back from the target's status.
+func (s *Service) SyncWithOptions(
+	ctx context.Context,
+	id string,
+	options SyncOptions,
+) (model.ApplicationOnboarding, error) {
 	record, err := s.store.GetApplicationOnboarding(ctx, id)
 	if err != nil {
 		return model.ApplicationOnboarding{}, err
+	}
+	targets, err := selectTargets(record.Targets, options.TargetIDs)
+	if err != nil {
+		return model.ApplicationOnboarding{}, err
+	}
+	record.Targets = targets
+	if options.DryRun {
+		if err := s.dryRun(ctx, record, options); err != nil {
+			return model.ApplicationOnboarding{}, err
+		}
+		return s.Get(ctx, id)
 	}
 	// A sync is a new deployment attempt, so the timeout window restarts here.
 	// Without this the reconciler fails every target of an onboarding older than
@@ -618,7 +641,7 @@ func (s *Service) Sync(ctx context.Context, id string) (model.ApplicationOnboard
 		}
 
 		state, syncErr := client.SyncApplication(
-			callCtx, target.ArgoApplication, s.config.ArgoNamespace, DefaultSyncOptions(),
+			callCtx, target.ArgoApplication, s.config.ArgoNamespace, options,
 		)
 		if syncErr != nil {
 			slog.Error("sync Argo CD application",

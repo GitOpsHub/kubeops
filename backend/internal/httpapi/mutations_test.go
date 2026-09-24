@@ -1,0 +1,179 @@
+package httpapi
+
+import (
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/GitOpsHub/kubeops/backend/internal/config"
+	"github.com/GitOpsHub/kubeops/backend/internal/model"
+	"github.com/GitOpsHub/kubeops/backend/internal/onboarding"
+	"github.com/jackc/pgx/v5"
+)
+
+func serveMutation(
+	onboarder *fakeApplicationOnboarder,
+	mutations bool,
+	method, path, contentType, body string,
+) *httptest.ResponseRecorder {
+	handler := NewHandlerWithOnboarding(config.Config{
+		Onboarding: config.OnboardingConfig{ConsoleMutations: mutations},
+	}, &fakeRepository{}, &fakeClusterManager{}, onboarder)
+	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	if contentType != "" {
+		request.Header.Set("Content-Type", contentType)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response
+}
+
+func TestSyncRequestBody(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		contentType string
+		body        string
+		err         error
+		wantStatus  int
+		want        *onboarding.SyncOptions
+	}{
+		{name: "empty body keeps the original sync", wantStatus: http.StatusOK},
+		{name: "whitespace body is empty", body: " \n", wantStatus: http.StatusOK},
+		{name: "empty object defaults to pruning", contentType: "application/json", body: `{}`,
+			wantStatus: http.StatusOK, want: &onboarding.SyncOptions{Prune: true}},
+		{name: "every option", contentType: "application/json; charset=utf-8",
+			body:       `{"targetIds":["t-1"],"prune":false,"dryRun":true,"force":true,"applyOutOfSyncOnly":true}`,
+			wantStatus: http.StatusOK, want: &onboarding.SyncOptions{
+				TargetIDs: []string{"t-1"}, DryRun: true, Force: true, ApplyOutOfSyncOnly: true,
+			}},
+		{name: "no content type", body: `{}`, wantStatus: http.StatusUnsupportedMediaType},
+		{name: "form content type", contentType: "application/x-www-form-urlencoded", body: `{}`,
+			wantStatus: http.StatusUnsupportedMediaType},
+		{name: "unknown field", contentType: "application/json", body: `{"revision":"main"}`,
+			wantStatus: http.StatusBadRequest},
+		{name: "two objects", contentType: "application/json", body: `{}{}`, wantStatus: http.StatusBadRequest},
+		{name: "too large", contentType: "application/json",
+			body: `{"targetIds":["` + strings.Repeat("x", 5000) + `"]}`, wantStatus: http.StatusRequestEntityTooLarge},
+		{name: "unknown target", contentType: "application/json", body: `{"targetIds":["t-9"]}`,
+			err:        onboarding.ValidationError{Message: "targetIds must name deployment targets of this application"},
+			wantStatus: http.StatusUnprocessableEntity},
+		{name: "dry run refused", contentType: "application/json", body: `{"dryRun":true}`,
+			err: errors.Join(onboarding.ErrDryRunFailed), wantStatus: http.StatusBadGateway},
+		{name: "missing onboarding", contentType: "application/json", body: `{}`,
+			err: pgx.ErrNoRows, wantStatus: http.StatusNotFound},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			onboarder := &fakeApplicationOnboarder{
+				record: model.ApplicationOnboarding{ID: "onboarding-1"}, err: test.err,
+			}
+			response := serveMutation(onboarder, true, http.MethodPost,
+				"/api/application-onboardings/onboarding-1/sync", test.contentType, test.body)
+			if response.Code != test.wantStatus {
+				t.Fatalf("expected %d, got %d: %s", test.wantStatus, response.Code, response.Body.String())
+			}
+			if test.wantStatus != http.StatusOK {
+				return
+			}
+			if onboarder.syncID != "onboarding-1" {
+				t.Fatalf("sync was not called: %#v", onboarder)
+			}
+			switch {
+			case test.want == nil && onboarder.syncOptions != nil:
+				t.Fatalf("an empty body must use the original sync, got %#v", onboarder.syncOptions)
+			case test.want != nil && (onboarder.syncOptions == nil ||
+				onboarder.syncOptions.Prune != test.want.Prune ||
+				onboarder.syncOptions.DryRun != test.want.DryRun ||
+				onboarder.syncOptions.Force != test.want.Force ||
+				onboarder.syncOptions.ApplyOutOfSyncOnly != test.want.ApplyOutOfSyncOnly ||
+				strings.Join(onboarder.syncOptions.TargetIDs, ",") != strings.Join(test.want.TargetIDs, ",")):
+				t.Fatalf("expected %#v, got %#v", test.want, onboarder.syncOptions)
+			}
+		})
+	}
+}
+
+func TestTerminateOperationRoute(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		mutations  bool
+		err        error
+		wantStatus int
+	}{
+		{name: "terminated", mutations: true, wantStatus: http.StatusNoContent},
+		{name: "nothing running", mutations: true, err: onboarding.ErrNoOperation, wantStatus: http.StatusConflict},
+		{name: "unknown target", mutations: true, err: onboarding.ErrTargetNotFound, wantStatus: http.StatusNotFound},
+		{name: "argo unreachable", mutations: true, err: errors.New("dial tcp"), wantStatus: http.StatusBadGateway},
+		{name: "disabled", mutations: false, wantStatus: http.StatusForbidden},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			onboarder := &fakeApplicationOnboarder{err: test.err}
+			response := serveMutation(onboarder, test.mutations, http.MethodDelete,
+				"/api/application-onboardings/onboarding-1/targets/target-2/operation", "", "")
+			if response.Code != test.wantStatus {
+				t.Fatalf("expected %d, got %d: %s", test.wantStatus, response.Code, response.Body.String())
+			}
+			if test.mutations && onboarder.terminated != "onboarding-1/target-2" {
+				t.Fatalf("unexpected terminate routing: %q", onboarder.terminated)
+			}
+			if !test.mutations && onboarder.terminated != "" {
+				t.Fatal("a disabled terminate reached the service")
+			}
+		})
+	}
+}
+
+func TestRollbackRoute(t *testing.T) {
+	const body = `{"commitSha":"abc1234"}`
+	for _, test := range []struct {
+		name        string
+		mutations   bool
+		contentType string
+		body        string
+		err         error
+		wantStatus  int
+		wantMessage string
+	}{
+		{name: "rolled back", mutations: true, contentType: "application/json", body: body,
+			wantStatus: http.StatusOK},
+		{name: "disabled", contentType: "application/json", body: body, wantStatus: http.StatusForbidden},
+		{name: "no body", mutations: true, wantStatus: http.StatusBadRequest},
+		{name: "bad sha", mutations: true, contentType: "application/json", body: `{"commitSha":"main"}`,
+			wantStatus: http.StatusBadRequest},
+		{name: "wrong content type", mutations: true, contentType: "text/plain", body: body,
+			wantStatus: http.StatusUnsupportedMediaType},
+		{name: "unknown field", mutations: true, contentType: "application/json",
+			body: `{"commitSha":"abc1234","path":"values.yaml"}`, wantStatus: http.StatusBadRequest},
+		{name: "unchanged", mutations: true, contentType: "application/json", body: body,
+			err:        onboarding.ValidationError{Message: "values at abc1234 already match the current values"},
+			wantStatus: http.StatusUnprocessableEntity, wantMessage: "already match"},
+		{name: "GitHub failure", mutations: true, contentType: "application/json", body: body,
+			err:        onboarding.ExternalError{Err: errors.New("GitHub API returned status 409: token=secret")},
+			wantStatus: http.StatusBadGateway, wantMessage: "GitHub could not roll back application values"},
+		{name: "missing onboarding", mutations: true, contentType: "application/json", body: body,
+			err: pgx.ErrNoRows, wantStatus: http.StatusNotFound},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			onboarder := &fakeApplicationOnboarder{
+				record: model.ApplicationOnboarding{ID: "onboarding-1"}, err: test.err,
+			}
+			response := serveMutation(onboarder, test.mutations, http.MethodPost,
+				"/api/application-onboardings/onboarding-1/rollback", test.contentType, test.body)
+			if response.Code != test.wantStatus || !strings.Contains(response.Body.String(), test.wantMessage) {
+				t.Fatalf("expected %d %q, got %d: %s",
+					test.wantStatus, test.wantMessage, response.Code, response.Body.String())
+			}
+			if strings.Contains(response.Body.String(), "secret") {
+				t.Fatalf("GitHub error text reached the client: %s", response.Body.String())
+			}
+			if test.wantStatus == http.StatusOK &&
+				(onboarder.rollbackID != "onboarding-1" || onboarder.rollbackSHA != "abc1234") {
+				t.Fatalf("unexpected rollback call: %q %q", onboarder.rollbackID, onboarder.rollbackSHA)
+			}
+			if !test.mutations && onboarder.rollbackID != "" {
+				t.Fatal("a disabled rollback reached the service")
+			}
+		})
+	}
+}
