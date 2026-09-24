@@ -48,7 +48,14 @@ func AWSConfig(
 		options = append(options, awsconfig.WithRegion(region))
 	}
 
-	if cloudSource.RoleARN == "" || !available(ctx, source) {
+	federate := false
+	if cloudSource.RoleARN != "" {
+		var err error
+		if federate, err = checkFederation(ctx, source); err != nil {
+			return aws.Config{}, fmt.Errorf("federate AWS credentials for %s: %w", cloudSource.ID, err)
+		}
+	}
+	if !federate {
 		cfg, err := awsconfig.LoadDefaultConfig(ctx, options...)
 		if err != nil {
 			return aws.Config{}, fmt.Errorf("load AWS credentials: %w", err)

@@ -27,9 +27,21 @@ type Config struct {
 	Port              string
 	CORSAllowedOrigin string
 	DatabaseURL       string
+	// DatabaseURLUnpooled is a direct connection used only for migrations
+	// (Neon's DATABASE_URL_UNPOOLED), so DDL never runs through a pooler.
+	DatabaseURLUnpooled string
+	// DBMaxConns caps each instance's pool (DB_MAX_CONNS); zero keeps the
+	// store's default.
+	DBMaxConns int32
+	// DBPooler is "transaction" when DATABASE_URL points at a transaction-mode
+	// pooler that the host name does not reveal (DB_POOLER).
+	DBPooler          string
 	BackgroundWorkers bool
 	SyncInterval      time.Duration
 	SyncWorkers       int
+	// SyncSourceTimeout bounds one source's discovery (SYNC_SOURCE_TIMEOUT). It
+	// must stay below the function's maxDuration in vercel.json.
+	SyncSourceTimeout time.Duration
 	// CronSecret authorizes POST /api/cloud-sources/sync, the endpoint an
 	// external scheduler (Vercel Cron) calls to pull every enabled source on a
 	// schedule when BACKGROUND_WORKERS is off. Empty disables the endpoint,
@@ -124,6 +136,18 @@ func Load(envFile string) (Config, error) {
 	if err != nil || workers < 1 || workers > 20 {
 		return Config{}, fmt.Errorf("SYNC_WORKERS must be between 1 and 20")
 	}
+	sourceTimeout, err := time.ParseDuration(valueOrDefault("SYNC_SOURCE_TIMEOUT", "4m"))
+	if err != nil || sourceTimeout <= 0 {
+		return Config{}, fmt.Errorf("SYNC_SOURCE_TIMEOUT must be a positive duration")
+	}
+	maxConns, err := strconv.Atoi(valueOrDefault("DB_MAX_CONNS", "0"))
+	if err != nil || maxConns < 0 || maxConns > 100 {
+		return Config{}, fmt.Errorf("DB_MAX_CONNS must be between 1 and 100")
+	}
+	pooler := strings.ToLower(strings.TrimSpace(os.Getenv("DB_POOLER")))
+	if pooler != "" && pooler != "transaction" && pooler != "session" {
+		return Config{}, fmt.Errorf("DB_POOLER must be transaction or session")
+	}
 
 	sourcesFile := valueOrDefault("CLOUD_SOURCES_FILE", "../config/cloud-sources.yaml")
 	var sources []model.CloudSource
@@ -151,19 +175,23 @@ func Load(envFile string) (Config, error) {
 	}
 
 	return Config{
-		Environment:       valueOrDefault("APP_ENV", "development"),
-		Host:              valueOrDefault("BACKEND_HOST", "127.0.0.1"),
-		Port:              backendPort(),
-		CORSAllowedOrigin: valueOrDefault("CORS_ALLOWED_ORIGIN", "http://localhost:5173"),
-		DatabaseURL:       valueOrDefault("DATABASE_URL", "postgres://kubeops:kubeops@127.0.0.1:5432/kubeops?sslmode=disable"),
-		BackgroundWorkers: backgroundWorkers,
-		SyncInterval:      syncInterval,
-		SyncWorkers:       workers,
-		CronSecret:        strings.TrimSpace(os.Getenv("CRON_SECRET")),
-		CloudSourcesFile:  sourcesFile,
-		CloudSources:      sources,
-		CloudIdentity:     cloudIdentity,
-		Onboarding:        onboarding,
+		Environment:         valueOrDefault("APP_ENV", "development"),
+		Host:                valueOrDefault("BACKEND_HOST", "127.0.0.1"),
+		Port:                backendPort(),
+		CORSAllowedOrigin:   valueOrDefault("CORS_ALLOWED_ORIGIN", "http://localhost:5173"),
+		DatabaseURL:         valueOrDefault("DATABASE_URL", "postgres://kubeops:kubeops@127.0.0.1:5432/kubeops?sslmode=disable"),
+		DatabaseURLUnpooled: strings.TrimSpace(os.Getenv("DATABASE_URL_UNPOOLED")),
+		DBMaxConns:          int32(maxConns),
+		DBPooler:            pooler,
+		BackgroundWorkers:   backgroundWorkers,
+		SyncInterval:        syncInterval,
+		SyncWorkers:         workers,
+		SyncSourceTimeout:   sourceTimeout,
+		CronSecret:          strings.TrimSpace(os.Getenv("CRON_SECRET")),
+		CloudSourcesFile:    sourcesFile,
+		CloudSources:        sources,
+		CloudIdentity:       cloudIdentity,
+		Onboarding:          onboarding,
 	}, nil
 }
 

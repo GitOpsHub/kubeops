@@ -10,10 +10,12 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/GitOpsHub/kubeops/backend/internal/config"
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
 	"github.com/GitOpsHub/kubeops/backend/internal/secure"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -36,8 +38,33 @@ type Store struct {
 	pool *pgxpool.Pool
 }
 
+// Options tunes the connection pool for where the backend runs.
+type Options struct {
+	// MaxConns caps the pool; zero means defaultMaxConns. Every serverless
+	// instance holds its own pool, so the database sees this multiplied by the
+	// number of warm instances.
+	MaxConns int32
+	// Pooler is "transaction" when DATABASE_URL points at a transaction-mode
+	// connection pooler. A host containing "-pooler" (Neon's convention) is
+	// detected without it.
+	Pooler string
+	// MigrationURL, when set, is a direct (unpooled) connection used only for
+	// migrations, such as Neon's DATABASE_URL_UNPOOLED.
+	MigrationURL string
+}
+
+const defaultMaxConns = 4
+
 func Open(ctx context.Context, databaseURL string) (*Store, error) {
-	pool, err := pgxpool.New(ctx, databaseURL)
+	return OpenWithOptions(ctx, databaseURL, Options{})
+}
+
+func OpenWithOptions(ctx context.Context, databaseURL string, options Options) (*Store, error) {
+	poolConfig, err := poolConfig(databaseURL, options)
+	if err != nil {
+		return nil, err
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		return nil, fmt.Errorf("create database pool: %w", err)
 	}
@@ -47,11 +74,48 @@ func Open(ctx context.Context, databaseURL string) (*Store, error) {
 	}
 
 	store := &Store{pool: pool}
-	if err := store.Migrate(ctx); err != nil {
+	if options.MigrationURL != "" {
+		err = migrateUnpooled(ctx, options.MigrationURL)
+	} else {
+		err = store.Migrate(ctx)
+	}
+	if err != nil {
 		pool.Close()
 		return nil, err
 	}
 	return store, nil
+}
+
+func poolConfig(databaseURL string, options Options) (*pgxpool.Config, error) {
+	config, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse database URL: %w", err)
+	}
+	config.MaxConns = defaultMaxConns
+	if options.MaxConns > 0 {
+		config.MaxConns = options.MaxConns
+	}
+	// A suspended serverless instance cannot close its connections, so they are
+	// kept short-lived rather than left for the server to reap.
+	config.MaxConnIdleTime = 30 * time.Second
+	config.MaxConnLifetime = 5 * time.Minute
+	if strings.EqualFold(options.Pooler, "transaction") ||
+		strings.Contains(config.ConnConfig.Host, "-pooler") {
+		// A transaction pooler hands each transaction a different server
+		// connection, so pgx's default named prepared statements collide or go
+		// missing. Describe-only caching uses the unnamed statement instead.
+		config.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeCacheDescribe
+	}
+	return config, nil
+}
+
+func migrateUnpooled(ctx context.Context, migrationURL string) error {
+	conn, err := pgx.Connect(ctx, migrationURL)
+	if err != nil {
+		return fmt.Errorf("connect to database for migrations: %w", err)
+	}
+	defer conn.Close(context.WithoutCancel(ctx))
+	return migrate(ctx, conn)
 }
 
 func (s *Store) Close() {
@@ -63,18 +127,41 @@ func (s *Store) Ready(ctx context.Context) error {
 }
 
 func (s *Store) Migrate(ctx context.Context) error {
-	conn, err := s.pool.Acquire(ctx)
+	return migrate(ctx, s.pool)
+}
+
+// migrationLockTimeout bounds how long a cold start waits for another
+// instance's migrations before giving up, rather than hanging until the
+// platform kills the function.
+const migrationLockTimeout = "30s"
+
+// migrate applies every pending migration in one transaction guarded by a
+// transaction-scoped advisory lock. A session lock (pg_advisory_lock) is not
+// safe behind a transaction pooler: the unlock can run on a different server
+// connection, leaving the lock held forever. The transaction lock is released
+// by COMMIT or ROLLBACK on whichever connection holds it.
+func migrate(ctx context.Context, db interface {
+	Begin(context.Context) (pgx.Tx, error)
+}) error {
+	tx, err := db.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer conn.Release()
+	defer tx.Rollback(context.WithoutCancel(ctx))
 
-	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", int64(775001)); err != nil {
+	if _, err := tx.Exec(ctx, "SET LOCAL lock_timeout = '"+migrationLockTimeout+"'"); err != nil {
 		return err
 	}
-	defer conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", int64(775001))
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", int64(775001)); err != nil {
+		return fmt.Errorf("acquire migration lock: %w", err)
+	}
+	// The lock timeout guards only the advisory lock; migrations themselves may
+	// need to wait for locks held by a live instance's queries.
+	if _, err := tx.Exec(ctx, "SET LOCAL lock_timeout = 0"); err != nil {
+		return err
+	}
 
-	if _, err := conn.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+	if _, err := tx.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version TEXT PRIMARY KEY,
 		applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	)`); err != nil {
@@ -92,7 +179,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 			continue
 		}
 		var applied bool
-		if err := conn.QueryRow(ctx,
+		if err := tx.QueryRow(ctx,
 			"SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)",
 			entry.Name(),
 		).Scan(&applied); err != nil {
@@ -106,23 +193,28 @@ func (s *Store) Migrate(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		tx, err := conn.Begin(ctx)
-		if err != nil {
-			return err
-		}
 		if _, err := tx.Exec(ctx, string(sqlBytes)); err != nil {
-			tx.Rollback(ctx)
 			return fmt.Errorf("apply migration %s: %w", entry.Name(), err)
 		}
 		if _, err := tx.Exec(ctx, "INSERT INTO schema_migrations (version) VALUES ($1)", entry.Name()); err != nil {
-			tx.Rollback(ctx)
-			return err
-		}
-		if err := tx.Commit(ctx); err != nil {
 			return err
 		}
 	}
-	return nil
+	return tx.Commit(ctx)
+}
+
+// validUUID reports whether id can be compared against a UUID column.
+// Comparing col = $1 (rather than col::text = $1) lets PostgreSQL use the
+// index, but a malformed id then fails the whole query with
+// invalid_text_representation instead of matching nothing. Callers screen ids
+// here and report a malformed one as not found. The length check rejects the
+// urn: and braced forms uuid.Parse accepts but PostgreSQL does not.
+func validUUID(id string) bool {
+	if len(id) != 36 {
+		return false
+	}
+	_, err := uuid.Parse(id)
+	return err == nil
 }
 
 func (s *Store) UpsertSources(ctx context.Context, sources []model.CloudSource) error {
@@ -322,6 +414,9 @@ func (s *Store) ListClusters(ctx context.Context, filter model.ClusterFilter) (m
 }
 
 func (s *Store) GetCluster(ctx context.Context, id string) (model.Cluster, error) {
+	if !validUUID(id) {
+		return model.Cluster{}, pgx.ErrNoRows
+	}
 	var cluster model.Cluster
 	var metadata []byte
 	err := s.pool.QueryRow(ctx, `
@@ -372,6 +467,9 @@ func (s *Store) GetArgoAccessByClusterID(
 	clusterID string,
 ) (model.EncryptedArgoAccess, error) {
 	var access model.EncryptedArgoAccess
+	if !validUUID(clusterID) {
+		return access, pgx.ErrNoRows
+	}
 	err := s.pool.QueryRow(ctx, `
 		SELECT a.source_id, a.provider_resource_id, a.server_url, a.username,
 			a.password_ciphertext, a.password_nonce
@@ -551,12 +649,35 @@ func (s *Store) QueueSync(ctx context.Context, sourceID, trigger string) (model.
 	return run, nil
 }
 
+// abandonedSyncMessage marks a run whose owner stopped reporting. On Vercel
+// that is a function killed at its duration limit, which never reaches
+// FailSync; elsewhere a crashed or restarted process.
+const abandonedSyncMessage = "sync abandoned: it did not finish within the sync timeout"
+
 // StartSync creates a run that is already owned by the current request. Unlike
 // QueueSync, it cannot be claimed by a background worker between the insert and
 // provider discovery, which makes manual syncs safe on request-driven runtimes.
-func (s *Store) StartSync(ctx context.Context, sourceID, trigger string) (model.SyncRun, error) {
+//
+// A run for this source still active after staleAfter is failed first. A warm
+// serverless instance never passes through startup recovery again, so without
+// this a run killed at the platform's time limit would keep answering every
+// later sync of its source with ErrSyncAlreadyActive.
+func (s *Store) StartSync(
+	ctx context.Context,
+	sourceID, trigger string,
+	staleAfter time.Duration,
+) (model.SyncRun, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return model.SyncRun{}, err
+	}
+	defer tx.Rollback(context.WithoutCancel(ctx))
+
+	if err := failStaleSyncs(ctx, tx, staleAfter, abandonedSyncMessage, sourceID); err != nil {
+		return model.SyncRun{}, err
+	}
 	var run model.SyncRun
-	err := s.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		INSERT INTO sync_runs (source_id, trigger, status, started_at)
 		SELECT id, $2, 'running', NOW() FROM cloud_sources WHERE id = $1 AND enabled
 		RETURNING id::text, source_id, trigger, status, queued_at, started_at`,
@@ -569,43 +690,49 @@ func (s *Store) StartSync(ctx context.Context, sourceID, trigger string) (model.
 		}
 		return model.SyncRun{}, err
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return model.SyncRun{}, err
+	}
 	return run, nil
 }
 
-func (s *Store) RecoverRunningSyncs(ctx context.Context) error {
-	const message = "sync interrupted by backend restart"
-	_, err := s.pool.Exec(ctx, `
+// failStaleSyncs fails queued or running runs older than staleAfter, for one
+// source or, with sourceID empty, for all of them. Only stale runs are touched:
+// local and deployed instances can share one database, and failing a live run
+// owned by another instance would let a second sync of the same source start.
+func failStaleSyncs(
+	ctx context.Context,
+	db interface {
+		Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	},
+	staleAfter time.Duration,
+	message string,
+	sourceID string,
+) error {
+	_, err := db.Exec(ctx, `
 		WITH interrupted AS (
 			UPDATE sync_runs
 			SET status = 'failed', error = $1, completed_at = NOW()
-			WHERE status = 'running'
+			WHERE ($3 = '' OR source_id = $3)
+			  AND ((status = 'running' AND started_at < NOW() - make_interval(secs => $2))
+			    OR (status = 'queued' AND queued_at < NOW() - make_interval(secs => $2)))
 			RETURNING source_id
 		)
 		UPDATE cloud_sources
 		SET last_sync_status = 'failed', last_sync_at = NOW(),
 			last_sync_error = $1, updated_at = NOW()
-		WHERE id IN (SELECT source_id FROM interrupted)`, message)
+		WHERE id IN (SELECT source_id FROM interrupted)`,
+		message, staleAfter.Seconds(), sourceID)
 	return err
 }
 
-// RecoverRequestDrivenSyncs clears work that has no background worker to own it.
-// A running request gets a grace period longer than provider discovery's timeout,
-// so a cold start in another replica cannot interrupt valid in-flight work.
-func (s *Store) RecoverRequestDrivenSyncs(ctx context.Context) error {
-	const message = "sync interrupted before request-driven execution"
-	_, err := s.pool.Exec(ctx, `
-		WITH interrupted AS (
-			UPDATE sync_runs
-			SET status = 'failed', error = $1, completed_at = NOW()
-			WHERE status = 'queued'
-			   OR (status = 'running' AND started_at < NOW() - INTERVAL '5 minutes')
-			RETURNING source_id
-		)
-		UPDATE cloud_sources
-		SET last_sync_status = 'failed', last_sync_at = NOW(),
-			last_sync_error = $1, updated_at = NOW()
-		WHERE id IN (SELECT source_id FROM interrupted)`, message)
-	return err
+// RecoverStaleSyncs fails runs left behind by an instance that stopped
+// before finishing them. Instances with background workers call it at startup
+// and on every scheduler tick; request-driven instances at cold start, since
+// they have no worker to claim a queued run and it would otherwise block its
+// source indefinitely.
+func (s *Store) RecoverStaleSyncs(ctx context.Context, staleAfter time.Duration) error {
+	return failStaleSyncs(ctx, s.pool, staleAfter, abandonedSyncMessage, "")
 }
 
 func (s *Store) QueueAll(ctx context.Context, trigger string, sourceIDs []string) error {
@@ -765,14 +892,20 @@ func (s *Store) FailSync(ctx context.Context, run model.SyncRun, message string)
 }
 
 func (s *Store) GetClustersByIDs(ctx context.Context, ids []string) ([]model.Cluster, error) {
+	valid := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if validUUID(id) {
+			valid = append(valid, id)
+		}
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT c.id::text, c.source_id, s.name, c.provider, c.provider_resource_id,
 			c.name, c.location, c.kubernetes_version, c.status, c.endpoint_access,
 			c.node_count, c.metadata, c.first_seen_at, c.last_seen_at, c.updated_at, c.removed_at
 		FROM clusters c
 		JOIN cloud_sources s ON s.id = c.source_id
-		WHERE c.id::text = ANY($1)
-		ORDER BY c.name`, ids)
+		WHERE c.id = ANY($1::uuid[])
+		ORDER BY c.name`, valid)
 	if err != nil {
 		return nil, err
 	}
@@ -908,13 +1041,16 @@ func (s *Store) ActiveApplicationOnboardingID(
 }
 
 func (s *Store) GetApplicationOnboarding(ctx context.Context, id string) (model.ApplicationOnboarding, error) {
+	if !validUUID(id) {
+		return model.ApplicationOnboarding{}, pgx.ErrNoRows
+	}
 	var onboarding model.ApplicationOnboarding
 	err := s.pool.QueryRow(ctx, `
 		SELECT id::text, name, namespace, environment, region, chart_repo_url, chart_name, chart_revision,
 			image, values_digest, values_repository_url, values_repository_clone_url, values_repository_name,
 			values_revision, values_commit_sha, status, created_at, updated_at, completed_at
 		FROM application_onboardings
-		WHERE id::text = $1`, id).Scan(
+		WHERE id = $1`, id).Scan(
 		&onboarding.ID, &onboarding.Name, &onboarding.Namespace, &onboarding.Environment, &onboarding.Region,
 		&onboarding.ChartRepoURL, &onboarding.ChartName, &onboarding.ChartRevision,
 		&onboarding.Image, &onboarding.ValuesDigest, &onboarding.ValuesRepositoryURL,
@@ -925,11 +1061,14 @@ func (s *Store) GetApplicationOnboarding(ctx context.Context, id string) (model.
 	if err != nil {
 		return model.ApplicationOnboarding{}, err
 	}
-	targets, err := s.listApplicationDeployments(ctx, onboarding.ID)
+	targets, err := s.listApplicationDeployments(ctx, []string{onboarding.ID})
 	if err != nil {
 		return model.ApplicationOnboarding{}, err
 	}
-	onboarding.Targets = targets
+	onboarding.Targets = targets[onboarding.ID]
+	if onboarding.Targets == nil {
+		onboarding.Targets = make([]model.ApplicationDeployment, 0)
+	}
 	return onboarding, nil
 }
 
@@ -939,10 +1078,13 @@ func (s *Store) UpdateApplicationOnboardingValues(
 	valuesDigest string,
 	valuesCommitSHA string,
 ) error {
+	if !validUUID(id) {
+		return pgx.ErrNoRows
+	}
 	result, err := s.pool.Exec(ctx, `
 		UPDATE application_onboardings
 		SET values_digest = $2, values_commit_sha = $3, updated_at = NOW()
-		WHERE id::text = $1`,
+		WHERE id = $1`,
 		id, valuesDigest, valuesCommitSHA,
 	)
 	if err != nil {
@@ -1029,20 +1171,34 @@ func (s *Store) ListApplicationOnboardings(
 	if err := rows.Err(); err != nil {
 		return model.ApplicationOnboardingPage{}, err
 	}
+	ids := make([]string, len(page.Items))
 	for i := range page.Items {
-		targets, err := s.listApplicationDeployments(ctx, page.Items[i].ID)
-		if err != nil {
-			return model.ApplicationOnboardingPage{}, err
+		ids[i] = page.Items[i].ID
+	}
+	targets, err := s.listApplicationDeployments(ctx, ids)
+	if err != nil {
+		return model.ApplicationOnboardingPage{}, err
+	}
+	for i := range page.Items {
+		page.Items[i].Targets = targets[page.Items[i].ID]
+		if page.Items[i].Targets == nil {
+			page.Items[i].Targets = make([]model.ApplicationDeployment, 0)
 		}
-		page.Items[i].Targets = targets
 	}
 	return page, nil
 }
 
+// listApplicationDeployments loads the targets of every given onboarding in one
+// query, keyed by onboarding id, so a page of applications costs one round trip
+// rather than one per row.
 func (s *Store) listApplicationDeployments(
 	ctx context.Context,
-	onboardingID string,
-) ([]model.ApplicationDeployment, error) {
+	onboardingIDs []string,
+) (map[string][]model.ApplicationDeployment, error) {
+	targets := make(map[string][]model.ApplicationDeployment, len(onboardingIDs))
+	if len(onboardingIDs) == 0 {
+		return targets, nil
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT id::text, onboarding_id::text, cluster_id::text, cluster_name,
 			region, source_id, provider_resource_id, argo_application,
@@ -1050,13 +1206,12 @@ func (s *Store) listApplicationDeployments(
 			sync_status, health_status, message, created_at, updated_at, completed_at,
 			attempt_started_at
 		FROM application_deployments
-		WHERE onboarding_id::text = $1
-		ORDER BY cluster_name`, onboardingID)
+		WHERE onboarding_id = ANY($1::uuid[])
+		ORDER BY onboarding_id, cluster_name`, onboardingIDs)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	targets := make([]model.ApplicationDeployment, 0)
 	for rows.Next() {
 		var target model.ApplicationDeployment
 		if err := rows.Scan(
@@ -1069,7 +1224,7 @@ func (s *Store) listApplicationDeployments(
 		); err != nil {
 			return nil, err
 		}
-		targets = append(targets, target)
+		targets[target.OnboardingID] = append(targets[target.OnboardingID], target)
 	}
 	return targets, rows.Err()
 }
@@ -1115,10 +1270,13 @@ func (s *Store) RestartApplicationDeploymentAttempts(
 	ctx context.Context,
 	onboardingID string,
 ) error {
+	if !validUUID(onboardingID) {
+		return nil
+	}
 	_, err := s.pool.Exec(ctx, `
 		UPDATE application_deployments
 		SET attempt_started_at = NOW()
-		WHERE onboarding_id::text = $1`, onboardingID)
+		WHERE onboarding_id = $1`, onboardingID)
 	return err
 }
 
@@ -1126,6 +1284,9 @@ func (s *Store) UpdateApplicationDeployment(
 	ctx context.Context,
 	id, status, syncStatus, healthStatus, message string,
 ) error {
+	if !validUUID(id) {
+		return pgx.ErrNoRows
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -1143,7 +1304,7 @@ func (s *Store) UpdateApplicationDeployment(
 		SELECT o.id::text
 		FROM application_onboardings o
 		JOIN application_deployments d ON d.onboarding_id = o.id
-		WHERE d.id::text = $1
+		WHERE d.id = $1
 		FOR UPDATE OF o`, id).Scan(&onboardingID)
 	if err != nil {
 		return err
@@ -1155,7 +1316,7 @@ func (s *Store) UpdateApplicationDeployment(
 			updated_at = NOW(),
 			completed_at = CASE WHEN $2 IN ('healthy', 'failed', 'offboarded')
 				THEN NOW() ELSE NULL END
-		WHERE id::text = $1`,
+		WHERE id = $1`,
 		id, status, syncStatus, healthStatus, message,
 	); err != nil {
 		return err
@@ -1168,7 +1329,7 @@ func (s *Store) UpdateApplicationDeployment(
 				COUNT(*) FILTER (WHERE status = 'failed') AS failed,
 				COUNT(*) FILTER (WHERE status = 'offboarded') AS offboarded
 			FROM application_deployments
-			WHERE onboarding_id::text = $1
+			WHERE onboarding_id = $1
 		), next AS (
 			SELECT CASE
 				WHEN offboarded = total THEN 'offboarded'
@@ -1185,7 +1346,7 @@ func (s *Store) UpdateApplicationDeployment(
 			completed_at = CASE WHEN next.status IN ('healthy', 'failed', 'partial', 'offboarded')
 				THEN NOW() ELSE NULL END
 		FROM next
-		WHERE id::text = $1`, onboardingID)
+		WHERE id = $1`, onboardingID)
 	if err != nil {
 		return err
 	}

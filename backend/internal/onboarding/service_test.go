@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,6 +24,8 @@ import (
 )
 
 type fakeRepository struct {
+	// mu serializes access: Create and Reconcile drive targets concurrently.
+	mu              sync.Mutex
 	clusters        []model.Cluster
 	record          model.ApplicationOnboarding
 	active          []model.ApplicationDeployment
@@ -50,6 +53,8 @@ type fakeRepository struct {
 }
 
 func (f *fakeRepository) GetClustersByIDs(context.Context, []string) ([]model.Cluster, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.clusters, nil
 }
 
@@ -57,6 +62,8 @@ func (f *fakeRepository) GetKubespinArgoDetails(
 	_ context.Context,
 	clusterName string,
 ) (model.KubespinArgoCDDetails, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.kubespinLookups != nil {
 		f.kubespinLookups[clusterName]++
 	}
@@ -71,6 +78,8 @@ func (f *fakeRepository) ActiveApplicationOnboardingID(
 	_ string,
 	namespace string,
 ) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.lookedUpNamespace = namespace
 	if f.activeByNamespace != nil {
 		return f.activeByNamespace[namespace], nil
@@ -83,6 +92,8 @@ func (f *fakeRepository) CreateApplicationOnboarding(
 	clusters []model.Cluster,
 	regionValues map[string]bool,
 ) (model.ApplicationOnboarding, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.createErr != nil {
 		return model.ApplicationOnboarding{}, f.createErr
 	}
@@ -108,6 +119,8 @@ func (f *fakeRepository) GetApplicationOnboarding(
 	context.Context,
 	string,
 ) (model.ApplicationOnboarding, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for index := range f.record.Targets {
 		if update, ok := f.updates[f.record.Targets[index].ID]; ok {
 			f.record.Targets[index] = update
@@ -119,6 +132,8 @@ func (f *fakeRepository) ListApplicationOnboardings(
 	_ context.Context,
 	filter model.ApplicationOnboardingFilter,
 ) (model.ApplicationOnboardingPage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.filter = filter
 	return model.ApplicationOnboardingPage{
 		Items: []model.ApplicationOnboarding{f.record},
@@ -128,6 +143,8 @@ func (f *fakeRepository) ListApplicationOnboardings(
 func (f *fakeRepository) ListActiveApplicationDeployments(
 	context.Context,
 ) ([]model.ApplicationDeployment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.active, nil
 }
 func (f *fakeRepository) UpdateApplicationOnboardingValues(
@@ -136,6 +153,8 @@ func (f *fakeRepository) UpdateApplicationOnboardingValues(
 	valuesDigest string,
 	valuesCommitSHA string,
 ) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.valuesDigest = valuesDigest
 	f.valuesCommitSHA = valuesCommitSHA
 	f.record.ValuesDigest = valuesDigest
@@ -146,6 +165,8 @@ func (f *fakeRepository) UpdateApplicationDeployment(
 	_ context.Context,
 	id, status, syncStatus, healthStatus, message string,
 ) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.updates == nil {
 		f.updates = make(map[string]model.ApplicationDeployment)
 	}
@@ -170,6 +191,8 @@ func (f *fakeRepository) RestartApplicationDeploymentAttempts(
 	_ context.Context,
 	onboardingID string,
 ) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.restarted = append(f.restarted, onboardingID)
 	for index := range f.active {
 		f.active[index].AttemptStartedAt = time.Now()
@@ -180,11 +203,14 @@ func (f *fakeRepository) UpsertArgoAccess(
 	_ context.Context,
 	access model.EncryptedArgoAccess,
 ) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.access = access
 	return nil
 }
 
 type fakeArgoClient struct {
+	mu        sync.Mutex
 	created   ApplicationSpec
 	synced    string
 	deleted   string
@@ -249,6 +275,8 @@ func (f *fakeArgoClient) CreateApplication(
 	_ context.Context,
 	spec ApplicationSpec,
 ) (ApplicationState, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.created = spec
 	if f.createErr != nil {
 		return f.state, f.createErr
@@ -260,6 +288,8 @@ func (f *fakeArgoClient) GetApplication(
 	string,
 	string,
 ) (ApplicationState, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.getErr != nil {
 		return f.state, f.getErr
 	}
@@ -269,6 +299,8 @@ func (f *fakeArgoClient) SyncApplication(
 	_ context.Context,
 	name, _ string,
 ) (ApplicationState, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.synced = name
 	if f.syncErr != nil {
 		return f.state, f.syncErr
@@ -279,6 +311,8 @@ func (f *fakeArgoClient) DeleteApplication(
 	_ context.Context,
 	name, _ string,
 ) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.deleted = name
 	if f.deleteErr != nil {
 		return f.deleteErr
@@ -289,6 +323,8 @@ func (f *fakeArgoClient) ApplicationResources(
 	_ context.Context,
 	_, _ string,
 ) ([]ResourceNode, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.resources, f.resourceErr
 }
 func (f *fakeArgoClient) ResourceManifest(
@@ -296,6 +332,8 @@ func (f *fakeArgoClient) ResourceManifest(
 	_, _ string,
 	_ ResourceRef,
 ) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.manifest, f.resourceErr
 }
 func (f *fakeArgoClient) DesiredResourceManifest(
@@ -303,6 +341,8 @@ func (f *fakeArgoClient) DesiredResourceManifest(
 	_, _ string,
 	_ ResourceRef,
 ) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.desiredManifest, f.desiredErr
 }
 func (f *fakeArgoClient) DeleteResource(
@@ -310,6 +350,8 @@ func (f *fakeArgoClient) DeleteResource(
 	_, _ string,
 	ref ResourceRef,
 ) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.deletedResource = ref
 	return f.resourceErr
 }
@@ -318,6 +360,8 @@ func (f *fakeArgoClient) PodLogs(
 	_, _ string,
 	_ ResourceRef,
 ) (io.ReadCloser, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.resourceErr != nil {
 		return nil, f.resourceErr
 	}
@@ -1239,5 +1283,155 @@ func TestResolveClientReturnsErrorWhenNothingIsConfigured(t *testing.T) {
 
 	if _, err := service.resolveClient(context.Background(), "aws", "arn:cluster/prod", "prod"); err == nil {
 		t.Fatal("expected an error when neither a static target nor a kubespin entry exists")
+	}
+}
+
+// panickingArgoClient stands in for any bug deep in a client call.
+type panickingArgoClient struct{ *fakeArgoClient }
+
+func (panickingArgoClient) GetApplication(context.Context, string, string) (ApplicationState, error) {
+	panic("boom")
+}
+
+// Reconcile runs on every application read in request-driven deployments, so
+// only a definitive Argo CD answer may change a target's status.
+func TestReconcileOnlyActsOnDefinitiveAnswers(t *testing.T) {
+	const staticKey = "aws"
+	tests := []struct {
+		name        string
+		client      ArgoClient
+		kubespin    map[string]model.KubespinArgoCDDetails
+		wantUpdate  bool
+		wantStatus  string
+		wantMessage string
+	}{
+		{
+			name:       "status read",
+			client:     &fakeArgoClient{state: ApplicationState{SyncStatus: "Synced", HealthStatus: "Healthy"}},
+			wantUpdate: true, wantStatus: "healthy",
+		},
+		{
+			name:       "application gone",
+			client:     &fakeArgoClient{getErr: ErrApplicationNotFound},
+			wantUpdate: true, wantStatus: "failed", wantMessage: "Argo CD application no longer exists",
+		},
+		{
+			name:       "no Argo CD access configured",
+			wantUpdate: true, wantStatus: "failed",
+			wantMessage: "Argo CD target configuration is no longer available",
+		},
+		{
+			name:   "Argo CD unreachable",
+			client: &fakeArgoClient{getErr: &url.Error{Op: "Get", URL: "https://argo", Err: errors.New("connection refused")}},
+		},
+		{
+			name: "kubespin Argo CD login fails",
+			kubespin: map[string]model.KubespinArgoCDDetails{
+				"prod": {Endpoint: "http://127.0.0.1:1", Username: "admin", Password: "secret"},
+			},
+		},
+		{
+			// A bug is not an answer from Argo CD; it must neither crash the
+			// process nor fail the deployment.
+			name:   "client panics",
+			client: panickingArgoClient{&fakeArgoClient{}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target := model.ApplicationDeployment{
+				ID: "target-1", ClusterName: "prod", SourceID: "aws", ProviderResourceID: "arn:cluster/prod",
+				ArgoApplication: "payments", Status: "progressing",
+				SyncStatus: "OutOfSync", HealthStatus: "Progressing",
+				CreatedAt: time.Now(), AttemptStartedAt: time.Now(),
+			}
+			repository := &fakeRepository{
+				active:       []model.ApplicationDeployment{target},
+				kubespinArgo: tt.kubespin,
+			}
+			clients := map[string]ArgoClient{}
+			if tt.client != nil {
+				clients[targetKey(staticKey, "arn:cluster/prod")] = tt.client
+			}
+			service := &Service{
+				store: repository,
+				config: config.OnboardingConfig{
+					ArgoNamespace: "argo-cd", RequestTimeout: time.Second,
+					DeploymentTimeout: 15 * time.Minute,
+				},
+				clients: clients,
+			}
+
+			service.Reconcile(context.Background())
+
+			update, updated := repository.updates[target.ID]
+			if updated != tt.wantUpdate {
+				t.Fatalf("updated = %t, want %t (%#v)", updated, tt.wantUpdate, update)
+			}
+			if !tt.wantUpdate {
+				return
+			}
+			if update.Status != tt.wantStatus || (tt.wantMessage != "" && update.Message != tt.wantMessage) {
+				t.Fatalf("unexpected update: %#v", update)
+			}
+		})
+	}
+}
+
+func TestReconcileSkipsRecentlyCheckedTargets(t *testing.T) {
+	target := model.ApplicationDeployment{
+		ID: "target-1", SourceID: "aws", ProviderResourceID: "arn:cluster/prod",
+		ArgoApplication: "payments", Status: "progressing",
+		CreatedAt: time.Now(), AttemptStartedAt: time.Now(),
+	}
+	repository := &fakeRepository{active: []model.ApplicationDeployment{target}}
+	client := &fakeArgoClient{state: ApplicationState{SyncStatus: "Synced", HealthStatus: "Healthy"}}
+	service := &Service{
+		store: repository,
+		config: config.OnboardingConfig{
+			ArgoNamespace: "argo-cd", RequestTimeout: time.Second,
+			DeploymentTimeout: 15 * time.Minute,
+		},
+		clients: map[string]ArgoClient{targetKey("aws", "arn:cluster/prod"): client},
+	}
+
+	service.Reconcile(context.Background())
+	repository.mu.Lock()
+	repository.updates = nil
+	repository.mu.Unlock()
+	service.Reconcile(context.Background())
+
+	if len(repository.updates) != 0 {
+		t.Fatalf("a target checked moments ago was queried again: %#v", repository.updates)
+	}
+}
+
+func (panickingArgoClient) SyncApplication(context.Context, string, string) (ApplicationState, error) {
+	panic("boom")
+}
+
+func TestPanickingTargetOperationFailsOnlyThatTarget(t *testing.T) {
+	target := model.ApplicationDeployment{
+		ID: "target-1", ClusterName: "prod", SourceID: "aws",
+		ProviderResourceID: "arn:cluster/prod", ArgoApplication: "payments",
+		Status: "healthy", SyncStatus: "Synced", HealthStatus: "Healthy",
+	}
+	repository := &fakeRepository{record: model.ApplicationOnboarding{
+		ID: "onboarding-1", Name: "payments", Namespace: "payments",
+		ValuesRepositoryCloneURL: "https://github.com/GitOpsHub/payments.git",
+		Targets:                  []model.ApplicationDeployment{target},
+	}}
+	service := &Service{
+		store:   repository,
+		config:  config.OnboardingConfig{ArgoNamespace: "argo-cd", RequestTimeout: time.Second},
+		clients: map[string]ArgoClient{targetKey("aws", "arn:cluster/prod"): panickingArgoClient{&fakeArgoClient{}}},
+	}
+
+	if _, err := service.Sync(context.Background(), "onboarding-1"); err != nil {
+		t.Fatal(err)
+	}
+	if update := repository.updates[target.ID]; update.Status != "failed" ||
+		update.Message != "internal error while contacting Argo CD" {
+		t.Fatalf("panic was not recorded as the target's failure: %#v", update)
 	}
 }

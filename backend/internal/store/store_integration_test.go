@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
 	"github.com/GitOpsHub/kubeops/backend/internal/secure"
@@ -120,7 +121,23 @@ func TestInventoryLifecycle(t *testing.T) {
 	}
 	interruptedRunID := claimed.ID
 
-	if err := repository.RecoverRunningSyncs(ctx); err != nil {
+	// A run younger than the stale threshold may belong to a live instance
+	// sharing this database, so recovery must leave it alone.
+	if err := repository.RecoverStaleSyncs(ctx, 5*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	var liveStatus string
+	if err := repository.pool.QueryRow(ctx,
+		`SELECT status FROM sync_runs WHERE id = $1`, claimed.ID,
+	).Scan(&liveStatus); err != nil || liveStatus != "running" {
+		t.Fatalf("recovery failed a live run: status=%q err=%v", liveStatus, err)
+	}
+	if _, err := repository.pool.Exec(ctx,
+		`UPDATE sync_runs SET started_at = NOW() - INTERVAL '10 minutes' WHERE id = $1`, claimed.ID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.RecoverStaleSyncs(ctx, 5*time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	var recoveredStatus, recoveredError, sourceStatus, sourceError string
@@ -138,7 +155,7 @@ func TestInventoryLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	if recoveredStatus != "failed" || !hasCompletedAt ||
-		recoveredError != "sync interrupted by backend restart" ||
+		recoveredError != abandonedSyncMessage ||
 		sourceStatus != "failed" || sourceError != recoveredError {
 		t.Fatalf(
 			"unexpected recovered sync: status=%q error=%q completed=%t source_status=%q source_error=%q",
@@ -320,9 +337,54 @@ func TestInventoryLifecycle(t *testing.T) {
 	runs, err := repository.ListSyncRuns(ctx, 10)
 	if err != nil || len(runs) != 7 || runs[0].RemovedCount != 1 ||
 		runs[6].ID != interruptedRunID || runs[6].Status != "failed" ||
-		runs[6].Error != "sync interrupted by backend restart" {
+		runs[6].Error != abandonedSyncMessage {
 		t.Fatalf("unexpected sync history: %#v, %v", runs, err)
 	}
+
+	t.Run("cron runs and stale recovery in StartSync", func(t *testing.T) {
+		source := sources[1].ID
+		// Vercel Cron records its runs as 'cron'; the original CHECK rejected it.
+		cronRun, err := repository.StartSync(ctx, source, "cron", 5*time.Minute)
+		if err != nil || cronRun.Trigger != "cron" || cronRun.Status != "running" {
+			t.Fatalf("unexpected cron run: %#v, %v", cronRun, err)
+		}
+		if _, err := repository.StartSync(ctx, source, "manual", 5*time.Minute); !errors.Is(err, ErrSyncAlreadyActive) {
+			t.Fatalf("a live run was displaced: %v", err)
+		}
+		// A function killed at its duration limit never reaches FailSync. A warm
+		// instance must still recover, not answer 409 until the next cold start.
+		if _, err := repository.pool.Exec(ctx,
+			`UPDATE sync_runs SET started_at = NOW() - INTERVAL '10 minutes' WHERE id = $1`, cronRun.ID,
+		); err != nil {
+			t.Fatal(err)
+		}
+		replacement, err := repository.StartSync(ctx, source, "manual", 5*time.Minute)
+		if err != nil {
+			t.Fatalf("stale run still blocks its source: %v", err)
+		}
+		var status, message string
+		if err := repository.pool.QueryRow(ctx,
+			`SELECT status, error FROM sync_runs WHERE id = $1`, cronRun.ID,
+		).Scan(&status, &message); err != nil || status != "failed" || message != abandonedSyncMessage {
+			t.Fatalf("stale run was not abandoned: status=%q error=%q err=%v", status, message, err)
+		}
+		if err := repository.FailSync(ctx, replacement, "test cleanup"); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("malformed ids are not found", func(t *testing.T) {
+		if _, err := repository.GetCluster(ctx, "not-a-uuid"); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("GetCluster: %v", err)
+		}
+		if _, err := repository.GetApplicationOnboarding(ctx, "not-a-uuid"); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("GetApplicationOnboarding: %v", err)
+		}
+		clusters, err := repository.GetClustersByIDs(ctx, []string{"not-a-uuid", page.Items[0].ID})
+		if err != nil || len(clusters) != 1 {
+			t.Fatalf("GetClustersByIDs: %#v, %v", clusters, err)
+		}
+	})
 }
 
 // TestConcurrentDeploymentUpdatesSettleParentStatus covers targets that finish at

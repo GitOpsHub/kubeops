@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -401,5 +403,118 @@ func TestSessionArgoClientRelogsInOnUnauthorized(t *testing.T) {
 	}
 	if logins != 2 {
 		t.Fatalf("expected an initial login plus one relogin, got %d", logins)
+	}
+}
+
+// A relogin that needs a fresh TLS connection runs verifyConnection, which
+// takes the client's mutex. Holding that mutex across the login used to hang
+// every request on the cached client forever.
+func TestSessionArgoClientReloginOverNewTLSConnectionDoesNotDeadlock(t *testing.T) {
+	var logins atomic.Int32
+	var rejected atomic.Bool
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/session" {
+			n := logins.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"token":"session-token-%d"}`, n)
+			return
+		}
+		if r.Header.Get("Authorization") == "Bearer session-token-1" && rejected.CompareAndSwap(false, true) {
+			// Closing the connection forces the relogin onto a new handshake.
+			w.Header().Set("Connection", "close")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":{"sync":{"status":"Synced"},"health":{"status":"Healthy"}}}`))
+	}))
+	defer server.Close()
+
+	client, err := NewSessionArgoClient(
+		context.Background(), server.URL, "admin", "secret",
+		config.OnboardingConfig{RequestTimeout: 5 * time.Second},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := client.GetApplication(context.Background(), "payments", "argo-cd")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("relogin over a new TLS connection deadlocked")
+	}
+	if logins.Load() != 2 {
+		t.Fatalf("expected an initial login plus one relogin, got %d", logins.Load())
+	}
+}
+
+func TestSessionArgoClientRelogin(t *testing.T) {
+	tests := []struct {
+		name            string
+		loginStatus     int
+		concurrent      int
+		wantErr         bool
+		wantMaxRelogins int32
+	}{
+		{name: "failed relogin is an error, not a closed 401", loginStatus: http.StatusUnauthorized, concurrent: 1, wantErr: true, wantMaxRelogins: 1},
+		{name: "concurrent 401s share one relogin", loginStatus: http.StatusOK, concurrent: 8, wantMaxRelogins: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var logins atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/session" {
+					n := logins.Add(1)
+					if n > 1 && tt.loginStatus != http.StatusOK {
+						w.WriteHeader(tt.loginStatus)
+						return
+					}
+					_, _ = fmt.Fprintf(w, `{"token":"session-token-%d"}`, n)
+					return
+				}
+				if r.Header.Get("Authorization") == "Bearer session-token-1" {
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				_, _ = w.Write([]byte(`{"status":{"sync":{"status":"Synced"},"health":{"status":"Healthy"}}}`))
+			}))
+			defer server.Close()
+
+			client, err := NewSessionArgoClient(
+				context.Background(), server.URL, "admin", "secret",
+				config.OnboardingConfig{RequestTimeout: 5 * time.Second},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wg sync.WaitGroup
+			errs := make(chan error, tt.concurrent)
+			for i := 0; i < tt.concurrent; i++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					_, err := client.GetApplication(context.Background(), "payments", "argo-cd")
+					errs <- err
+				}()
+			}
+			wg.Wait()
+			close(errs)
+			for err := range errs {
+				if (err != nil) != tt.wantErr {
+					t.Fatalf("GetApplication error = %v, wantErr %t", err, tt.wantErr)
+				}
+			}
+			if relogins := logins.Load() - 1; relogins > tt.wantMaxRelogins {
+				t.Fatalf("expected at most %d relogins, got %d", tt.wantMaxRelogins, relogins)
+			}
+		})
 	}
 }

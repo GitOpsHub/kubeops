@@ -1,9 +1,13 @@
 package provider
 
 import (
+	"errors"
+	"fmt"
+	"net/http"
 	"testing"
 
 	"cloud.google.com/go/container/apiv1/containerpb"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v9"
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
@@ -94,5 +98,42 @@ func TestValidateDesired(t *testing.T) {
 	}
 	if err := validateDesired(pool, 1); err != ErrScaleOutOfBounds {
 		t.Fatalf("expected bounds error, got %v", err)
+	}
+}
+
+func TestNodePoolErrorsMapOnlyRealNotFound(t *testing.T) {
+	throttled := errors.New("operation error EKS: DescribeNodegroup, ThrottlingException")
+	tests := []struct {
+		name         string
+		mapErr       func(error) error
+		err          error
+		wantNotFound bool
+		wantNil      bool
+	}{
+		{name: "eks success", mapErr: eksNodePoolError, wantNil: true},
+		{name: "eks not found", mapErr: eksNodePoolError,
+			err: fmt.Errorf("wrapped: %w", &ekstypes.ResourceNotFoundException{}), wantNotFound: true},
+		{name: "eks throttled", mapErr: eksNodePoolError, err: throttled},
+		{name: "aks not found", mapErr: aksNodePoolError,
+			err: &azcore.ResponseError{StatusCode: http.StatusNotFound, ErrorCode: "NotFound"}, wantNotFound: true},
+		{name: "aks forbidden", mapErr: aksNodePoolError,
+			err: &azcore.ResponseError{StatusCode: http.StatusForbidden, ErrorCode: "AuthorizationFailed"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := test.mapErr(test.err)
+			if test.wantNil {
+				if got != nil {
+					t.Fatalf("got %v, want nil", got)
+				}
+				return
+			}
+			if errors.Is(got, ErrNodePoolNotFound) != test.wantNotFound {
+				t.Fatalf("got %v, want not-found=%t", got, test.wantNotFound)
+			}
+			if !test.wantNotFound && !errors.Is(got, test.err) {
+				t.Fatalf("underlying error was not wrapped: %v", got)
+			}
+		})
 	}
 }

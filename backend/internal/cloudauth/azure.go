@@ -18,7 +18,14 @@ func AzureCredential(
 	source TokenSource,
 	cloudSource model.CloudSource,
 ) (azcore.TokenCredential, error) {
-	if cloudSource.ClientID != "" && available(ctx, source) {
+	federate := false
+	if cloudSource.ClientID != "" {
+		var err error
+		if federate, err = checkFederation(ctx, source); err != nil {
+			return nil, fmt.Errorf("federate Azure credentials for %s: %w", cloudSource.ID, err)
+		}
+	}
+	if federate {
 		credential, err := azidentity.NewClientAssertionCredential(
 			cloudSource.TenantID,
 			cloudSource.ClientID,

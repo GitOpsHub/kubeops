@@ -3,6 +3,7 @@ package syncer
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,28 +12,39 @@ import (
 )
 
 type fakeStore struct {
+	// mu serializes access: SyncAll syncs sources concurrently.
+	mu            sync.Mutex
 	run           *model.SyncRun
 	completed     []model.Cluster
 	failed        string
 	startupCalls  []string
 	recoverError  error
-	requestError  error
 	queueAllError error
+	// startErr fails StartSync for the named sources.
+	startErr   map[string]error
+	staleAfter time.Duration
 }
 
-func (f *fakeStore) RecoverRunningSyncs(context.Context) error {
+func (f *fakeStore) RecoverStaleSyncs(_ context.Context, staleAfter time.Duration) error {
 	f.startupCalls = append(f.startupCalls, "recover")
+	f.staleAfter = staleAfter
 	return f.recoverError
-}
-func (f *fakeStore) RecoverRequestDrivenSyncs(context.Context) error {
-	f.startupCalls = append(f.startupCalls, "recover-request")
-	return f.requestError
 }
 func (f *fakeStore) QueueAll(_ context.Context, trigger string, sourceIDs []string) error {
 	f.startupCalls = append(f.startupCalls, "queue:"+trigger)
 	return f.queueAllError
 }
-func (f *fakeStore) StartSync(_ context.Context, sourceID, trigger string) (model.SyncRun, error) {
+func (f *fakeStore) StartSync(
+	_ context.Context,
+	sourceID, trigger string,
+	staleAfter time.Duration,
+) (model.SyncRun, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.staleAfter = staleAfter
+	if err := f.startErr[sourceID]; err != nil {
+		return model.SyncRun{}, err
+	}
 	return model.SyncRun{
 		ID: "manual-run", SourceID: sourceID, Trigger: trigger, Status: "running",
 	}, nil
@@ -43,10 +55,14 @@ func (f *fakeStore) ClaimNextSync(context.Context) (*model.SyncRun, error) {
 	return run, nil
 }
 func (f *fakeStore) CompleteSync(_ context.Context, _ model.SyncRun, clusters []model.Cluster) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.completed = clusters
 	return nil
 }
 func (f *fakeStore) FailSync(_ context.Context, _ model.SyncRun, message string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.failed = message
 	return nil
 }
@@ -130,8 +146,13 @@ func TestPrepareRequestDrivenOnlyRecoversOrphanedWork(t *testing.T) {
 	if err := service.PrepareRequestDriven(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(repository.startupCalls) != 1 || repository.startupCalls[0] != "recover-request" {
+	if len(repository.startupCalls) != 1 || repository.startupCalls[0] != "recover" {
 		t.Fatalf("unexpected preparation calls: %#v", repository.startupCalls)
+	}
+	// Only runs older than the source timeout can be orphaned; a younger one
+	// may belong to a live request on another instance.
+	if want := DefaultSourceTimeout + staleMargin; repository.staleAfter != want {
+		t.Fatalf("recovered runs younger than %s (staleAfter %s)", want, repository.staleAfter)
 	}
 }
 
@@ -209,5 +230,36 @@ func TestSyncRejectsSourceMissingFromRuntimeConfiguration(t *testing.T) {
 	service := New(&fakeStore{}, nil, nil, 5*time.Minute, 1)
 	if _, err := service.Sync(context.Background(), "stale-source", "manual"); !errors.Is(err, ErrSourceUnavailable) {
 		t.Fatalf("expected unavailable source error, got %v", err)
+	}
+}
+
+func TestSyncAllContinuesPastFailingSource(t *testing.T) {
+	repository := &fakeStore{startErr: map[string]error{"aws": errors.New("database unavailable")}}
+	service := New(
+		repository,
+		provider.Registry{
+			"gcp":   fakeDiscoverer{provider: "gcp"},
+			"aws":   fakeDiscoverer{provider: "aws"},
+			"azure": fakeDiscoverer{provider: "azure"},
+		},
+		[]model.CloudSource{
+			{ID: "aws", Provider: "aws", Name: "AWS", ScopeID: "account", Enabled: true},
+			{ID: "azure", Provider: "azure", Name: "Azure", ScopeID: "sub", Enabled: true},
+			{ID: "gcp", Provider: "gcp", Name: "GCP", ScopeID: "project", Enabled: true},
+		},
+		5*time.Minute,
+		1,
+		WithSourceTimeout(90*time.Second),
+	)
+
+	runs, err := service.SyncAll(context.Background(), "cron")
+	if err == nil {
+		t.Fatal("expected the failing source's error")
+	}
+	if len(runs) != 2 || runs[0].SourceID != "azure" || runs[1].SourceID != "gcp" {
+		t.Fatalf("sources after the failure were not synced: %#v", runs)
+	}
+	if want := 90*time.Second + staleMargin; repository.staleAfter != want {
+		t.Fatalf("staleAfter = %s, want %s", repository.staleAfter, want)
 	}
 }

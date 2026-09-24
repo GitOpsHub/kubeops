@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"cloud.google.com/go/container/apiv1/containerpb"
@@ -22,6 +23,32 @@ var (
 	ErrOperationInProgress  = errors.New("provider operation in progress")
 	ErrScaleOutOfBounds     = errors.New("desired count is outside the node pool bounds")
 )
+
+// eksNodePoolError reports only EKS's own not-found as ErrNodePoolNotFound.
+// Throttling, expired credentials or a network failure are not a missing node
+// pool, and answering 404 for them sends the operator looking in the wrong place.
+func eksNodePoolError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var notFound *ekstypes.ResourceNotFoundException
+	if errors.As(err, &notFound) {
+		return ErrNodePoolNotFound
+	}
+	return fmt.Errorf("describe EKS node group: %w", err)
+}
+
+// aksNodePoolError is eksNodePoolError for AKS agent pools.
+func aksNodePoolError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var responseErr *azcore.ResponseError
+	if errors.As(err, &responseErr) && responseErr.StatusCode == http.StatusNotFound {
+		return ErrNodePoolNotFound
+	}
+	return fmt.Errorf("get AKS agent pool: %w", err)
+}
 
 type Manager interface {
 	Details(context.Context, model.CloudSource, model.Cluster) (model.ClusterDetails, error)
@@ -217,7 +244,10 @@ func (a AWS) ScaleNodePool(
 	current, err := client.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{
 		ClusterName: &cluster.Name, NodegroupName: &poolID,
 	})
-	if err != nil || current.Nodegroup == nil {
+	if err := eksNodePoolError(err); err != nil {
+		return model.ScaleResult{}, err
+	}
+	if current.Nodegroup == nil {
 		return model.ScaleResult{}, ErrNodePoolNotFound
 	}
 	pool := normalizeEKSNodePool(current.Nodegroup)
@@ -557,7 +587,10 @@ func (a Azure) ScaleNodePool(
 		return model.ScaleResult{}, fmt.Errorf("create AKS agent pool client: %w", err)
 	}
 	response, err := client.Get(ctx, resourceGroup, cluster.Name, poolID, nil)
-	if err != nil || response.Properties == nil {
+	if err := aksNodePoolError(err); err != nil {
+		return model.ScaleResult{}, err
+	}
+	if response.Properties == nil {
 		return model.ScaleResult{}, ErrNodePoolNotFound
 	}
 	profile := &armcontainerservice.ManagedClusterAgentPoolProfile{

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/url"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/GitOpsHub/kubeops/backend/internal/secure"
 	"github.com/GitOpsHub/kubeops/backend/internal/store"
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/sync/errgroup"
 	"gopkg.in/yaml.v3"
 )
 
@@ -109,6 +111,10 @@ type Service struct {
 	// The cache lives for the process lifetime; a stale session recovers via
 	// sessionArgoClient's own 401-triggered relogin rather than a cache TTL.
 	dynamicClients sync.Map
+
+	// reconcileMu guards lastReconciled; see claimReconcile.
+	reconcileMu    sync.Mutex
+	lastReconciled map[string]time.Time
 }
 
 func NewService(repository Repository, cfg config.OnboardingConfig) (*Service, error) {
@@ -293,6 +299,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
+			defer s.recoverTarget(ctx, target, "create", errs)
 			callCtx, cancel := context.WithTimeout(ctx, s.config.RequestTimeout)
 			defer cancel()
 			// Already validated above; a cache hit unless the target's Argo CD
@@ -712,6 +719,7 @@ func (s *Service) forEachTarget(
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
+			defer s.recoverTarget(ctx, target, operation, errs)
 			client, err := s.resolveClient(ctx, target.SourceID, target.ProviderResourceID, target.ClusterName)
 			if err != nil {
 				if updateErr := s.store.UpdateApplicationDeployment(
@@ -740,6 +748,39 @@ func (s *Service) forEachTarget(
 		return operationErr
 	}
 	return nil
+}
+
+// recoverTarget is deferred by every per-target goroutine. A panic there would
+// otherwise take down the whole process, so it becomes that target's failure
+// instead and its siblings carry on. Reconcile passes nil errs: a panic is not
+// a definitive answer from Argo CD, so it is only logged.
+func (s *Service) recoverTarget(
+	ctx context.Context,
+	target model.ApplicationDeployment,
+	operation string,
+	errs chan<- error,
+) {
+	recovered := recover()
+	if recovered == nil {
+		return
+	}
+	slog.Error("panic in application target operation",
+		"operation", operation, "target", target.ID, "cluster", target.ClusterName,
+		"panic", recovered, "stack", string(debug.Stack()))
+	if errs == nil {
+		return
+	}
+	err := s.store.UpdateApplicationDeployment(
+		context.WithoutCancel(ctx), target.ID, "failed",
+		target.SyncStatus, target.HealthStatus, "internal error while contacting Argo CD",
+	)
+	if err == nil {
+		return
+	}
+	select {
+	case errs <- fmt.Errorf("%s target %s: %w", operation, target.ID, err):
+	default:
+	}
 }
 
 func (s *Service) applicationSpec(
@@ -866,15 +907,37 @@ func (s *Service) Start(ctx context.Context) {
 	}()
 }
 
+const (
+	// reconcileConcurrency bounds how many Argo CD servers one Reconcile
+	// queries at once. Request-driven runtimes reconcile inside list and get
+	// handlers, so querying targets one after another made every read as slow
+	// as the sum of the slowest servers.
+	reconcileConcurrency = 4
+	// reconcileTargetTimeout caps a single target's status read for the same
+	// reason; an unreachable server is retried on a later pass.
+	reconcileTargetTimeout = 3 * time.Second
+	// reconcileMinInterval skips a target this instance checked moments ago, so
+	// a UI polling several endpoints does not query Argo CD on every request.
+	reconcileMinInterval = 10 * time.Second
+)
+
 // Reconcile refreshes active deployment state from Argo CD. Continuous
 // backends call it on a ticker; request-driven runtimes call it while serving
 // application reads.
+//
+// Only a definitive answer changes a target's status: the target has no Argo
+// CD access configured, the application is gone, or Argo CD reported its
+// state. Network failures, timeouts and database errors leave the row as it
+// was, since reconciling on every read would otherwise turn a brief outage
+// into permanently failed deployments.
 func (s *Service) Reconcile(ctx context.Context) {
 	targets, err := s.store.ListActiveApplicationDeployments(ctx)
 	if err != nil {
 		slog.Error("list active application deployments", "error", err)
 		return
 	}
+	var group errgroup.Group
+	group.SetLimit(reconcileConcurrency)
 	for _, target := range targets {
 		// Creation runs concurrently with reconciliation. A target can be selected
 		// as "creating" immediately before CreateApplication finishes and updates
@@ -883,46 +946,92 @@ func (s *Service) Reconcile(ctx context.Context) {
 			time.Since(target.UpdatedAt) < s.config.RequestTimeout {
 			continue
 		}
-		// Measured from the current attempt, not from CreatedAt: the target may have
-		// been onboarded long ago and re-synced seconds ago.
-		if time.Since(target.AttemptStartedAt) >= s.config.DeploymentTimeout {
-			if err := s.store.UpdateApplicationDeployment(
-				ctx, target.ID, "failed", target.SyncStatus, target.HealthStatus,
-				"deployment did not become healthy before the configured timeout",
-			); err != nil {
-				slog.Error("timeout application deployment", "target", target.ID, "error", err)
-			}
+		if !s.claimReconcile(target.ID) {
 			continue
 		}
-		client, err := s.resolveClient(ctx, target.SourceID, target.ProviderResourceID, target.ClusterName)
-		if err != nil {
-			if err := s.store.UpdateApplicationDeployment(
-				ctx, target.ID, "failed", target.SyncStatus, target.HealthStatus,
-				"Argo CD target configuration is no longer available",
-			); err != nil {
-				slog.Error("fail unconfigured application deployment", "target", target.ID, "error", err)
-			}
-			continue
+		group.Go(func() error {
+			defer s.recoverTarget(ctx, target, "reconcile", nil)
+			s.reconcileTarget(ctx, target)
+			return nil
+		})
+	}
+	_ = group.Wait()
+}
+
+// claimReconcile reports whether target is due for a check and, if so, records
+// this attempt. The record is per instance and in memory only: it is a load
+// shield, not state, so losing it on a cold start merely costs one extra check.
+func (s *Service) claimReconcile(targetID string) bool {
+	s.reconcileMu.Lock()
+	defer s.reconcileMu.Unlock()
+	now := time.Now()
+	if last, ok := s.lastReconciled[targetID]; ok && now.Sub(last) < reconcileMinInterval {
+		return false
+	}
+	if s.lastReconciled == nil {
+		s.lastReconciled = make(map[string]time.Time)
+	}
+	for id, last := range s.lastReconciled {
+		if now.Sub(last) >= reconcileMinInterval {
+			delete(s.lastReconciled, id)
 		}
-		callCtx, cancel := context.WithTimeout(ctx, s.config.RequestTimeout)
-		state, getErr := client.GetApplication(callCtx, target.ArgoApplication, s.config.ArgoNamespace)
-		cancel()
-		status, message := stateToDeployment(state)
-		switch {
-		case errors.Is(getErr, ErrApplicationNotFound):
-			status, message = "failed", "Argo CD application no longer exists"
-		case getErr != nil:
-			slog.Error("read Argo CD application status",
-				"target", target.ID, "cluster", target.ClusterName,
-				"application", target.ArgoApplication, "error", getErr)
-			status, message = "progressing", "unable to read application status from Argo CD"
-		}
+	}
+	s.lastReconciled[targetID] = now
+	return true
+}
+
+func (s *Service) reconcileTarget(ctx context.Context, target model.ApplicationDeployment) {
+	// Measured from the current attempt, not from CreatedAt: the target may have
+	// been onboarded long ago and re-synced seconds ago.
+	if time.Since(target.AttemptStartedAt) >= s.config.DeploymentTimeout {
 		if err := s.store.UpdateApplicationDeployment(
-			ctx, target.ID, status, valueOrUnknown(state.SyncStatus),
-			valueOrUnknown(state.HealthStatus), message,
+			ctx, target.ID, "failed", target.SyncStatus, target.HealthStatus,
+			"deployment did not become healthy before the configured timeout",
 		); err != nil {
-			slog.Error("update application deployment status", "target", target.ID, "error", err)
+			slog.Error("timeout application deployment", "target", target.ID, "error", err)
 		}
+		return
+	}
+
+	timeout := reconcileTargetTimeout
+	if s.config.RequestTimeout > 0 && s.config.RequestTimeout < timeout {
+		timeout = s.config.RequestTimeout
+	}
+	callCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	client, err := s.resolveClient(callCtx, target.SourceID, target.ProviderResourceID, target.ClusterName)
+	if errors.Is(err, errArgoTargetUnavailable) {
+		if err := s.store.UpdateApplicationDeployment(
+			ctx, target.ID, "failed", target.SyncStatus, target.HealthStatus,
+			"Argo CD target configuration is no longer available",
+		); err != nil {
+			slog.Error("fail unconfigured application deployment", "target", target.ID, "error", err)
+		}
+		return
+	}
+	if err != nil {
+		slog.Warn("resolve Argo CD client during reconcile; leaving status unchanged",
+			"target", target.ID, "cluster", target.ClusterName, "error", err)
+		return
+	}
+
+	state, getErr := client.GetApplication(callCtx, target.ArgoApplication, s.config.ArgoNamespace)
+	status, message := stateToDeployment(state)
+	switch {
+	case errors.Is(getErr, ErrApplicationNotFound):
+		status, message = "failed", "Argo CD application no longer exists"
+	case getErr != nil:
+		slog.Warn("read Argo CD application status; leaving status unchanged",
+			"target", target.ID, "cluster", target.ClusterName,
+			"application", target.ArgoApplication, "error", getErr)
+		return
+	}
+	if err := s.store.UpdateApplicationDeployment(
+		ctx, target.ID, status, valueOrUnknown(state.SyncStatus),
+		valueOrUnknown(state.HealthStatus), message,
+	); err != nil {
+		slog.Error("update application deployment status", "target", target.ID, "error", err)
 	}
 }
 

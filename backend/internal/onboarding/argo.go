@@ -105,8 +105,28 @@ type ArgoClient interface {
 
 type HTTPArgoClient struct {
 	serverURL string
-	token     string
 	client    *http.Client
+
+	// tokenMu guards token: a session client rewrites it on relogin while other
+	// requests on the same cached client are reading it.
+	tokenMu sync.Mutex
+	token   string
+}
+
+func (c *HTTPArgoClient) currentToken() string {
+	c.tokenMu.Lock()
+	defer c.tokenMu.Unlock()
+	return c.token
+}
+
+func (c *HTTPArgoClient) setToken(token string) {
+	c.tokenMu.Lock()
+	c.token = token
+	c.tokenMu.Unlock()
+}
+
+func (c *HTTPArgoClient) authorization() string {
+	return "Bearer " + c.currentToken()
 }
 
 func NewHTTPArgoClient(target config.ArgoTarget, timeoutConfig config.OnboardingConfig) (*HTTPArgoClient, error) {
@@ -145,7 +165,12 @@ func NewHTTPArgoClient(target config.ArgoTarget, timeoutConfig config.Onboarding
 type sessionArgoClient struct {
 	*HTTPArgoClient
 	username, password string
-	mu                 sync.Mutex
+	// loginMu serializes relogins so a burst of 401s logs in once. It is
+	// deliberately separate from mu: the login handshake runs verifyConnection,
+	// which takes mu, so holding mu across a login would deadlock on any new
+	// TLS connection.
+	loginMu sync.Mutex
+	mu      sync.Mutex
 	// pinnedSPKI is the SHA-256 hash of the first leaf certificate's
 	// SubjectPublicKeyInfo seen for this endpoint (trust-on-first-use),
 	// guarded by mu. Nil until the first successful handshake.
@@ -221,8 +246,23 @@ func (c *sessionArgoClient) verifyConnection(state tls.ConnectionState) error {
 	return nil
 }
 
+// relogin replaces a token the server rejected. A caller that waited on
+// loginMu while another request already refreshed the token reuses that token
+// instead of logging in again.
+func (c *sessionArgoClient) relogin(ctx context.Context, rejected string) (string, error) {
+	c.loginMu.Lock()
+	defer c.loginMu.Unlock()
+	if current := c.currentToken(); current != "" && current != rejected {
+		return current, nil
+	}
+	if err := c.login(ctx); err != nil {
+		return "", err
+	}
+	return c.currentToken(), nil
+}
+
 // login authenticates against Argo CD's session endpoint and stores the
-// resulting bearer token. Callers must hold c.mu.
+// resulting bearer token. It must not be called with c.mu held.
 func (c *sessionArgoClient) login(ctx context.Context) error {
 	body, err := json.Marshal(map[string]string{"username": c.username, "password": c.password})
 	if err != nil {
@@ -260,7 +300,7 @@ func (c *sessionArgoClient) login(ctx context.Context) error {
 	if payload.Token == "" {
 		return errors.New("Argo CD login response did not include a token")
 	}
-	c.token = payload.Token
+	c.setToken(payload.Token)
 	return nil
 }
 
@@ -278,20 +318,20 @@ func (t *sessionRoundTripper) RoundTrip(request *http.Request) (*http.Response, 
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	t.client.mu.Lock()
-	request.Header.Set("Authorization", "Bearer "+t.client.token)
-	t.client.mu.Unlock()
+	// A RoundTripper must not modify the caller's request.
+	sent := t.client.currentToken()
+	first := request.Clone(request.Context())
+	first.Header.Set("Authorization", "Bearer "+sent)
 
-	response, err := base.RoundTrip(request)
+	response, err := base.RoundTrip(first)
 	if err != nil || response.StatusCode != http.StatusUnauthorized {
 		return response, err
 	}
-	if request.Body != nil && request.GetBody == nil {
-		// The request body was already consumed and cannot be replayed safely.
-		return response, err
+	if request.Body != nil && request.Body != http.NoBody && request.GetBody == nil {
+		// The request body was already consumed and cannot be replayed safely,
+		// so the caller gets the untouched 401.
+		return response, nil
 	}
-	response.Body.Close()
-
 	retry := request.Clone(request.Context())
 	if request.GetBody != nil {
 		body, bodyErr := request.GetBody()
@@ -300,12 +340,15 @@ func (t *sessionRoundTripper) RoundTrip(request *http.Request) (*http.Response, 
 		}
 		retry.Body = body
 	}
-	t.client.mu.Lock()
-	loginErr := t.client.login(request.Context())
-	token := t.client.token
-	t.client.mu.Unlock()
-	if loginErr != nil {
-		return response, nil
+	io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+	response.Body.Close()
+
+	token, err := t.client.relogin(request.Context(), sent)
+	if err != nil {
+		if retry.Body != nil {
+			retry.Body.Close()
+		}
+		return nil, fmt.Errorf("relog in to Argo CD after 401: %w", err)
 	}
 	retry.Header.Set("Authorization", "Bearer "+token)
 	return base.RoundTrip(retry)
@@ -369,7 +412,7 @@ func (c *HTTPArgoClient) CreateApplication(
 	if err != nil {
 		return ApplicationState{}, err
 	}
-	request.Header.Set("Authorization", "Bearer "+c.token)
+	request.Header.Set("Authorization", c.authorization())
 	request.Header.Set("Content-Type", "application/json")
 	return c.do(request)
 }
@@ -384,7 +427,7 @@ func (c *HTTPArgoClient) GetApplication(
 	if err != nil {
 		return ApplicationState{}, err
 	}
-	request.Header.Set("Authorization", "Bearer "+c.token)
+	request.Header.Set("Authorization", c.authorization())
 	state, err := c.do(request)
 	var apiErr argoAPIError
 	if errors.As(err, &apiErr) && apiErr.status == http.StatusForbidden {
@@ -412,7 +455,7 @@ func (c *HTTPArgoClient) SyncApplication(
 	if err != nil {
 		return ApplicationState{}, err
 	}
-	request.Header.Set("Authorization", "Bearer "+c.token)
+	request.Header.Set("Authorization", c.authorization())
 	request.Header.Set("Content-Type", "application/json")
 	return c.do(request)
 }
@@ -431,7 +474,7 @@ func (c *HTTPArgoClient) DeleteApplication(
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Authorization", "Bearer "+c.token)
+	request.Header.Set("Authorization", c.authorization())
 	// Argo CD's grpc-gateway rejects a DELETE without a media type as 415 even
 	// though the request carries no body, which made every offboard fail.
 	request.Header.Set("Content-Type", "application/json")
@@ -470,7 +513,7 @@ func (c *HTTPArgoClient) ApplicationResources(
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("Authorization", "Bearer "+c.token)
+	request.Header.Set("Authorization", c.authorization())
 
 	var tree struct {
 		Nodes []struct {
@@ -593,7 +636,7 @@ func (c *HTTPArgoClient) resourceSyncStates(
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("Authorization", "Bearer "+c.token)
+	request.Header.Set("Authorization", c.authorization())
 
 	var application struct {
 		Status struct {
@@ -625,7 +668,7 @@ func (c *HTTPArgoClient) ResourceManifest(
 	if err != nil {
 		return "", err
 	}
-	request.Header.Set("Authorization", "Bearer "+c.token)
+	request.Header.Set("Authorization", c.authorization())
 
 	var payload struct {
 		Manifest string `json:"manifest"`
@@ -650,7 +693,7 @@ func (c *HTTPArgoClient) DesiredResourceManifest(
 	if err != nil {
 		return "", err
 	}
-	request.Header.Set("Authorization", "Bearer "+c.token)
+	request.Header.Set("Authorization", c.authorization())
 
 	var payload struct {
 		Manifests []string `json:"manifests"`
@@ -699,7 +742,7 @@ func (c *HTTPArgoClient) DeleteResource(
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Authorization", "Bearer "+c.token)
+	request.Header.Set("Authorization", c.authorization())
 	// The same grpc-gateway media-type requirement that DeleteApplication hits.
 	request.Header.Set("Content-Type", "application/json")
 	response, err := c.client.Do(request)
@@ -739,7 +782,7 @@ func (c *HTTPArgoClient) PodLogs(
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("Authorization", "Bearer "+c.token)
+	request.Header.Set("Authorization", c.authorization())
 	request.Header.Set("Accept", "application/json")
 
 	streamClient := *c.client

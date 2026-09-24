@@ -36,7 +36,14 @@ func GCPClientOptions(
 	source TokenSource,
 	cloudSource model.CloudSource,
 ) ([]option.ClientOption, error) {
-	if cloudSource.WorkloadIdentityProvider != "" && available(ctx, source) {
+	federate := false
+	if cloudSource.WorkloadIdentityProvider != "" {
+		var err error
+		if federate, err = checkFederation(ctx, source); err != nil {
+			return nil, fmt.Errorf("federate Google credentials for %s: %w", cloudSource.ID, err)
+		}
+	}
+	if federate {
 		tokenSource, err := externalaccount.NewTokenSource(ctx, externalaccount.Config{
 			Audience:         cloudSource.WorkloadIdentityProvider,
 			SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
