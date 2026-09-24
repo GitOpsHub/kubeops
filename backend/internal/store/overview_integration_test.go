@@ -214,3 +214,94 @@ func millis(value *int64) int64 {
 	}
 	return *value
 }
+
+func TestClusterSortAndSyncRunScope(t *testing.T) {
+	databaseURL := integrationDatabaseURL(t)
+
+	ctx := context.Background()
+	repository, err := Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, err := repository.pool.Exec(context.Background(), truncateIntegrationData); err != nil {
+			t.Errorf("clean integration data: %v", err)
+		}
+		repository.Close()
+	})
+	if _, err := repository.pool.Exec(ctx, truncateIntegrationData); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.UpsertSources(ctx, []model.CloudSource{
+		{ID: "aws-a", Provider: model.ProviderAWS, Name: "AWS A", ScopeID: "1", Enabled: true},
+		{ID: "gcp-b", Provider: model.ProviderGCP, Name: "GCP B", ScopeID: "2", Enabled: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.pool.Exec(ctx, `
+		INSERT INTO clusters (source_id, provider, provider_resource_id, name, location,
+			kubernetes_version, node_count) VALUES
+		('aws-a', 'aws', 'a', 'a', 'x', 'v1.9.3-eks', 3),
+		('aws-a', 'aws', 'b', 'b', 'x', '1.10.1', NULL),
+		('gcp-b', 'gcp', 'c', 'c', 'x', '1.10.0-gke.1', 5),
+		('gcp-b', 'gcp', 'd', 'd', 'x', '', 3)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.pool.Exec(ctx, `
+		INSERT INTO sync_runs (source_id, trigger, status, queued_at) VALUES
+		('aws-a', 'manual', 'succeeded', NOW() - INTERVAL '1 minute'),
+		('gcp-b', 'manual', 'succeeded', NOW())`); err != nil {
+		t.Fatal(err)
+	}
+
+	names := func(filter model.ClusterFilter) []string {
+		t.Helper()
+		filter.Page, filter.PageSize = 1, 25
+		page, err := repository.ListClusters(ctx, filter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result := make([]string, 0, len(page.Items))
+		for _, cluster := range page.Items {
+			result = append(result, cluster.Name)
+		}
+		return result
+	}
+	for _, test := range []struct {
+		filter model.ClusterFilter
+		want   []string
+	}{
+		{model.ClusterFilter{Sort: model.ClusterSortName, Descending: true}, []string{"d", "c", "b", "a"}},
+		// Numeric version order puts 1.9 before 1.10; unparsable versions go last.
+		{model.ClusterFilter{Sort: model.ClusterSortVersion}, []string{"a", "c", "b", "d"}},
+		{model.ClusterFilter{Sort: model.ClusterSortVersion, Descending: true}, []string{"b", "c", "a", "d"}},
+		// Ties on node count fall back to the id, and an unknown count sorts last.
+		{model.ClusterFilter{Sort: model.ClusterSortNodes, Descending: true}, []string{"c", "?", "?", "b"}},
+	} {
+		got := names(test.filter)
+		if len(got) != len(test.want) {
+			t.Fatalf("sort %#v: got %v", test.filter, got)
+		}
+		for index, name := range test.want {
+			if name != "?" && got[index] != name {
+				t.Fatalf("sort %#v: expected %v, got %v", test.filter, test.want, got)
+			}
+		}
+	}
+	if first, second := names(model.ClusterFilter{Sort: model.ClusterSortNodes}),
+		names(model.ClusterFilter{Sort: model.ClusterSortNodes}); !reflect.DeepEqual(first, second) {
+		t.Fatalf("tied rows changed order between reads: %v then %v", first, second)
+	}
+
+	runs, err := repository.ListSyncRuns(ctx, 10, []string{"aws-a"})
+	if err != nil || len(runs) != 1 || runs[0].SourceID != "aws-a" {
+		t.Fatalf("unexpected scoped runs: %#v, %v", runs, err)
+	}
+	if runs, err := repository.ListSyncRuns(ctx, 10, []string{}); err != nil || len(runs) != 0 {
+		t.Fatalf("an empty scope must match nothing: %#v, %v", runs, err)
+	}
+	if runs, err := repository.ListSyncRuns(ctx, 10, nil); err != nil || len(runs) != 2 ||
+		runs[0].SourceID != "gcp-b" {
+		t.Fatalf("unexpected unscoped runs: %#v, %v", runs, err)
+	}
+}

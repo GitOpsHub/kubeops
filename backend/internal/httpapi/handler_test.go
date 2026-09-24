@@ -36,6 +36,8 @@ type fakeRepository struct {
 	// overviewSources records the scope the handler asked for; nil means the
 	// handler never called Overview.
 	overviewSources []string
+	runLimit        int
+	runSources      []string
 }
 
 func (f *fakeRepository) Overview(_ context.Context, sourceIDs []string) (model.OverviewStats, error) {
@@ -66,7 +68,8 @@ func (f *fakeRepository) GetKubespinArgoDetails(context.Context, string) (model.
 	}
 	return f.kubespin, nil
 }
-func (f *fakeRepository) ListSyncRuns(context.Context, int) ([]model.SyncRun, error) {
+func (f *fakeRepository) ListSyncRuns(_ context.Context, limit int, sourceIDs []string) ([]model.SyncRun, error) {
+	f.runLimit, f.runSources = limit, sourceIDs
 	return []model.SyncRun{}, f.listErr
 }
 func (f *fakeRepository) QueueSync(_ context.Context, sourceID, trigger string) (model.SyncRun, error) {

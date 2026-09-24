@@ -28,7 +28,7 @@ type Repository interface {
 	ListSources(context.Context) ([]model.SourceSummary, error)
 	ListClusters(context.Context, model.ClusterFilter) (model.ClusterPage, error)
 	GetCluster(context.Context, string) (model.Cluster, error)
-	ListSyncRuns(context.Context, int) ([]model.SyncRun, error)
+	ListSyncRuns(context.Context, int, []string) ([]model.SyncRun, error)
 	QueueSync(context.Context, string, string) (model.SyncRun, error)
 	GetKubespinArgoDetails(context.Context, string) (model.KubespinArgoCDDetails, error)
 	Overview(context.Context, []string) (model.OverviewStats, error)
@@ -412,6 +412,26 @@ func (api *API) clusters(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "page must be positive and pageSize must be between 1 and 200")
 		return
 	}
+	switch sort := query.Get("sort"); sort {
+	case "", model.ClusterSortName, model.ClusterSortProvider, model.ClusterSortStatus,
+		model.ClusterSortVersion, model.ClusterSortNodes, model.ClusterSortLastSeen:
+		filter.Sort = sort
+	default:
+		writeError(w, http.StatusBadRequest,
+			"sort must be name, provider, status, version, nodes, or lastSeen")
+		return
+	}
+	switch query.Get("order") {
+	case "", "asc":
+	case "desc":
+		filter.Descending = true
+	default:
+		writeError(w, http.StatusBadRequest, "order must be asc or desc")
+		return
+	}
+	if filter.Sort == "" && filter.Descending {
+		filter.Sort = model.ClusterSortName
+	}
 
 	page, err := api.store.ListClusters(r.Context(), filter)
 	if err != nil {
@@ -449,14 +469,23 @@ func (api *API) sources(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *API) syncRuns(w http.ResponseWriter, r *http.Request) {
-	limit := intQuery(r.URL.Query().Get("limit"), 50)
+	query := r.URL.Query()
+	limit := intQuery(query.Get("limit"), 50)
 	if limit < 1 || limit > 200 {
 		writeError(w, http.StatusBadRequest, "limit must be between 1 and 200")
 		return
 	}
-	// Fetch a wider window before applying runtime configuration scoping so stale
-	// runs from a previous deployment cannot crowd configured sources out.
-	runs, err := api.store.ListSyncRuns(r.Context(), 200)
+	// Scoping happens in SQL so runs left by a previous deployment's sources
+	// cannot crowd configured sources out of the window.
+	scope := api.configuredSourceIDs()
+	if sourceID := strings.TrimSpace(query.Get("sourceId")); sourceID != "" {
+		if _, ok := api.source(sourceID); ok {
+			scope = []string{sourceID}
+		} else {
+			scope = []string{}
+		}
+	}
+	runs, err := api.store.ListSyncRuns(r.Context(), limit, scope)
 	if err != nil {
 		if aborted(r) {
 			return
@@ -465,21 +494,7 @@ func (api *API) syncRuns(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "unable to list sync runs")
 		return
 	}
-	configured := make(map[string]struct{}, len(api.config.CloudSources))
-	for _, source := range api.config.CloudSources {
-		configured[source.ID] = struct{}{}
-	}
-	visible := make([]model.SyncRun, 0, limit)
-	for _, run := range runs {
-		if _, ok := configured[run.SourceID]; !ok {
-			continue
-		}
-		visible = append(visible, run)
-		if len(visible) == limit {
-			break
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": visible})
+	writeJSON(w, http.StatusOK, map[string]any{"items": runs})
 }
 
 func (api *API) queueSync(w http.ResponseWriter, r *http.Request) {

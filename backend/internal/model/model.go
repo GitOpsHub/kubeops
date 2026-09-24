@@ -75,9 +75,22 @@ type ClusterFilter struct {
 	Status         string
 	Search         string
 	IncludeRemoved bool
-	Page           int
-	PageSize       int
+	// Sort is one of the ClusterSort* keys; empty keeps the default name order.
+	Sort string
+	// Descending reverses Sort.
+	Descending bool
+	Page       int
+	PageSize   int
 }
+
+const (
+	ClusterSortName     = "name"
+	ClusterSortProvider = "provider"
+	ClusterSortStatus   = "status"
+	ClusterSortVersion  = "version"
+	ClusterSortNodes    = "nodes"
+	ClusterSortLastSeen = "lastSeen"
+)
 
 type ClusterPage struct {
 	Items    []Cluster `json:"items"`

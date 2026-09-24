@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GitOpsHub/kubeops/backend/internal/model"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -67,6 +68,24 @@ func TestValidUUID(t *testing.T) {
 	for _, test := range tests {
 		if got := validUUID(test.id); got != test.want {
 			t.Errorf("validUUID(%q) = %t, want %t", test.id, got, test.want)
+		}
+	}
+}
+
+func TestClusterOrder(t *testing.T) {
+	for _, test := range []struct {
+		filter model.ClusterFilter
+		want   string
+	}{
+		{filter: model.ClusterFilter{}, want: "c.name, c.provider, c.location, c.id"},
+		{filter: model.ClusterFilter{Sort: "bogus"}, want: "c.name, c.provider, c.location, c.id"},
+		{filter: model.ClusterFilter{Sort: model.ClusterSortNodes, Descending: true},
+			want: "c.node_count DESC NULLS LAST, c.id"},
+		{filter: model.ClusterFilter{Sort: model.ClusterSortLastSeen},
+			want: "c.last_seen_at ASC NULLS LAST, c.id"},
+	} {
+		if got := clusterOrder(test.filter); got != test.want {
+			t.Errorf("clusterOrder(%#v) = %q, want %q", test.filter, got, test.want)
 		}
 	}
 }

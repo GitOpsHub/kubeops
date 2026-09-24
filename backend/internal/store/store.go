@@ -380,8 +380,8 @@ func (s *Store) ListClusters(ctx context.Context, filter model.ClusterFilter) (m
 		FROM clusters c
 		JOIN cloud_sources s ON s.id = c.source_id
 		WHERE %s
-		ORDER BY c.name, c.provider, c.location
-		LIMIT $%d OFFSET $%d`, where, len(args)-1, len(args))
+		ORDER BY %s
+		LIMIT $%d OFFSET $%d`, where, clusterOrder(filter), len(args)-1, len(args))
 
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -411,6 +411,43 @@ func (s *Store) ListClusters(ctx context.Context, filter model.ClusterFilter) (m
 	return model.ClusterPage{
 		Items: items, Total: total, Page: filter.Page, PageSize: filter.PageSize,
 	}, rows.Err()
+}
+
+// clusterSortColumns whitelists the ORDER BY expressions a caller may pick, so
+// the sort key never reaches SQL as text. Versions compare numerically by
+// major, minor, and patch; provider strings such as "v1.34.2-eks-1" otherwise
+// sort 1.9 after 1.10.
+var clusterSortColumns = map[string][]string{
+	model.ClusterSortName:     {"c.name"},
+	model.ClusterSortProvider: {"c.provider"},
+	model.ClusterSortStatus:   {"c.status"},
+	model.ClusterSortVersion: {
+		`(regexp_match(c.kubernetes_version, '(\d+)\.(\d+)(?:\.(\d+))?'))[1]::int`,
+		`(regexp_match(c.kubernetes_version, '(\d+)\.(\d+)(?:\.(\d+))?'))[2]::int`,
+		`(regexp_match(c.kubernetes_version, '(\d+)\.(\d+)(?:\.(\d+))?'))[3]::int`,
+		"c.kubernetes_version",
+	},
+	model.ClusterSortNodes:    {"c.node_count"},
+	model.ClusterSortLastSeen: {"c.last_seen_at"},
+}
+
+// clusterOrder builds the ORDER BY clause. The id always breaks ties so rows
+// that compare equal keep their order across pages, and NULLs such as an
+// unreported node count sort last in either direction.
+func clusterOrder(filter model.ClusterFilter) string {
+	columns, ok := clusterSortColumns[filter.Sort]
+	if !ok {
+		return "c.name, c.provider, c.location, c.id"
+	}
+	direction := "ASC"
+	if filter.Descending {
+		direction = "DESC"
+	}
+	terms := make([]string, 0, len(columns)+1)
+	for _, column := range columns {
+		terms = append(terms, column+" "+direction+" NULLS LAST")
+	}
+	return strings.Join(append(terms, "c.id"), ", ")
 }
 
 func (s *Store) GetCluster(ctx context.Context, id string) (model.Cluster, error) {
@@ -599,7 +636,10 @@ func (s *Store) ListArgoTargets(ctx context.Context, key []byte) ([]config.ArgoT
 	return targets, rows.Err()
 }
 
-func (s *Store) ListSyncRuns(ctx context.Context, limit int) ([]model.SyncRun, error) {
+// ListSyncRuns returns the newest runs first. sourceIDs scopes them like
+// model.ClusterFilter.SourceIDs: nil disables scoping and an empty slice
+// matches nothing.
+func (s *Store) ListSyncRuns(ctx context.Context, limit int, sourceIDs []string) ([]model.SyncRun, error) {
 	if limit < 1 || limit > 200 {
 		limit = 50
 	}
@@ -609,8 +649,9 @@ func (s *Store) ListSyncRuns(ctx context.Context, limit int) ([]model.SyncRun, e
 			r.queued_at, r.started_at, r.completed_at
 		FROM sync_runs r
 		JOIN cloud_sources s ON s.id = r.source_id
-		ORDER BY r.queued_at DESC
-		LIMIT $1`, limit)
+		WHERE $2::text[] IS NULL OR r.source_id = ANY($2)
+		ORDER BY r.queued_at DESC, r.id
+		LIMIT $1`, limit, sourceIDs)
 	if err != nil {
 		return nil, err
 	}
