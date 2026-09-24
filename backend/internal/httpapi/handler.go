@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
 
@@ -160,7 +161,7 @@ func newHandler(
 	} else {
 		mux.Handle(argoProxyPrefix, proxy)
 	}
-	return withCORS(withRequestLog(withIdentityToken(mux)), cfg.CORSAllowedOrigin)
+	return withRecoverer(withCORS(withRequestLog(withIdentityToken(mux)), cfg.CORSAllowedOrigin))
 }
 
 // withIdentityToken carries the platform's OIDC identity token from the request
@@ -169,8 +170,11 @@ func newHandler(
 // in its environment, so without this the backend would silently fall back to
 // the provider SDK default chains in production.
 //
-// The header is injected by the platform, not by the browser: the CORS policy
-// above never allows it through, so a caller cannot supply its own.
+// The CORS policy only stops a browser page from setting this header; any
+// non-browser caller can send it, and the API has no authentication. What keeps
+// that harmless is on the cloud side: a supplied token is only useful if it is
+// a valid platform-issued token that the source's trust policy accepts. It is
+// also why the Argo CD proxy strips every x-vercel-* header before forwarding.
 func withIdentityToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := r.Header.Get(cloudauth.VercelOIDCTokenHeader)
@@ -335,7 +339,7 @@ func (api *API) scaleNodePool(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		DesiredCount *int32 `json:"desiredCount"`
 	}
-	decoder := json.NewDecoder(r.Body)
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil || request.DesiredCount == nil || *request.DesiredCount < 0 {
 		writeError(w, http.StatusBadRequest, "desiredCount must be a nonnegative integer")
@@ -500,13 +504,19 @@ func (api *API) queueSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run, err := api.store.QueueSync(r.Context(), sourceID, "manual")
-	if errors.Is(err, store.ErrSyncAlreadyActive) {
+	switch {
+	case errors.Is(err, store.ErrSyncAlreadyActive):
 		writeError(w, http.StatusConflict, "a sync is already active for this cloud source")
 		return
-	}
-	if err != nil {
-		slog.Error("queue manual sync", "source", sourceID, "error", err)
+	case errors.Is(err, pgx.ErrNoRows):
 		writeError(w, http.StatusNotFound, "enabled cloud source not found")
+		return
+	case err != nil:
+		if aborted(r) {
+			return
+		}
+		slog.Error("queue manual sync", "source", sourceID, "error", err)
+		writeError(w, http.StatusInternalServerError, "unable to queue cloud source sync")
 		return
 	}
 	writeJSON(w, http.StatusAccepted, run)
@@ -597,9 +607,13 @@ func resourceRef(r *http.Request) (onboarding.ResourceRef, bool) {
 }
 
 // writeResourceError maps the shared failure modes of the resource endpoints.
-func (api *API) writeResourceError(w http.ResponseWriter, err error, action string) {
+func (api *API) writeResourceError(w http.ResponseWriter, r *http.Request, err error, action string) {
 	var validationError onboarding.ValidationError
 	switch {
+	case aborted(r):
+		return
+	case errors.Is(err, pgx.ErrNoRows):
+		writeError(w, http.StatusNotFound, "application onboarding not found")
 	case errors.Is(err, onboarding.ErrTargetNotFound):
 		writeError(w, http.StatusNotFound, "deployment target not found")
 	case errors.Is(err, onboarding.ErrResourceNotFound),
@@ -622,7 +636,7 @@ func (api *API) applicationResources(w http.ResponseWriter, r *http.Request) {
 	}
 	nodes, err := api.onboarder.Resources(r.Context(), r.PathValue("id"), r.PathValue("targetId"))
 	if err != nil {
-		api.writeResourceError(w, err, "list application resources")
+		api.writeResourceError(w, r, err, "list application resources")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": nodes})
@@ -642,7 +656,7 @@ func (api *API) applicationResourceManifest(w http.ResponseWriter, r *http.Reque
 		r.Context(), r.PathValue("id"), r.PathValue("targetId"), ref,
 	)
 	if err != nil {
-		api.writeResourceError(w, err, "read application resource manifest")
+		api.writeResourceError(w, r, err, "read application resource manifest")
 		return
 	}
 	writeJSON(w, http.StatusOK, manifests)
@@ -661,7 +675,7 @@ func (api *API) deleteApplicationResource(w http.ResponseWriter, r *http.Request
 	if err := api.onboarder.DeleteResource(
 		r.Context(), r.PathValue("id"), r.PathValue("targetId"), ref,
 	); err != nil {
-		api.writeResourceError(w, err, "delete application resource")
+		api.writeResourceError(w, r, err, "delete application resource")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -692,7 +706,7 @@ func (api *API) applicationPodLogs(w http.ResponseWriter, r *http.Request) {
 		r.Context(), r.PathValue("id"), r.PathValue("targetId"), ref,
 	)
 	if err != nil {
-		api.writeResourceError(w, err, "stream Pod logs")
+		api.writeResourceError(w, r, err, "stream Pod logs")
 		return
 	}
 	defer stream.Close()
@@ -924,6 +938,63 @@ func withCORS(next http.Handler, allowedOrigin string) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// withRecoverer turns a handler panic into a logged stack and a JSON 500.
+// net/http would otherwise just drop the connection, which the UI reports as a
+// network error with nothing in the logs to explain it.
+func withRecoverer(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tracked := &headerTracker{ResponseWriter: w}
+		defer func() {
+			recovered := recover()
+			if recovered == nil {
+				return
+			}
+			// ReverseProxy aborts a half-copied response this way on purpose;
+			// net/http knows to close the connection quietly.
+			if recovered == http.ErrAbortHandler {
+				panic(recovered)
+			}
+			slog.Error("panic serving API request",
+				"method", r.Method, "path", r.URL.Path,
+				"panic", recovered, "stack", string(debug.Stack()))
+			if !tracked.wroteHeader {
+				writeError(w, http.StatusInternalServerError, "internal server error")
+			}
+		}()
+		next.ServeHTTP(tracked, r)
+	})
+}
+
+// headerTracker records whether a response has started, so withRecoverer
+// never writes a second status line into a response already on the wire.
+type headerTracker struct {
+	http.ResponseWriter
+	wroteHeader bool
+}
+
+func (t *headerTracker) WriteHeader(status int) {
+	t.wroteHeader = true
+	t.ResponseWriter.WriteHeader(status)
+}
+
+func (t *headerTracker) Write(body []byte) (int, error) {
+	t.wroteHeader = true
+	return t.ResponseWriter.Write(body)
+}
+
+// Flush keeps streaming endpoints (Pod logs) working through the wrapper.
+func (t *headerTracker) Flush() {
+	t.wroteHeader = true
+	if flusher, ok := t.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// Unwrap lets http.ResponseController reach the underlying writer.
+func (t *headerTracker) Unwrap() http.ResponseWriter {
+	return t.ResponseWriter
 }
 
 func withRequestLog(next http.Handler) http.Handler {

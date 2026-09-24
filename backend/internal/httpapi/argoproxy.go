@@ -171,7 +171,7 @@ func buildTargetProxy(
 	onUnauthorized func(),
 ) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
-		Transport: transport,
+		Transport: requireAuthorization{base: transport},
 		// The Argo CD UI populates its lists and live resource views from long-lived
 		// watch streams. Buffering those holds events until enough bytes accumulate,
 		// which leaves the UI sitting on loading skeletons, so every write is flushed
@@ -197,7 +197,15 @@ func buildTargetProxy(
 			}
 			// The browser holds no Argo CD credentials, and any it did hold would be
 			// for a different origin. Replace them with the target's own credential.
+			// The platform's identity headers (x-vercel-oidc-token among them) are
+			// KubeOps' own cloud credential and must never reach an Argo CD server.
 			r.Out.Header.Del("Cookie")
+			r.Out.Header.Del("Authorization")
+			for name := range r.Out.Header {
+				if strings.HasPrefix(strings.ToLower(name), "x-vercel-") {
+					r.Out.Header.Del(name)
+				}
+			}
 			if header := authHeader(r.Out); header != "" {
 				r.Out.Header.Set("Authorization", header)
 			}
@@ -216,6 +224,27 @@ func buildTargetProxy(
 			http.Error(w, "Argo CD could not be reached", http.StatusBadGateway)
 		},
 	}
+}
+
+// errArgoCredentialUnavailable is returned in place of forwarding a request
+// that has no Argo CD credential, such as when a kubespin login failed.
+var errArgoCredentialUnavailable = errors.New("no Argo CD credential is available for this target")
+
+// requireAuthorization refuses to send a request upstream without the
+// credential Rewrite attaches. Rewrite cannot abort a request itself, and an
+// unauthenticated request would otherwise reach Argo CD anyway.
+type requireAuthorization struct {
+	base http.RoundTripper
+}
+
+func (t requireAuthorization) RoundTrip(request *http.Request) (*http.Response, error) {
+	if request.Header.Get("Authorization") == "" {
+		if request.Body != nil {
+			request.Body.Close()
+		}
+		return nil, errArgoCredentialUnavailable
+	}
+	return t.base.RoundTrip(request)
 }
 
 // kubespinArgoSession authenticates to a kubespin cluster's Argo CD server

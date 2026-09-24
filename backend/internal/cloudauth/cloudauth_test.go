@@ -244,3 +244,70 @@ func TestAWSConfigUsesTheRequestScopedToken(t *testing.T) {
 		t.Fatalf("expected a web identity provider, got %T", cfg.Credentials)
 	}
 }
+
+// In vercel mode a federated source with no token must fail loudly: the
+// default-chain fallback finds nothing in a deployed function, so the only
+// symptom would be an inventory that silently goes empty.
+func TestVercelModeRequiresTokenForFederatedSources(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAEXAMPLE")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
+	t.Setenv("AWS_REGION", "us-east-1")
+	t.Setenv(VercelOIDCTokenEnv, "")
+
+	awsSource := model.CloudSource{ID: "aws", RoleARN: "arn:aws:iam::123456789012:role/KubeOps"}
+	gcpSource := model.CloudSource{
+		ID:                        "gcp",
+		WorkloadIdentityProvider:  "//iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p/providers/v",
+		ImpersonateServiceAccount: "kubeops@example.iam.gserviceaccount.com",
+	}
+	azureSource := model.CloudSource{
+		ID:       "azure",
+		TenantID: "00000000-0000-0000-0000-000000000000",
+		ClientID: "11111111-1111-1111-1111-111111111111",
+	}
+	build := map[string]func(context.Context, TokenSource) error{
+		"aws": func(ctx context.Context, source TokenSource) error {
+			_, err := AWSConfig(ctx, source, awsSource, "us-east-1")
+			return err
+		},
+		"gcp": func(ctx context.Context, source TokenSource) error {
+			_, err := GCPClientOptions(ctx, source, gcpSource)
+			return err
+		},
+		"azure": func(ctx context.Context, source TokenSource) error {
+			_, err := AzureCredential(ctx, source, azureSource)
+			return err
+		},
+	}
+
+	tests := []struct {
+		name     string
+		mode     string
+		token    string
+		provider string
+		wantErr  bool
+	}{
+		{name: "vercel mode, no token, aws", mode: ModeVercel, provider: "aws", wantErr: true},
+		{name: "vercel mode, no token, gcp", mode: ModeVercel, provider: "gcp", wantErr: true},
+		{name: "vercel mode, no token, azure", mode: ModeVercel, provider: "azure", wantErr: true},
+		{name: "vercel mode with token, aws", mode: ModeVercel, token: "jwt", provider: "aws"},
+		{name: "vercel mode with token, azure", mode: ModeVercel, token: "jwt", provider: "azure"},
+		{name: "auto mode, no token, falls back", mode: ModeAuto, provider: "aws"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if test.mode == ModeAuto {
+				// Force auto mode to resolve a source so the fallback is exercised.
+				t.Setenv("VERCEL", "1")
+			}
+			ctx := WithToken(t.Context(), test.token)
+			err := build[test.provider](ctx, Resolve(test.mode))
+			if test.wantErr != errors.Is(err, ErrIdentityTokenRequired) {
+				t.Fatalf("err = %v, want ErrIdentityTokenRequired=%t", err, test.wantErr)
+			}
+			if !test.wantErr && err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

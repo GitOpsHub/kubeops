@@ -30,7 +30,18 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	repository, err := store.Open(ctx, cfg.DatabaseURL)
+	// Startup (connect, migrate, load config rows, recover stale syncs) gets
+	// its own deadline: an unreachable database or a migration lock held by a
+	// wedged instance must fail this cold start, not hang it until the platform
+	// kills the function. ctx itself lives on for the background workers.
+	startupCtx, cancelStartup := context.WithTimeout(ctx, 60*time.Second)
+	defer cancelStartup()
+
+	repository, err := store.OpenWithOptions(startupCtx, cfg.DatabaseURL, store.Options{
+		MaxConns:     cfg.DBMaxConns,
+		Pooler:       cfg.DBPooler,
+		MigrationURL: cfg.DatabaseURLUnpooled,
+	})
 	if err != nil {
 		slog.Error("initialize database", "error", err)
 		os.Exit(1)
@@ -43,14 +54,14 @@ func main() {
 	// cmd/seed-argo-target) instead of editing cloud-sources.yaml /
 	// argo-targets.yaml and redeploying. YAML-only entries (local dev
 	// sources tied to one developer's machine) still work unchanged.
-	dbSources, err := repository.ListCloudSourcesConfig(ctx)
+	dbSources, err := repository.ListCloudSourcesConfig(startupCtx)
 	if err != nil {
 		slog.Error("load cloud sources from database", "error", err)
 		os.Exit(1)
 	}
 	cfg.CloudSources = config.MergeCloudSources(cfg.CloudSources, dbSources)
 
-	dbTargets, err := repository.ListArgoTargets(ctx, cfg.Onboarding.ArgoCredentialKey)
+	dbTargets, err := repository.ListArgoTargets(startupCtx, cfg.Onboarding.ArgoCredentialKey)
 	if err != nil {
 		slog.Error("load Argo CD targets from database", "error", err)
 		os.Exit(1)
@@ -72,7 +83,7 @@ func main() {
 		}
 	}
 
-	if err := repository.UpsertSources(ctx, cfg.CloudSources); err != nil {
+	if err := repository.UpsertSources(startupCtx, cfg.CloudSources); err != nil {
 		slog.Error("reconcile cloud sources", "error", err)
 		os.Exit(1)
 	}
@@ -105,10 +116,11 @@ func main() {
 		cfg.CloudSources,
 		cfg.SyncInterval,
 		cfg.SyncWorkers,
+		syncer.WithSourceTimeout(cfg.SyncSourceTimeout),
 	)
 	if cfg.BackgroundWorkers {
 		syncService.Start(ctx)
-	} else if err := syncService.PrepareRequestDriven(ctx); err != nil {
+	} else if err := syncService.PrepareRequestDriven(startupCtx); err != nil {
 		slog.Error("prepare request-driven cluster syncs", "error", err)
 		os.Exit(1)
 	}
@@ -118,6 +130,7 @@ func main() {
 		slog.Error("initialize application onboarding", "error", err)
 		os.Exit(1)
 	}
+	cancelStartup()
 	if cfg.BackgroundWorkers {
 		onboardingService.Start(ctx)
 	}

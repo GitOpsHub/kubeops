@@ -20,6 +20,14 @@ import (
 // so the caller must fall back to the provider SDK's default credential chain.
 var ErrNoIdentityToken = errors.New("cloudauth: no workload identity token available")
 
+// ErrIdentityTokenRequired is returned instead of falling back when
+// CLOUD_IDENTITY_MODE=vercel and a federated source has no token. Mode vercel
+// is an explicit promise that federation is in use, and the silent fallback is
+// exactly the failure that makes a deployment quietly see no clusters.
+var ErrIdentityTokenRequired = errors.New(
+	"cloudauth: CLOUD_IDENTITY_MODE is vercel but this request carries no identity token",
+)
+
 // TokenSource yields the OIDC identity token that proves this deployment's
 // identity to a cloud provider.
 type TokenSource interface {
@@ -65,7 +73,13 @@ func TokenFromContext(ctx context.Context) (string, bool) {
 }
 
 // VercelTokenSource reads Vercel's short-lived OIDC token.
-type VercelTokenSource struct{}
+type VercelTokenSource struct {
+	// Required turns a missing token into ErrIdentityTokenRequired for sources
+	// that opt into federation, rather than a fallback to the default chain.
+	Required bool
+}
+
+func (s VercelTokenSource) required() bool { return s.Required }
 
 // Token prefers the request-scoped token and falls back to the environment.
 // Deployed functions only ever receive the token as a request header; the
@@ -91,7 +105,7 @@ func Resolve(mode string) TokenSource {
 	case ModeOff:
 		return nil
 	case ModeVercel:
-		return VercelTokenSource{}
+		return VercelTokenSource{Required: true}
 	default:
 		// ModeAuto, and any unset value. Running on Vercel is enough on its own,
 		// because a deployed function receives the token per request rather than
@@ -117,4 +131,18 @@ func available(ctx context.Context, source TokenSource) bool {
 	}
 	token, err := source.Token(ctx)
 	return err == nil && token != ""
+}
+
+// checkFederation decides, for a cloud source that opts into federation,
+// whether to federate. It returns ErrIdentityTokenRequired when there is no
+// token but the source demands one; otherwise false means use the default
+// chain.
+func checkFederation(ctx context.Context, source TokenSource) (bool, error) {
+	if available(ctx, source) {
+		return true, nil
+	}
+	if strict, ok := source.(interface{ required() bool }); ok && strict.required() {
+		return false, ErrIdentityTokenRequired
+	}
+	return false, nil
 }

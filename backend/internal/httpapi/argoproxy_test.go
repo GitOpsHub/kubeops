@@ -14,6 +14,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -396,4 +397,88 @@ func selfSignedTestCert(t *testing.T) *x509.Certificate {
 		t.Fatal(err)
 	}
 	return cert
+}
+
+// The proxy runs inside the deployed function, so the incoming request carries
+// the platform's OIDC token. Forwarding it would hand KubeOps' cloud identity
+// to every Argo CD server it proxies.
+func TestArgoProxyOutboundHeaders(t *testing.T) {
+	tests := []struct {
+		name        string
+		token       string
+		inbound     map[string]string
+		wantStatus  int
+		wantAuth    string
+		wantReached bool
+	}{
+		{
+			name:  "identity and browser credentials are replaced",
+			token: "target-token",
+			inbound: map[string]string{
+				"X-Vercel-Oidc-Token": "oidc-secret",
+				"X-Vercel-Id":         "iad1::abc",
+				"Authorization":       "Bearer browser-token",
+				"Cookie":              "session=unrelated",
+				"Accept":              "application/json",
+			},
+			wantStatus: http.StatusOK, wantAuth: "Bearer target-token", wantReached: true,
+		},
+		{
+			name:       "no credential never falls through with the caller's",
+			token:      "",
+			inbound:    map[string]string{"Authorization": "Bearer browser-token"},
+			wantStatus: http.StatusBadGateway,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got http.Header
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = r.Header.Clone()
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer upstream.Close()
+
+			parsed, err := url.Parse(upstream.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			authHeader := func(*http.Request) string {
+				if tt.token == "" {
+					return ""
+				}
+				return "Bearer " + tt.token
+			}
+			proxy := buildTargetProxy("/argo/x", parsed,
+				http.DefaultTransport.(*http.Transport).Clone(), authHeader, nil)
+
+			request := httptest.NewRequest(http.MethodGet, "/argo/x/api/v1/applications", nil)
+			for name, value := range tt.inbound {
+				request.Header.Set(name, value)
+			}
+			recorder := httptest.NewRecorder()
+			proxy.ServeHTTP(recorder, request)
+
+			if recorder.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", recorder.Code, tt.wantStatus)
+			}
+			if (got != nil) != tt.wantReached {
+				t.Fatalf("upstream reached = %t, want %t", got != nil, tt.wantReached)
+			}
+			if got == nil {
+				return
+			}
+			if auth := got.Get("Authorization"); auth != tt.wantAuth {
+				t.Fatalf("Authorization = %q, want %q", auth, tt.wantAuth)
+			}
+			if got.Get("Cookie") != "" {
+				t.Fatal("browser cookie was forwarded upstream")
+			}
+			for name := range got {
+				if strings.HasPrefix(strings.ToLower(name), "x-vercel-") {
+					t.Fatalf("platform header %s was forwarded upstream", name)
+				}
+			}
+		})
+	}
 }

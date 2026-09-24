@@ -359,12 +359,26 @@ func TestQueueSync(t *testing.T) {
 	}
 }
 
-func TestQueueSyncConflict(t *testing.T) {
-	handler := NewHandler(config.Config{}, &fakeRepository{queueErr: store.ErrSyncAlreadyActive})
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/cloud-sources/aws-platform/sync", nil))
-	if response.Code != http.StatusConflict {
-		t.Fatalf("expected status 409, got %d", response.Code)
+func TestQueueSyncErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{name: "already active", err: store.ErrSyncAlreadyActive, want: http.StatusConflict},
+		{name: "unknown or disabled source", err: pgx.ErrNoRows, want: http.StatusNotFound},
+		// A database outage is not a missing source.
+		{name: "database failure", err: errors.New("connection reset"), want: http.StatusInternalServerError},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			handler := NewHandler(config.Config{}, &fakeRepository{queueErr: test.err})
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/cloud-sources/aws-platform/sync", nil))
+			if response.Code != test.want {
+				t.Fatalf("expected status %d, got %d", test.want, response.Code)
+			}
+		})
 	}
 }
 
@@ -868,6 +882,7 @@ func TestApplicationResourceErrorsMapToStatus(t *testing.T) {
 		err  error
 		want int
 	}{
+		{name: "missing onboarding", err: pgx.ErrNoRows, want: http.StatusNotFound},
 		{name: "missing target", err: onboarding.ErrTargetNotFound, want: http.StatusNotFound},
 		{name: "missing resource", err: onboarding.ErrResourceNotFound, want: http.StatusNotFound},
 		{name: "logs forbidden", err: onboarding.ErrPodLogsForbidden, want: http.StatusForbidden},
@@ -1048,4 +1063,53 @@ func TestIdentityTokenMiddlewarePassesThroughWithoutAHeader(t *testing.T) {
 	if present {
 		t.Fatal("no identity token should be registered when the header is absent")
 	}
+}
+
+func TestRecovererReturnsJSONOnPanic(t *testing.T) {
+	tests := []struct {
+		name       string
+		handler    http.HandlerFunc
+		wantStatus int
+		wantJSON   bool
+	}{
+		{
+			name:       "panic before the response starts",
+			handler:    func(http.ResponseWriter, *http.Request) { panic("boom") },
+			wantStatus: http.StatusInternalServerError, wantJSON: true,
+		},
+		{
+			// The status line is already on the wire; a second one would corrupt it.
+			name: "panic after the response starts",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusAccepted)
+				panic("boom")
+			},
+			wantStatus: http.StatusAccepted,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			withRecoverer(test.handler).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+			if response.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d", response.Code, test.wantStatus)
+			}
+			if test.wantJSON && response.Header().Get("Content-Type") != "application/json" {
+				t.Fatalf("expected a JSON error body, got %q", response.Body.String())
+			}
+		})
+	}
+}
+
+// ReverseProxy panics with ErrAbortHandler to drop a half-copied response;
+// swallowing it would turn a deliberate abort into a logged server fault.
+func TestRecovererPropagatesAbortHandler(t *testing.T) {
+	defer func() {
+		if recovered := recover(); recovered != http.ErrAbortHandler {
+			t.Fatalf("recovered %v, want http.ErrAbortHandler", recovered)
+		}
+	}()
+	withRecoverer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic(http.ErrAbortHandler)
+	})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
 }
