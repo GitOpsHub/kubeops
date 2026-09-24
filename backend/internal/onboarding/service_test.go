@@ -433,6 +433,71 @@ func TestDefaultsIncludeValuesRepositoryCoordinates(t *testing.T) {
 	}
 }
 
+// The UI builds its environment and region pickers from Defaults, so every
+// published choice must pass validation and nothing else may.
+func TestDefaultsPublishTheReleaseContextsValidationAccepts(t *testing.T) {
+	for _, mutations := range []bool{true, false} {
+		service := &Service{
+			config: config.OnboardingConfig{
+				HelmRepoURL: "repo", HelmChart: "chart", HelmRevision: "1",
+				HelmDefaultsYAML: "replicaCount: 1\n", ConsoleMutations: mutations,
+			},
+			github: &fakeValuesRepositoryManager{},
+		}
+		defaults := service.Defaults()
+		if defaults.Capabilities.ConsoleMutations != mutations {
+			t.Fatalf("expected consoleMutations=%t, got %#v", mutations, defaults.Capabilities)
+		}
+		if len(defaults.Environments) == 0 || len(defaults.Regions) == 0 {
+			t.Fatalf("expected release contexts, got %#v", defaults)
+		}
+		valid := CreateInput{
+			Name: "payments", Namespace: "payments", ClusterIDs: []string{"cluster-1"},
+			ValuesYAML: "replicaCount: 1\n",
+		}
+		for _, environment := range defaults.Environments {
+			for _, region := range defaults.Regions {
+				input := valid
+				input.Environment, input.Region = environment, region
+				if err := service.validateInput(input); err != nil {
+					t.Fatalf("published %s/%s was rejected: %v", environment, region, err)
+				}
+			}
+		}
+		for _, input := range []CreateInput{
+			{Environment: "staging", Region: defaults.Regions[0]},
+			{Environment: defaults.Environments[0], Region: "eu-west-1"},
+		} {
+			candidate := valid
+			candidate.Environment, candidate.Region = input.Environment, input.Region
+			if err := service.validateInput(candidate); err == nil {
+				t.Fatalf("unpublished %s/%s was accepted", input.Environment, input.Region)
+			}
+		}
+		// Callers must not be able to edit the package-level lists through the
+		// response.
+		defaults.Environments[0] = "mutated"
+		if Environments[0] == "mutated" {
+			t.Fatal("Defaults exposed the shared environment list")
+		}
+	}
+}
+
+func TestJoinChoices(t *testing.T) {
+	for _, test := range []struct {
+		choices []string
+		want    string
+	}{
+		{[]string{"a"}, "a"},
+		{[]string{"us-east-1", "us-east-2"}, "us-east-1 or us-east-2"},
+		{[]string{"dev", "qa", "prod"}, "dev, qa, or prod"},
+	} {
+		if got := joinChoices(test.choices); got != test.want {
+			t.Errorf("joinChoices(%v) = %q, want %q", test.choices, got, test.want)
+		}
+	}
+}
+
 func TestCreateApplicationOnboarding(t *testing.T) {
 	cluster := model.Cluster{
 		ID: "cluster-1", Name: "prod", SourceID: "aws",

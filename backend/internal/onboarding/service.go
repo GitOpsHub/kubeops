@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"regexp"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +28,14 @@ import (
 const maxValuesBytes = 256 * 1024
 
 var dnsLabel = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+
+// Environments and Regions are the release contexts an application can be
+// onboarded into. Defaults publishes them so the UI offers exactly what
+// validateInput accepts; the first entry of each is the default.
+var (
+	Environments = []string{"dev", "qa", "prod"}
+	Regions      = []string{"us-east-1", "us-east-2"}
+)
 
 type Repository interface {
 	GetClustersByIDs(context.Context, []string) ([]model.Cluster, error)
@@ -66,12 +75,23 @@ type CreateInput struct {
 }
 
 type Defaults struct {
-	ChartRepoURL            string `json:"chartRepoUrl"`
-	ChartName               string `json:"chartName"`
-	ChartRevision           string `json:"chartRevision"`
-	ValuesYAML              string `json:"valuesYaml"`
-	ValuesRepositoryBaseURL string `json:"valuesRepositoryBaseUrl"`
-	ValuesRevision          string `json:"valuesRevision"`
+	ChartRepoURL            string       `json:"chartRepoUrl"`
+	ChartName               string       `json:"chartName"`
+	ChartRevision           string       `json:"chartRevision"`
+	ValuesYAML              string       `json:"valuesYaml"`
+	ValuesRepositoryBaseURL string       `json:"valuesRepositoryBaseUrl"`
+	ValuesRevision          string       `json:"valuesRevision"`
+	Environments            []string     `json:"environments"`
+	Regions                 []string     `json:"regions"`
+	Capabilities            Capabilities `json:"capabilities"`
+}
+
+// Capabilities tells the UI which optional actions this deployment allows, so
+// it can hide controls the API would refuse.
+type Capabilities struct {
+	// ConsoleMutations covers the Argo CD console's rollback and terminate
+	// actions (ONBOARDING_CONSOLE_MUTATIONS).
+	ConsoleMutations bool `json:"consoleMutations"`
 }
 
 // ErrTargetNotFound reports that an onboarding has no deployment with the
@@ -170,11 +190,11 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 	input.Namespace = strings.TrimSpace(input.Namespace)
 	input.Environment = strings.ToLower(strings.TrimSpace(input.Environment))
 	if input.Environment == "" {
-		input.Environment = "dev"
+		input.Environment = Environments[0]
 	}
 	input.Region = strings.ToLower(strings.TrimSpace(input.Region))
 	if input.Region == "" {
-		input.Region = "us-east-1"
+		input.Region = Regions[0]
 	}
 	if err := s.validateInput(input); err != nil {
 		return model.ApplicationOnboarding{}, err
@@ -888,6 +908,9 @@ func (s *Service) Defaults() Defaults {
 		ValuesYAML:              s.config.HelmDefaultsYAML,
 		ValuesRepositoryBaseURL: s.config.GitHubWebURL + "/" + s.config.GitHubOrg,
 		ValuesRevision:          s.config.GitHubBranch,
+		Environments:            slices.Clone(Environments),
+		Regions:                 slices.Clone(Regions),
+		Capabilities:            Capabilities{ConsoleMutations: s.config.ConsoleMutations},
 	}
 }
 
@@ -1049,12 +1072,11 @@ func (s *Service) validateInput(input CreateInput) error {
 	if input.Environment != "" && !validDNSLabel(input.Environment) {
 		return ValidationError{Message: "environment must be a lowercase DNS label"}
 	}
-	if input.Environment != "" &&
-		input.Environment != "dev" && input.Environment != "qa" && input.Environment != "prod" {
-		return ValidationError{Message: "environment must be dev, qa, or prod"}
+	if input.Environment != "" && !slices.Contains(Environments, input.Environment) {
+		return ValidationError{Message: "environment must be " + joinChoices(Environments)}
 	}
-	if input.Region != "" && input.Region != "us-east-1" && input.Region != "us-east-2" {
-		return ValidationError{Message: "region must be us-east-1 or us-east-2"}
+	if input.Region != "" && !slices.Contains(Regions, input.Region) {
+		return ValidationError{Message: "region must be " + joinChoices(Regions)}
 	}
 	if len(input.ClusterIDs) == 0 {
 		return ValidationError{Message: "at least one target cluster is required"}
@@ -1098,6 +1120,20 @@ func (s *Service) validateInput(input CreateInput) error {
 		}
 	}
 	return nil
+}
+
+// joinChoices renders a list the way validation messages always have:
+// "a or b", "a, b, or c".
+func joinChoices(choices []string) string {
+	switch len(choices) {
+	case 0:
+		return ""
+	case 1:
+		return choices[0]
+	case 2:
+		return choices[0] + " or " + choices[1]
+	}
+	return strings.Join(choices[:len(choices)-1], ", ") + ", or " + choices[len(choices)-1]
 }
 
 // regionOverride returns the region only when an override file was committed for

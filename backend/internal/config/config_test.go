@@ -511,3 +511,39 @@ func TestDropLocalArgoTargets(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadOnboardingConfigConsoleMutations(t *testing.T) {
+	for _, test := range []struct {
+		value   string
+		want    bool
+		wantErr bool
+	}{
+		{value: "", want: true},
+		{value: "true", want: true},
+		{value: "false", want: false},
+		{value: "0", want: false},
+		{value: "sometimes", wantErr: true},
+	} {
+		t.Run(test.value, func(t *testing.T) {
+			t.Setenv("ONBOARDING_CONSOLE_MUTATIONS", test.value)
+			t.Setenv("GITHUB_APP_ID", "")
+			t.Setenv("GITHUB_APP_INSTALLATION_ID", "")
+			t.Setenv("ARGO_TARGETS_FILE", filepath.Join(t.TempDir(), "missing-targets.yaml"))
+			t.Setenv("GLOBAL_HELM_DEFAULT_VALUES_FILE", filepath.Join(t.TempDir(), "missing.yaml"))
+
+			cfg, err := loadOnboardingConfig()
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("expected an invalid flag to be rejected")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.ConsoleMutations != test.want {
+				t.Fatalf("expected ConsoleMutations=%t, got %t", test.want, cfg.ConsoleMutations)
+			}
+		})
+	}
+}
