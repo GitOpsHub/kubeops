@@ -1,6 +1,7 @@
 import { Link, useLocation } from 'react-router-dom'
 import type { SyncRun } from '../api/inventory'
 import { Button } from '../components/ui/Button'
+import { StatusDot } from '../components/ui/StatusDot'
 import { relativeTime } from '../lib/format'
 import { breadcrumbsFor } from './navigation'
 import { MenuIcon } from './nav-icons'
@@ -48,7 +49,7 @@ export function AppHeader({ applicationName, latestRun, onOpenNavigation }: Prop
       </nav>
 
       <Link className="app-header-sync" to="/sources" title="Cloud source sync activity">
-        <span className={`sync-dot sync-dot--${latestRun?.status ?? 'idle'}`} aria-hidden="true" />
+        <StatusDot domain="run" status={latestRun?.status} size="sm" plain />
         {latestRun ? `Last sync ${relativeTime(latestRun.queuedAt)}` : 'No sync yet'}
       </Link>
       <ThemeMenu />

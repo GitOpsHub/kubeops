@@ -1,7 +1,16 @@
 import type { ReactNode } from 'react'
 import './Banner.css'
 
+import type { Tone as StatusTone } from '../../lib/status'
+
 type Tone = 'error' | 'warn' | 'info' | 'success'
+
+const statusTones: Record<Tone, StatusTone> = {
+  error: 'err',
+  warn: 'warn',
+  info: 'info',
+  success: 'ok',
+}
 
 type Props = {
   tone?: Tone
@@ -37,6 +46,7 @@ export function Banner({
     <div
       className={`banner banner--${tone} ${className}`.trim()}
       role={tone === 'error' ? 'alert' : 'status'}
+      data-tone={statusTones[tone]}
     >
       <svg className="banner-icon" viewBox="0 0 16 16" aria-hidden="true">
         <path d={icons[tone]} />

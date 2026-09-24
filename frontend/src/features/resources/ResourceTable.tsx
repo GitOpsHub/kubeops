@@ -62,7 +62,7 @@ export function ResourceTable({ nodes, onSelect, onDelete }: Props) {
       sortable: true,
       cell: (node) =>
         node.healthStatus && node.healthStatus !== 'Unknown' ? (
-          <StatusBadge status={node.healthStatus} />
+          <StatusBadge domain="health" status={node.healthStatus} />
         ) : (
           <span className="subtle">—</span>
         ),

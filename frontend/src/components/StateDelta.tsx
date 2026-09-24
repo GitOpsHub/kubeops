@@ -7,7 +7,7 @@
  * apart.
  */
 
-import { deltaTone, normalise } from '../lib/status'
+import { deltaTone, deltaToneColour, normalise, statusMeta } from '../lib/status'
 import './StateDelta.css'
 
 type Props = {
@@ -22,13 +22,14 @@ function settled(value: string, expected: string) {
 }
 
 export function StateDelta({ syncStatus, healthStatus, compact = false }: Props) {
-  const sync = syncStatus || 'Unknown'
-  const health = healthStatus || 'Unknown'
+  const sync = statusMeta('sync', syncStatus).label
+  const health = statusMeta('health', healthStatus).label
   const tone = deltaTone(syncStatus, healthStatus)
 
   return (
     <span
       className={`state-delta state-delta--${tone}`}
+      data-tone={deltaToneColour(tone)}
       role="img"
       aria-label={`Sync ${sync}, health ${health}`}
     >

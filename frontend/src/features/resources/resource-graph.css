@@ -194,7 +194,6 @@
 /* Card ----------------------------------------------------------------- */
 
 .graph-card {
-  --resource-tone: var(--idle);
   display: flex;
   align-items: center;
   width: 100%;
@@ -205,7 +204,7 @@
   border: 1px solid var(--border);
   /* Health reads as a colour bar down the leading edge, the way Argo tints its
      nodes, instead of a rule across the top. */
-  border-left: 3px solid var(--resource-tone);
+  border-left: 3px solid var(--tone-solid);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-sm);
   transition:
@@ -234,22 +233,10 @@
   padding-right: var(--space-2);
 }
 
-.graph-card--ok {
-  --resource-tone: var(--ok);
-}
-
-.graph-card--warn {
-  --resource-tone: var(--warn);
-}
-
-.graph-card--err {
-  --resource-tone: var(--err);
-}
-
 .graph-card:not(.graph-card--virtual):hover {
   transform: translateY(-2px);
   border-color: var(--accent);
-  border-left-color: var(--resource-tone);
+  border-left-color: var(--tone-solid);
   box-shadow: var(--shadow-md);
 }
 
@@ -381,25 +368,13 @@
 .graph-health-dot {
   width: 9px;
   height: 9px;
-  background: var(--border-strong);
+  background: var(--tone-solid);
   border-radius: 50%;
-}
-
-.graph-health-dot--ok {
-  background: var(--ok);
-}
-
-.graph-health-dot--warn {
-  background: var(--warn);
-}
-
-.graph-health-dot--err {
-  background: var(--err);
 }
 
 .graph-sync-mark {
   display: inline-flex;
-  color: var(--text-subtle);
+  color: var(--tone-fg);
 }
 
 .graph-sync-mark svg {
@@ -410,14 +385,6 @@
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.6;
-}
-
-.graph-sync-mark--synced {
-  color: var(--ok);
-}
-
-.graph-sync-mark--outofsync {
-  color: var(--warn);
 }
 
 /* Floating controls ---------------------------------------------------- */

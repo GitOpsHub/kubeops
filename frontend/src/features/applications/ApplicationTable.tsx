@@ -5,7 +5,7 @@ import { StatusBadge } from '../../components/ui/Badge'
 import { SortCaret } from '../../components/ui/DataTable'
 import { sortState } from '../../components/ui/table-sort'
 import { plural } from '../../lib/format'
-import { deltaTone, rollupState } from '../../lib/status'
+import { deltaTone, deltaToneColour, environmentTone, rollupState } from '../../lib/status'
 import {
   flattenTargets,
   namespaceLabel,
@@ -23,13 +23,6 @@ type Props = {
   onSort: (key: SortKey) => void
   /** Changes whenever the visible set does, so stale expansions are dropped. */
   viewKey: string
-}
-
-const toneClass: Record<string, string> = {
-  converged: 'target-row--ok',
-  reconciling: 'target-row--warn',
-  diverged: 'target-row--err',
-  unknown: '',
 }
 
 /**
@@ -152,7 +145,7 @@ export function ApplicationTable({ groups, sortKey, sortDirection, onSort, viewK
                       />
                     </td>
                     <td>
-                      <StatusBadge status={group.status} />
+                      <StatusBadge domain="lifecycle" status={group.status} />
                     </td>
                   </tr>
                   {isExpanded && (
@@ -184,17 +177,19 @@ export function ApplicationTable({ groups, sortKey, sortDirection, onSort, viewK
                               {flattenTargets(group.records).map((row) => (
                                 <tr
                                   key={row.key}
-                                  className={
+                                  className="target-row"
+                                  data-tone={
                                     row.target
-                                      ? toneClass[
-                                          deltaTone(row.target.syncStatus, row.target.healthStatus)
-                                        ] || undefined
+                                      ? deltaToneColour(
+                                          deltaTone(row.target.syncStatus, row.target.healthStatus),
+                                        )
                                       : undefined
                                   }
                                 >
                                   <td>
                                     <span
                                       className={`environment-tag environment-tag--${row.environment}`}
+                                      data-tone={environmentTone(row.environment)}
                                     >
                                       {row.environment}
                                     </span>
@@ -219,7 +214,11 @@ export function ApplicationTable({ groups, sortKey, sortDirection, onSort, viewK
                                     )}
                                   </td>
                                   <td>
-                                    {row.target ? <StatusBadge status={row.target.status} /> : '—'}
+                                    {row.target ? (
+                                      <StatusBadge domain="lifecycle" status={row.target.status} />
+                                    ) : (
+                                      '—'
+                                    )}
                                   </td>
                                   <td>
                                     {row.target?.argoApplicationUrl ? (

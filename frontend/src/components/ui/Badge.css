@@ -1,17 +1,17 @@
+/* Tone comes from `data-tone`; the `status-badge--{tone}` classes stay on the
+   element as stable hooks but carry no colour of their own. */
 .status-badge {
-  --tone: var(--idle);
-  --tone-soft: var(--idle-soft);
-
   display: inline-flex;
   gap: 6px;
   align-items: center;
   height: 22px;
   padding: 0 var(--space-2);
-  color: var(--tone);
+  color: var(--tone-fg);
   background: var(--tone-soft);
+  border: 1px solid var(--tone-border);
   border-radius: var(--radius-pill);
   font-size: var(--text-2xs);
-  font-weight: 600;
+  font-weight: var(--weight-medium);
   line-height: 1;
   white-space: nowrap;
 }
@@ -21,28 +21,12 @@
   width: 6px;
   height: 6px;
   flex: 0 0 auto;
-  background: currentcolor;
+  background: var(--tone-solid);
   border-radius: 50%;
 }
 
-.status-badge--ok {
-  --tone: var(--ok);
-  --tone-soft: var(--ok-soft);
-}
-
-.status-badge--warn {
-  --tone: var(--warn);
-  --tone-soft: var(--warn-soft);
-}
-
-.status-badge--err {
-  --tone: var(--err);
-  --tone-soft: var(--err-soft);
-}
-
-.status-badge--accent {
-  --tone: var(--accent);
-  --tone-soft: var(--accent-soft);
+.status-badge--cased {
+  text-transform: capitalize;
 }
 
 .status-badge--pulse::before {

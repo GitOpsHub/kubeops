@@ -1,5 +1,6 @@
 import { onboardingStatuses } from '../../api/onboarding'
 import { SearchInput } from '../../components/ui/SearchInput'
+import { statusMeta } from '../../lib/status'
 import { sortLabels, type SortKey } from './application-groups'
 import type { ApplicationsQuery } from './useApplicationsQuery'
 
@@ -100,6 +101,7 @@ export function ApplicationFilters({ query, showSort }: Props) {
                     status === entry.status ? ' is-active' : ''
                   }`}
                   aria-pressed={status === entry.status}
+                  data-tone={statusMeta('lifecycle', entry.status).tone}
                   onClick={() =>
                     updateParams({ status: status === entry.status ? '' : entry.status })
                   }

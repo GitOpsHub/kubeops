@@ -1,6 +1,4 @@
 .stat-card {
-  --tone: var(--text);
-
   display: grid;
   gap: var(--space-1);
   align-content: start;
@@ -26,18 +24,6 @@
   box-shadow: var(--shadow-md);
 }
 
-.stat-card--ok {
-  --tone: var(--ok);
-}
-
-.stat-card--warn {
-  --tone: var(--warn);
-}
-
-.stat-card--err {
-  --tone: var(--err);
-}
-
 .stat-card-label {
   display: flex;
   gap: var(--space-2);
@@ -58,9 +44,9 @@
 }
 
 .stat-card-value {
-  color: var(--tone);
+  color: var(--text);
   font-family: var(--font-display);
-  font-size: 1.75rem;
+  font-size: var(--text-3xl);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
@@ -70,4 +56,9 @@
 .stat-card-hint {
   color: var(--text-subtle);
   font-size: var(--text-2xs);
+}
+
+/* Only a toned card colours its number; an untoned one stays plain text. */
+.stat-card[data-tone] .stat-card-value {
+  color: var(--tone-fg);
 }

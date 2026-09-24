@@ -112,20 +112,7 @@
 
 .health-bar-segment {
   min-width: 6px;
-  background: var(--idle);
-}
-
-.health-bar-segment--healthy {
-  background: var(--ok);
-}
-
-.health-bar-segment--progressing,
-.health-bar-segment--partial {
-  background: var(--warn);
-}
-
-.health-bar-segment--failed {
-  background: var(--err);
+  background: var(--tone-solid);
 }
 
 .health-legend {

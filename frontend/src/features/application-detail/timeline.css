@@ -37,7 +37,6 @@
 }
 
 .timeline-entry {
-  --timeline-tone: var(--idle);
   position: relative;
   display: grid;
   gap: var(--space-3);
@@ -50,27 +49,15 @@
   padding-bottom: 0;
 }
 
-.timeline-entry--ok {
-  --timeline-tone: var(--ok);
-}
-
-.timeline-entry--warn {
-  --timeline-tone: var(--warn);
-}
-
-.timeline-entry--err {
-  --timeline-tone: var(--err);
-}
-
 .timeline-marker {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 28px;
   height: 28px;
-  color: var(--timeline-tone);
-  background: color-mix(in srgb, var(--timeline-tone) 12%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--timeline-tone) 28%, transparent);
+  color: var(--tone-fg);
+  background: var(--tone-soft);
+  border: 1px solid var(--tone-border);
   border-radius: 50%;
 }
 

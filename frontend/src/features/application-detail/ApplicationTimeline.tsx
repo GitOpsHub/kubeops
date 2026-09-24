@@ -1,5 +1,6 @@
 import type { ApplicationOnboarding } from '../../api/onboarding'
 import { relativeTime } from '../../lib/format'
+import { statusMeta, type Tone } from '../../lib/status'
 import './timeline.css'
 
 /**
@@ -12,8 +13,6 @@ import './timeline.css'
  * shown as pending rather than dated.
  */
 
-type Tone = 'ok' | 'warn' | 'err' | 'idle'
-
 type TimelineEvent = {
   id: string
   at: string | null
@@ -23,19 +22,6 @@ type TimelineEvent = {
   tone: Tone
   href?: string
   icon: 'onboard' | 'rollout' | 'complete' | 'update' | 'offboard'
-}
-
-function statusTone(status: string): Tone {
-  switch (status) {
-    case 'healthy':
-      return 'ok'
-    case 'failed':
-      return 'err'
-    case 'offboarded':
-      return 'idle'
-    default:
-      return 'warn'
-  }
 }
 
 function dayLabel(value: string, now: Date) {
@@ -90,7 +76,7 @@ function buildTimeline(record: ApplicationOnboarding): TimelineEvent[] {
       title: `${target.clusterName} · ${target.status}`,
       detail: target.message || `${target.syncStatus} · ${target.healthStatus}`,
       meta: target.region,
-      tone: statusTone(target.status),
+      tone: statusMeta('lifecycle', target.status).tone,
       href: target.argoApplicationUrl,
       icon: target.status === 'offboarded' ? 'offboard' : 'rollout',
     })
@@ -126,7 +112,7 @@ function buildTimeline(record: ApplicationOnboarding): TimelineEvent[] {
 
 function TimelineRow({ event, now }: { event: TimelineEvent; now: number }) {
   return (
-    <li className={`timeline-entry timeline-entry--${event.tone}`}>
+    <li className={`timeline-entry timeline-entry--${event.tone}`} data-tone={event.tone}>
       <span className="timeline-marker" aria-hidden="true">
         <svg viewBox="0 0 18 18">
           <path d={icons[event.icon]} />

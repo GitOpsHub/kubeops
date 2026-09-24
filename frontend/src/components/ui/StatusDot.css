@@ -1,0 +1,29 @@
+/*
+ * A status as a dot: the solid tone plus a soft halo. `.sync-dot` is the
+ * pre-v2 name, kept as an alias while callers move over.
+ */
+.status-dot,
+.sync-dot {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  background: var(--tone-solid);
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px var(--tone-soft);
+}
+
+.status-dot--sm {
+  width: 6px;
+  height: 6px;
+  box-shadow: 0 0 0 2px var(--tone-soft);
+}
+
+.status-dot--plain {
+  box-shadow: none;
+}
+
+/* In-flight work breathes; settled states stay still. */
+.status-dot--pulse {
+  animation: pulse 1.6s ease-in-out infinite;
+}

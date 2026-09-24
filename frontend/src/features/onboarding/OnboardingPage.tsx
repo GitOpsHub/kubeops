@@ -404,7 +404,7 @@ export function OnboardingPage() {
                           <td className="mono">{cluster.location || 'Unknown'}</td>
                           <td className="mono">{cluster.kubernetesVersion || 'Unknown'}</td>
                           <td>
-                            <StatusBadge status={cluster.status} />
+                            <StatusBadge domain="cluster" status={cluster.status} />
                           </td>
                         </tr>
                       ))}

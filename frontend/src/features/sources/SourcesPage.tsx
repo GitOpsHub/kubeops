@@ -11,6 +11,7 @@ import {
 import { ProviderLogo } from '../../components/BrandIcons'
 import { Banner } from '../../components/ui/Banner'
 import { StatusBadge, Tag } from '../../components/ui/Badge'
+import { StatusDot } from '../../components/ui/StatusDot'
 import { Button } from '../../components/ui/Button'
 import { Card } from '../../components/ui/Card'
 import { EmptyState } from '../../components/ui/EmptyState'
@@ -144,7 +145,7 @@ export function SourcesPage() {
                     <span>{source.clusterCount === 1 ? 'cluster' : 'clusters'}</span>
                   </div>
                   <div className="source-sync">
-                    <StatusBadge status={displayedStatus(source)} />
+                    <StatusBadge domain="run" status={displayedStatus(source)} />
                     <span>
                       {source.lastSyncAt
                         ? `Synced ${relativeTime(source.lastSyncAt)}`
@@ -189,7 +190,7 @@ export function SourcesPage() {
           <ul className="run-list">
             {runs.map((run) => (
               <li key={run.id}>
-                <span className={`sync-dot sync-dot--${run.status}`} aria-hidden="true" />
+                <StatusDot domain="run" status={run.status} className="sync-dot" />
                 <span className="run-copy">
                   <strong>{run.sourceName}</strong>
                   <small>
@@ -198,7 +199,7 @@ export function SourcesPage() {
                     {run.error ? ` · ${run.error}` : ''}
                   </small>
                 </span>
-                <StatusBadge status={run.status} />
+                <StatusBadge domain="run" status={run.status} />
                 <time dateTime={run.queuedAt}>{relativeTime(run.queuedAt)}</time>
               </li>
             ))}

@@ -39,10 +39,7 @@ export function DetailHeader({
           <div className="detail-title-row">
             <h1 id="application-heading">{record.name}</h1>
             <span aria-label={`Application sync: ${sync}`} className="detail-sync">
-              <StatusBadge
-                status={sync}
-                tone={sync === 'Synced' ? 'ok' : sync === 'Out of Sync' ? 'warn' : 'idle'}
-              />
+              <StatusBadge domain="sync" status={sync} />
             </span>
           </div>
           <span className="mono detail-image" title={record.image}>

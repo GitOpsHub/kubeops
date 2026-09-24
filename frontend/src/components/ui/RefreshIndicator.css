@@ -7,22 +7,9 @@
   white-space: nowrap;
 }
 
-.refresh-indicator-dot {
-  width: 6px;
-  height: 6px;
-  background: var(--ok);
-  border-radius: 50%;
-  box-shadow: 0 0 0 3px var(--ok-soft);
-}
-
 .refresh-indicator-spinner {
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
   color: var(--accent);
   border-width: 1.5px;
-}
-
-.refresh-indicator-dot--failed {
-  background: var(--err);
-  box-shadow: 0 0 0 3px var(--err-soft);
 }

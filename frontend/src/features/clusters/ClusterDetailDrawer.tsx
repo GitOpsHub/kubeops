@@ -254,8 +254,8 @@ export function ClusterDetailDrawer({
                 <dt>Status</dt>
                 <dd>
                   <StatusBadge
+                    domain="cluster"
                     status={cluster.removedAt ? 'removed' : cluster.status}
-                    tone={cluster.removedAt ? 'idle' : undefined}
                   />
                 </dd>
               </div>
@@ -285,7 +285,7 @@ export function ClusterDetailDrawer({
           <section className="sheet-section" aria-labelledby="node-pools-heading">
             <div className="sheet-section-heading">
               <h3 id="node-pools-heading">Node pools</h3>
-              {pollTarget && <StatusBadge status="updating" />}
+              {pollTarget && <StatusBadge domain="cluster" status="updating" />}
             </div>
             {loading ? (
               <div role="status" className="sheet-loading">
@@ -316,7 +316,7 @@ export function ClusterDetailDrawer({
                             {pool.machineType || 'Machine type not reported'}
                           </small>
                         </div>
-                        <StatusBadge status={pool.status} />
+                        <StatusBadge domain="cluster" status={pool.status} />
                       </div>
                       <dl className="node-pool-facts">
                         <div>

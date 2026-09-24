@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { relativeTime } from '../../lib/format'
+import { StatusDot } from './StatusDot'
 import './RefreshIndicator.css'
 
 type Props = {
@@ -33,12 +34,7 @@ export function RefreshIndicator({
       {refreshing ? (
         <span className="spinner refresh-indicator-spinner" aria-hidden="true" />
       ) : (
-        <span
-          className={
-            failed ? 'refresh-indicator-dot refresh-indicator-dot--failed' : 'refresh-indicator-dot'
-          }
-          aria-hidden="true"
-        />
+        <StatusDot tone={failed ? 'err' : 'ok'} size="sm" />
       )}
       {failed && !refreshing && !lastUpdated
         ? 'Not loaded'

@@ -75,7 +75,7 @@ export function ResourceManifestModal({ node, onboardingId, targetId, onClose, o
         <Tag mono>{node.group ? `${node.group}/${node.version}` : node.version}</Tag>
         <Tag mono>{node.namespace || 'cluster-scoped'}</Tag>
         {node.healthStatus && node.healthStatus !== 'Unknown' && (
-          <StatusBadge status={node.healthStatus} />
+          <StatusBadge domain="health" status={node.healthStatus} />
         )}
         {node.syncStatus && <Tag>{node.syncStatus}</Tag>}
       </div>

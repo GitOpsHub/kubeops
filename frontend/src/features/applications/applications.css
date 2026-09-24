@@ -39,8 +39,6 @@
 }
 
 .status-chip {
-  --tone: var(--idle);
-
   display: inline-flex;
   gap: 6px;
   align-items: center;
@@ -54,7 +52,7 @@
 }
 
 .status-chip strong {
-  color: var(--tone);
+  color: var(--tone-fg);
   font-variant-numeric: tabular-nums;
 }
 
@@ -64,21 +62,8 @@
 
 .status-chip.is-active {
   color: var(--text);
-  background: color-mix(in srgb, var(--tone) 10%, var(--surface));
-  border-color: var(--tone);
-}
-
-.status-chip--healthy {
-  --tone: var(--ok);
-}
-
-.status-chip--progressing,
-.status-chip--partial {
-  --tone: var(--warn);
-}
-
-.status-chip--failed {
-  --tone: var(--err);
+  background: var(--tone-soft);
+  border-color: var(--tone-border);
 }
 
 .application-loading {
@@ -111,30 +96,16 @@
 }
 
 .environment-tag {
-  --tone: var(--idle);
-
   display: inline-flex;
   align-items: center;
   height: 20px;
   padding: 0 6px;
-  color: var(--tone);
-  background: color-mix(in srgb, var(--tone) 10%, transparent);
+  color: var(--tone-fg);
+  background: var(--tone-soft);
   border-radius: var(--radius-xs);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   font-weight: 500;
-}
-
-.environment-tag--dev {
-  --tone: var(--accent);
-}
-
-.environment-tag--qa {
-  --tone: var(--warn);
-}
-
-.environment-tag--prod {
-  --tone: var(--ok);
 }
 
 /* Tiles ------------------------------------------------------------------- */
@@ -151,8 +122,6 @@
 }
 
 .application-tile {
-  --tone: var(--border-strong);
-
   display: grid;
   gap: var(--space-3);
   align-content: start;
@@ -160,7 +129,7 @@
   padding: var(--space-4);
   background: var(--surface);
   border: 1px solid var(--border);
-  border-left: 3px solid var(--tone);
+  border-left: 3px solid var(--tone-solid);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
   transition:
@@ -170,18 +139,6 @@
 
 .application-tile:hover {
   box-shadow: var(--shadow-md);
-}
-
-.application-tile--converged {
-  --tone: var(--ok);
-}
-
-.application-tile--reconciling {
-  --tone: var(--warn);
-}
-
-.application-tile--diverged {
-  --tone: var(--err);
 }
 
 .application-tile-head {
@@ -356,16 +313,8 @@
   box-shadow: inset 3px 0 0 transparent;
 }
 
-.target-table tr.target-row--ok > td:first-child {
-  box-shadow: inset 3px 0 0 var(--ok);
-}
-
-.target-table tr.target-row--warn > td:first-child {
-  box-shadow: inset 3px 0 0 var(--warn);
-}
-
-.target-table tr.target-row--err > td:first-child {
-  box-shadow: inset 3px 0 0 var(--err);
+.target-table tr.target-row:not([data-tone='idle']) > td:first-child {
+  box-shadow: inset 3px 0 0 var(--tone-solid);
 }
 
 @media (max-width: 720px) {

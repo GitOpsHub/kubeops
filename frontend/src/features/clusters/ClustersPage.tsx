@@ -155,10 +155,7 @@ export function ClustersPage() {
       id: 'health',
       header: 'Health',
       cell: (cluster) => (
-        <StatusBadge
-          status={cluster.removedAt ? 'removed' : 'active'}
-          tone={cluster.removedAt ? 'idle' : undefined}
-        />
+        <StatusBadge domain="cluster" status={cluster.removedAt ? 'removed' : 'active'} />
       ),
     },
     {
