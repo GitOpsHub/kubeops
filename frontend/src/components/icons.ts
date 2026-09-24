@@ -13,7 +13,9 @@ import { createElement } from 'react'
 export type { LucideIcon as IconComponent, LucideProps as IconProps } from 'lucide-react'
 
 export {
+  ArrowDown as SortDescendingIcon,
   ArrowLeft as BackIcon,
+  ArrowUp as SortAscendingIcon,
   Check as CheckIcon,
   ChevronDown as ChevronDownIcon,
   ChevronLeft as ChevronLeftIcon,

@@ -58,7 +58,15 @@
   animation: dialog-slide var(--dur-slow) var(--ease-out);
 }
 
-/* Structural parts every dialog composes from. */
+/* Structural parts every dialog composes from. A form wrapping them keeps
+   the panel's column layout, so only the body scrolls. */
+.dialog-form {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .dialog-header {
   display: flex;
   gap: var(--space-3);

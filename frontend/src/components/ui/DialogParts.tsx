@@ -16,6 +16,10 @@ type HeaderProps = {
   /** Names the close button; omit it to render no close button. */
   closeLabel?: string
   className?: string
+  /** Extra class on the heading, e.g. `mono truncate` for a resource name. */
+  titleClassName?: string
+  /** Full title on hover, for when the heading truncates. */
+  titleTooltip?: string
 }
 
 /**
@@ -32,6 +36,8 @@ export function DialogHeader({
   actions,
   closeLabel,
   className = '',
+  titleClassName,
+  titleTooltip,
 }: HeaderProps) {
   return (
     <header className={`dialog-header ${className}`.trim()}>
@@ -43,7 +49,9 @@ export function DialogHeader({
       <div className="dialog-title-group">
         {kicker && <p className="kicker">{kicker}</p>}
         <DialogTitle asChild>
-          <h2>{title}</h2>
+          <h2 className={titleClassName} title={titleTooltip}>
+            {title}
+          </h2>
         </DialogTitle>
         {description && (
           <DialogDescription asChild>

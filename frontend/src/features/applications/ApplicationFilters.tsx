@@ -1,4 +1,6 @@
 import { onboardingStatuses } from '../../api/onboarding'
+import { SortAscendingIcon, SortDescendingIcon } from '../../components/icons'
+import { Button } from '../../components/ui/Button'
 import { SearchInput } from '../../components/ui/SearchInput'
 import { statusMeta } from '../../lib/status'
 import { sortLabels, type SortKey } from './application-groups'
@@ -72,17 +74,16 @@ export function ApplicationFilters({ query, showSort }: Props) {
                   </option>
                 ))}
               </select>
-              <button
-                type="button"
-                className="btn btn--secondary btn--md btn--icon"
+              <Button
+                iconOnly
                 aria-label={`Sort ${sortDirection === 'asc' ? 'descending' : 'ascending'}`}
                 title={sortDirection === 'asc' ? 'Ascending' : 'Descending'}
                 onClick={() =>
                   updateParams({ sort: sortKey, dir: sortDirection === 'asc' ? 'desc' : 'asc' })
                 }
               >
-                {sortDirection === 'asc' ? '↑' : '↓'}
-              </button>
+                {sortDirection === 'asc' ? <SortAscendingIcon /> : <SortDescendingIcon />}
+              </Button>
             </div>
           </div>
         )}

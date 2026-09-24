@@ -73,11 +73,6 @@
   align-items: center;
 }
 
-.detail-more-icon {
-  fill: currentcolor !important;
-  stroke: none !important;
-}
-
 .detail-loading {
   display: grid;
   gap: var(--space-3);
@@ -283,32 +278,6 @@
 
 /* Offboard dialog -------------------------------------------------------- */
 
-.offboard-header {
-  justify-content: flex-start;
-}
-
-.offboard-mark {
-  display: grid;
-  flex: 0 0 auto;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  color: var(--err);
-  background: var(--err-soft);
-  border-radius: var(--radius-md);
-}
-
-.offboard-mark svg,
-.offboard-kept svg {
-  width: 20px;
-  height: 20px;
-  fill: none;
-  stroke: currentcolor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.6;
-}
-
 .offboard-scope {
   display: grid;
   gap: var(--space-2);
@@ -339,7 +308,7 @@
   display: flex;
   gap: var(--space-2);
   padding: var(--space-3);
-  color: var(--ok);
+  color: var(--ok-fg);
   background: var(--ok-soft);
   border-radius: var(--radius-md);
 }
@@ -349,10 +318,6 @@
   width: 16px;
   height: 16px;
   margin-top: 2px;
-}
-
-.offboard-input.is-armed {
-  border-color: var(--err);
 }
 
 @media (max-width: 960px) {

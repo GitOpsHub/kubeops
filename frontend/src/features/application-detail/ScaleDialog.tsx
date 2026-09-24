@@ -1,7 +1,9 @@
 import { useState, type FormEvent } from 'react'
 import type { ApplicationOnboarding } from '../../api/onboarding'
 import { Button } from '../../components/ui/Button'
-import { Dialog, DialogDescription, DialogTitle } from '../../components/ui/Dialog'
+import { Dialog, DialogDescription } from '../../components/ui/Dialog'
+import { DialogBody, DialogFooter, DialogHeader } from '../../components/ui/DialogParts'
+import { Field, TextInput } from '../../components/ui/Field'
 import { releaseScope } from './application-detail'
 
 type Props = {
@@ -42,16 +44,9 @@ export function ScaleDialog({
       size="sm"
       dismissible={!submitting}
     >
-      <form onSubmit={submit}>
-        <header className="dialog-header">
-          <div className="dialog-title-group">
-            <p className="kicker">GitOps scaling</p>
-            <DialogTitle asChild>
-              <h3>Scale {record.name} pods</h3>
-            </DialogTitle>
-          </div>
-        </header>
-        <div className="dialog-body">
+      <form onSubmit={submit} className="dialog-form">
+        <DialogHeader kicker="GitOps scaling" title={`Scale ${record.name} pods`} />
+        <DialogBody>
           <DialogDescription asChild>
             <p>
               Set the replica count for <strong>{releaseScope(record)}</strong>. The value is
@@ -62,10 +57,8 @@ export function ScaleDialog({
               .
             </p>
           </DialogDescription>
-          <label className="field">
-            <span>Number of pods</span>
-            <input
-              className="input"
+          <Field label="Number of pods" hint="A whole number from 1 to 1000." error={error}>
+            <TextInput
               autoFocus
               type="number"
               min="1"
@@ -74,28 +67,21 @@ export function ScaleDialog({
               inputMode="numeric"
               placeholder="For example, 3"
               value={replicas}
-              aria-invalid={error ? true : undefined}
-              aria-describedby={error ? 'application-scale-error' : undefined}
               onChange={(event) => {
                 setReplicas(event.target.value)
                 onError('')
               }}
             />
-          </label>
-          {error && (
-            <p className="field-error" id="application-scale-error" role="alert">
-              {error}
-            </p>
-          )}
-        </div>
-        <footer className="dialog-footer">
+          </Field>
+        </DialogBody>
+        <DialogFooter>
           <Button disabled={submitting} onClick={onClose}>
             Cancel
           </Button>
           <Button variant="primary" type="submit" loading={submitting}>
             {submitting ? 'Scaling…' : 'Scale pods'}
           </Button>
-        </footer>
+        </DialogFooter>
       </form>
     </Dialog>
   )
