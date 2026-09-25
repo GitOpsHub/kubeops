@@ -362,17 +362,48 @@ When a values repository already exists, onboarding reuses its current
 the Argo CD Application and its managed cluster resources while preserving the
 GitHub repository for a later re-onboarding.
 
+### Argo CD console
+
+Each application's detail page reads its Argo CD state, events, logs, and
+values history through scoped `/api/application-onboardings/{id}/…` endpoints,
+never through the `/argo` proxy. Status responses carry no chart or values
+repository URLs, and Argo CD and GitHub error bodies are never passed through.
+
+Rollback is a GitOps revert: KubeOps commits the release-scoped
+`{environment}/{region}/values.yaml` as it was at the chosen commit and then
+syncs, exactly as scaling does. Argo CD's own rollback cannot be used because
+the generated Applications sync automatically with self-heal. The chart
+revision and the shared root `values.yaml` are not rolled back.
+
+`ONBOARDING_CONSOLE_MUTATIONS` (default `true`) enables the console's
+rollback and terminate-operation actions. The API has no authentication, and
+these widen what any caller who can reach it may change; set it to `false` to
+keep the read-only console. Disabled actions answer `403`, and
+`GET /api/application-onboardings/defaults` reports
+`capabilities.consoleMutations` so the UI hides them. Every console mutation
+that takes a body requires `Content-Type: application/json`, which forces a
+CORS preflight, and caps the body at 4 KiB.
+
 ## Inventory API
 
-- `GET /api/clusters` — filter and paginate cluster inventory
+- `GET /api/overview` — dashboard aggregates for clusters, applications, sync runs, and what needs attention
+- `GET /api/clusters` — filter, sort (`sort`, `order`), and paginate cluster inventory
 - `GET /api/clusters/{id}/details` — load live node-pool and networking details
 - `GET /api/clusters/{id}/argo-access` — load configured Argo CD UI access
 - `POST /api/clusters/{id}/node-pools/{pool}/scale` — set a managed node pool's desired size
 - `GET /api/cloud-sources` — source counts and latest status
-- `GET /api/sync-runs` — recent reconciliation history
+- `GET /api/sync-runs` — recent reconciliation history, optionally for one `sourceId`
 - `POST /api/cloud-sources/{id}/sync` — queue a source refresh
 - `POST /api/application-onboardings` — create Argo CD Applications for selected clusters
-- `POST /api/application-onboardings/{id}/sync` — recreate missing Argo CD Applications and sync every target
+- `POST /api/application-onboardings/{id}/sync` — recreate missing Argo CD Applications and sync every target;
+  an optional JSON body selects `targetIds` and sets `prune`, `dryRun`, `force`, and `applyOutOfSyncOnly`
+- `POST /api/application-onboardings/{id}/rollback` — restore the release values to `commitSha` and sync
+- `GET /api/application-onboardings/{id}/revisions` and `…/revisions/{sha}/values` — release values history
+- `GET /api/application-onboardings/{id}/targets/{targetId}/argo`, `…/events`, `…/logs`, and
+  `…/resources/containers` — per-target Argo CD status, events, log stream, and containers
+- `DELETE /api/application-onboardings/{id}/targets/{targetId}/operation` — terminate a running sync
+- `GET /api/application-onboardings/{id}/operations` — audit trail of syncs, dry runs, rollbacks,
+  terminations, scaling, and offboarding requested through KubeOps
 - `POST /api/application-onboardings/{id}/offboard` — remove every target from its cluster while preserving GitHub values
 - `GET /api/application-onboardings` — page, search, and filter onboarded applications with
   `page`, `pageSize`, `search` (case-insensitive over name and namespace), and `status`

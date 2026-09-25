@@ -31,6 +31,34 @@ type fakeRepository struct {
 	sources     []model.SourceSummary
 	kubespin    model.KubespinArgoCDDetails
 	kubespinErr error
+	overview    model.OverviewStats
+	overviewErr error
+	// overviewSources records the scope the handler asked for; nil means the
+	// handler never called Overview.
+	overviewSources []string
+	runLimit        int
+	runSources      []string
+	operations      []model.ApplicationOperation
+	recordErr       error
+	operationsID    string
+	operationsLimit int
+}
+
+func (f *fakeRepository) RecordApplicationOperation(_ context.Context, operation model.ApplicationOperation) error {
+	f.operations = append(f.operations, operation)
+	return f.recordErr
+}
+func (f *fakeRepository) ListApplicationOperations(
+	_ context.Context,
+	onboardingID string,
+	limit int,
+) ([]model.ApplicationOperation, error) {
+	f.operationsID, f.operationsLimit = onboardingID, limit
+	return f.operations, f.listErr
+}
+func (f *fakeRepository) Overview(_ context.Context, sourceIDs []string) (model.OverviewStats, error) {
+	f.overviewSources = sourceIDs
+	return f.overview, f.overviewErr
 }
 
 func (f *fakeRepository) Ready(context.Context) error { return f.readyErr }
@@ -56,7 +84,8 @@ func (f *fakeRepository) GetKubespinArgoDetails(context.Context, string) (model.
 	}
 	return f.kubespin, nil
 }
-func (f *fakeRepository) ListSyncRuns(context.Context, int) ([]model.SyncRun, error) {
+func (f *fakeRepository) ListSyncRuns(_ context.Context, limit int, sourceIDs []string) ([]model.SyncRun, error) {
+	f.runLimit, f.runSources = limit, sourceIDs
 	return []model.SyncRun{}, f.listErr
 }
 func (f *fakeRepository) QueueSync(_ context.Context, sourceID, trigger string) (model.SyncRun, error) {
@@ -121,6 +150,22 @@ type fakeApplicationOnboarder struct {
 	resourceTargets []string
 	logStream       string
 	reconcileCalls  int
+	// Console endpoints.
+	logQuery      onboarding.LogQuery
+	status        onboarding.ArgoAppStatus
+	events        []onboarding.ArgoEvent
+	eventQuery    onboarding.EventQuery
+	containers    []onboarding.Container
+	containerRef  onboarding.ResourceRef
+	history       onboarding.ValuesHistory
+	valuesErr     error
+	revisionLimit int
+	revisionSHA   string
+	// Console mutations; syncOptions stays nil for a body-less sync.
+	syncOptions *onboarding.SyncOptions
+	terminated  string
+	rollbackID  string
+	rollbackSHA string
 }
 
 func (f *fakeApplicationOnboarder) Reconcile(context.Context) {
@@ -155,17 +200,60 @@ func (f *fakeApplicationOnboarder) DeleteResource(
 	f.deletedRef = ref
 	return f.resourceErr
 }
-func (f *fakeApplicationOnboarder) PodLogs(
+func (f *fakeApplicationOnboarder) Logs(
 	_ context.Context,
 	_ string,
 	_ string,
-	ref onboarding.ResourceRef,
+	query onboarding.LogQuery,
 ) (io.ReadCloser, error) {
-	f.logRef = ref
+	f.logRef = query.Resource
+	f.logQuery = query
 	if f.resourceErr != nil {
 		return nil, f.resourceErr
 	}
 	return io.NopCloser(strings.NewReader(f.logStream)), nil
+}
+func (f *fakeApplicationOnboarder) TargetStatus(
+	_ context.Context,
+	_ string,
+	targetID string,
+) (onboarding.ArgoAppStatus, error) {
+	f.resourceTargets = append(f.resourceTargets, targetID)
+	return f.status, f.resourceErr
+}
+func (f *fakeApplicationOnboarder) TargetEvents(
+	_ context.Context,
+	_ string,
+	_ string,
+	query onboarding.EventQuery,
+) ([]onboarding.ArgoEvent, error) {
+	f.eventQuery = query
+	return f.events, f.resourceErr
+}
+func (f *fakeApplicationOnboarder) Containers(
+	_ context.Context,
+	_ string,
+	_ string,
+	ref onboarding.ResourceRef,
+) ([]onboarding.Container, error) {
+	f.containerRef = ref
+	return f.containers, f.resourceErr
+}
+func (f *fakeApplicationOnboarder) Revisions(
+	_ context.Context,
+	_ string,
+	limit int,
+) (onboarding.ValuesHistory, error) {
+	f.revisionLimit = limit
+	return f.history, f.valuesErr
+}
+func (f *fakeApplicationOnboarder) RevisionValues(
+	_ context.Context,
+	_ string,
+	sha string,
+) (onboarding.RevisionValues, error) {
+	f.revisionSHA = sha
+	return onboarding.RevisionValues{SHA: sha, Path: "dev/us-east-1/values.yaml", ValuesYAML: "a: 1\n"}, f.valuesErr
 }
 
 func (f *fakeApplicationOnboarder) Create(
@@ -186,6 +274,26 @@ func (f *fakeApplicationOnboarder) Sync(
 	id string,
 ) (model.ApplicationOnboarding, error) {
 	f.syncID = id
+	return f.record, f.err
+}
+func (f *fakeApplicationOnboarder) SyncWithOptions(
+	_ context.Context,
+	id string,
+	options onboarding.SyncOptions,
+) (model.ApplicationOnboarding, error) {
+	f.syncID = id
+	f.syncOptions = &options
+	return f.record, f.err
+}
+func (f *fakeApplicationOnboarder) TerminateOperation(_ context.Context, id, targetID string) error {
+	f.terminated = id + "/" + targetID
+	return f.err
+}
+func (f *fakeApplicationOnboarder) Rollback(
+	_ context.Context,
+	id, sha string,
+) (model.ApplicationOnboarding, error) {
+	f.rollbackID, f.rollbackSHA = id, sha
 	return f.record, f.err
 }
 func (f *fakeApplicationOnboarder) Scale(

@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"bufio"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -28,9 +27,12 @@ type Repository interface {
 	ListSources(context.Context) ([]model.SourceSummary, error)
 	ListClusters(context.Context, model.ClusterFilter) (model.ClusterPage, error)
 	GetCluster(context.Context, string) (model.Cluster, error)
-	ListSyncRuns(context.Context, int) ([]model.SyncRun, error)
+	ListSyncRuns(context.Context, int, []string) ([]model.SyncRun, error)
 	QueueSync(context.Context, string, string) (model.SyncRun, error)
 	GetKubespinArgoDetails(context.Context, string) (model.KubespinArgoCDDetails, error)
+	Overview(context.Context, []string) (model.OverviewStats, error)
+	RecordApplicationOperation(context.Context, model.ApplicationOperation) error
+	ListApplicationOperations(context.Context, string, int) ([]model.ApplicationOperation, error)
 }
 
 type ClusterManager interface {
@@ -42,6 +44,9 @@ type ApplicationOnboarder interface {
 	Create(context.Context, onboarding.CreateInput) (model.ApplicationOnboarding, error)
 	Get(context.Context, string) (model.ApplicationOnboarding, error)
 	Sync(context.Context, string) (model.ApplicationOnboarding, error)
+	SyncWithOptions(context.Context, string, onboarding.SyncOptions) (model.ApplicationOnboarding, error)
+	TerminateOperation(context.Context, string, string) error
+	Rollback(context.Context, string, string) (model.ApplicationOnboarding, error)
 	Scale(context.Context, string, int32) (model.ApplicationOnboarding, error)
 	Offboard(context.Context, string) (model.ApplicationOnboarding, error)
 	List(
@@ -57,7 +62,12 @@ type ApplicationOnboarder interface {
 		onboarding.ResourceRef,
 	) (onboarding.ResourceManifestComparison, error)
 	DeleteResource(context.Context, string, string, onboarding.ResourceRef) error
-	PodLogs(context.Context, string, string, onboarding.ResourceRef) (io.ReadCloser, error)
+	Logs(context.Context, string, string, onboarding.LogQuery) (io.ReadCloser, error)
+	TargetStatus(context.Context, string, string) (onboarding.ArgoAppStatus, error)
+	TargetEvents(context.Context, string, string, onboarding.EventQuery) ([]onboarding.ArgoEvent, error)
+	Containers(context.Context, string, string, onboarding.ResourceRef) ([]onboarding.Container, error)
+	Revisions(context.Context, string, int) (onboarding.ValuesHistory, error)
+	RevisionValues(context.Context, string, string) (onboarding.RevisionValues, error)
 }
 
 type SourceSyncer interface {
@@ -118,6 +128,7 @@ func newHandler(
 	mux.HandleFunc("GET /{$}", api.health)
 	mux.HandleFunc("GET /api/health", api.health)
 	mux.HandleFunc("GET /api/ready", api.ready)
+	mux.HandleFunc("GET /api/overview", api.overview)
 	mux.HandleFunc("GET /api/clusters", api.clusters)
 	mux.HandleFunc("GET /api/clusters/{id}/details", api.clusterDetails)
 	mux.HandleFunc("GET /api/clusters/{id}/argo-access", api.clusterArgoAccess)
@@ -136,6 +147,12 @@ func newHandler(
 	mux.HandleFunc("POST /api/application-onboardings/{id}/sync", api.syncApplicationOnboarding)
 	mux.HandleFunc("POST /api/application-onboardings/{id}/scale", api.scaleApplicationOnboarding)
 	mux.HandleFunc("POST /api/application-onboardings/{id}/offboard", api.offboardApplicationOnboarding)
+	mux.HandleFunc("POST /api/application-onboardings/{id}/rollback", api.rollbackApplicationOnboarding)
+	mux.HandleFunc("GET /api/application-onboardings/{id}/operations", api.applicationOperations)
+	mux.HandleFunc(
+		"DELETE /api/application-onboardings/{id}/targets/{targetId}/operation",
+		api.terminateApplicationOperation,
+	)
 	mux.HandleFunc(
 		"GET /api/application-onboardings/{id}/targets/{targetId}/resources",
 		api.applicationResources,
@@ -144,9 +161,31 @@ func newHandler(
 		"GET /api/application-onboardings/{id}/targets/{targetId}/resources/manifest",
 		api.applicationResourceManifest,
 	)
+	// The original Pod-only logs route stays as an alias of the general one.
 	mux.HandleFunc(
 		"GET /api/application-onboardings/{id}/targets/{targetId}/resources/logs",
-		api.applicationPodLogs,
+		api.applicationLogs,
+	)
+	mux.HandleFunc(
+		"GET /api/application-onboardings/{id}/targets/{targetId}/logs",
+		api.applicationLogs,
+	)
+	mux.HandleFunc(
+		"GET /api/application-onboardings/{id}/targets/{targetId}/resources/containers",
+		api.applicationContainers,
+	)
+	mux.HandleFunc(
+		"GET /api/application-onboardings/{id}/targets/{targetId}/argo",
+		api.applicationTargetStatus,
+	)
+	mux.HandleFunc(
+		"GET /api/application-onboardings/{id}/targets/{targetId}/events",
+		api.applicationTargetEvents,
+	)
+	mux.HandleFunc("GET /api/application-onboardings/{id}/revisions", api.applicationRevisions)
+	mux.HandleFunc(
+		"GET /api/application-onboardings/{id}/revisions/{sha}/values",
+		api.applicationRevisionValues,
 	)
 	mux.HandleFunc(
 		"DELETE /api/application-onboardings/{id}/targets/{targetId}/resources",
@@ -410,6 +449,26 @@ func (api *API) clusters(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "page must be positive and pageSize must be between 1 and 200")
 		return
 	}
+	switch sort := query.Get("sort"); sort {
+	case "", model.ClusterSortName, model.ClusterSortProvider, model.ClusterSortStatus,
+		model.ClusterSortVersion, model.ClusterSortNodes, model.ClusterSortLastSeen:
+		filter.Sort = sort
+	default:
+		writeError(w, http.StatusBadRequest,
+			"sort must be name, provider, status, version, nodes, or lastSeen")
+		return
+	}
+	switch query.Get("order") {
+	case "", "asc":
+	case "desc":
+		filter.Descending = true
+	default:
+		writeError(w, http.StatusBadRequest, "order must be asc or desc")
+		return
+	}
+	if filter.Sort == "" && filter.Descending {
+		filter.Sort = model.ClusterSortName
+	}
 
 	page, err := api.store.ListClusters(r.Context(), filter)
 	if err != nil {
@@ -447,14 +506,23 @@ func (api *API) sources(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *API) syncRuns(w http.ResponseWriter, r *http.Request) {
-	limit := intQuery(r.URL.Query().Get("limit"), 50)
+	query := r.URL.Query()
+	limit := intQuery(query.Get("limit"), 50)
 	if limit < 1 || limit > 200 {
 		writeError(w, http.StatusBadRequest, "limit must be between 1 and 200")
 		return
 	}
-	// Fetch a wider window before applying runtime configuration scoping so stale
-	// runs from a previous deployment cannot crowd configured sources out.
-	runs, err := api.store.ListSyncRuns(r.Context(), 200)
+	// Scoping happens in SQL so runs left by a previous deployment's sources
+	// cannot crowd configured sources out of the window.
+	scope := api.configuredSourceIDs()
+	if sourceID := strings.TrimSpace(query.Get("sourceId")); sourceID != "" {
+		if _, ok := api.source(sourceID); ok {
+			scope = []string{sourceID}
+		} else {
+			scope = []string{}
+		}
+	}
+	runs, err := api.store.ListSyncRuns(r.Context(), limit, scope)
 	if err != nil {
 		if aborted(r) {
 			return
@@ -463,21 +531,7 @@ func (api *API) syncRuns(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "unable to list sync runs")
 		return
 	}
-	configured := make(map[string]struct{}, len(api.config.CloudSources))
-	for _, source := range api.config.CloudSources {
-		configured[source.ID] = struct{}{}
-	}
-	visible := make([]model.SyncRun, 0, limit)
-	for _, run := range runs {
-		if _, ok := configured[run.SourceID]; !ok {
-			continue
-		}
-		visible = append(visible, run)
-		if len(visible) == limit {
-			break
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": visible})
+	writeJSON(w, http.StatusOK, map[string]any{"items": runs})
 }
 
 func (api *API) queueSync(w http.ResponseWriter, r *http.Request) {
@@ -681,84 +735,6 @@ func (api *API) deleteApplicationResource(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusNoContent)
 }
 
-type podLogEntry struct {
-	Timestamp string `json:"timestamp,omitempty"`
-	PodName   string `json:"podName,omitempty"`
-	Content   string `json:"content,omitempty"`
-	Error     string `json:"error,omitempty"`
-}
-
-// applicationPodLogs converts Argo CD's grpc-gateway stream envelopes into
-// stable newline-delimited entries for the browser. Each encoded line is
-// flushed immediately so the UI follows the running Pod rather than waiting
-// for the response to finish.
-func (api *API) applicationPodLogs(w http.ResponseWriter, r *http.Request) {
-	if api.onboarder == nil {
-		writeError(w, http.StatusServiceUnavailable, "application onboarding is not available")
-		return
-	}
-	ref, ok := resourceRef(r)
-	if !ok {
-		writeError(w, http.StatusBadRequest, "kind, name, and version are required")
-		return
-	}
-	stream, err := api.onboarder.PodLogs(
-		r.Context(), r.PathValue("id"), r.PathValue("targetId"), ref,
-	)
-	if err != nil {
-		api.writeResourceError(w, r, err, "stream Pod logs")
-		return
-	}
-	defer stream.Close()
-
-	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache, no-store")
-	w.Header().Set("X-Accel-Buffering", "no")
-	encoder := json.NewEncoder(w)
-	flusher, _ := w.(http.Flusher)
-	scanner := bufio.NewScanner(stream)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		var frame struct {
-			Result *struct {
-				Timestamp string `json:"timeStampStr"`
-				PodName   string `json:"podName"`
-				Content   string `json:"content"`
-				Last      bool   `json:"last"`
-			} `json:"result"`
-			Error *struct {
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		if err := json.Unmarshal(scanner.Bytes(), &frame); err != nil {
-			continue
-		}
-		if frame.Error != nil {
-			_ = encoder.Encode(podLogEntry{Error: frame.Error.Message})
-			if flusher != nil {
-				flusher.Flush()
-			}
-			return
-		}
-		if frame.Result == nil || frame.Result.Last {
-			continue
-		}
-		if err := encoder.Encode(podLogEntry{
-			Timestamp: frame.Result.Timestamp,
-			PodName:   frame.Result.PodName,
-			Content:   frame.Result.Content,
-		}); err != nil {
-			return
-		}
-		if flusher != nil {
-			flusher.Flush()
-		}
-	}
-	if err := scanner.Err(); err != nil && !aborted(r) {
-		slog.Warn("read Pod log stream", "error", err)
-	}
-}
-
 func (api *API) applicationOnboardingDefaults(w http.ResponseWriter, _ *http.Request) {
 	if api.onboarder == nil {
 		writeError(w, http.StatusServiceUnavailable, "application onboarding is not available")
@@ -868,6 +844,8 @@ func (api *API) scaleApplicationOnboarding(w http.ResponseWriter, r *http.Reques
 		return
 	case errors.As(err, &externalError):
 		slog.Error("scale application through GitHub", "error", externalError)
+		api.recordOperation(r, r.PathValue("id"), "", "scale",
+			map[string]any{"replicas": *input.Replicas}, operationFailed)
 		writeError(w, http.StatusBadGateway, "GitHub could not update application replicas")
 		return
 	case errors.Is(err, pgx.ErrNoRows):
@@ -878,15 +856,9 @@ func (api *API) scaleApplicationOnboarding(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "unable to scale application")
 		return
 	}
+	api.recordOperation(r, r.PathValue("id"), "", "scale",
+		map[string]any{"replicas": *input.Replicas}, operationSucceeded)
 	writeJSON(w, http.StatusOK, result)
-}
-
-func (api *API) syncApplicationOnboarding(w http.ResponseWriter, r *http.Request) {
-	if api.onboarder == nil {
-		writeError(w, http.StatusServiceUnavailable, "application onboarding is not available")
-		return
-	}
-	api.runApplicationAction(w, r, "sync", api.onboarder.Sync)
 }
 
 func (api *API) offboardApplicationOnboarding(w http.ResponseWriter, r *http.Request) {
@@ -921,6 +893,11 @@ func (api *API) runApplicationAction(
 		writeError(w, http.StatusInternalServerError, "unable to "+action+" application")
 		return
 	}
+	params := map[string]any{}
+	if action == "sync" {
+		_, params = syncOperation(onboarding.DefaultSyncOptions())
+	}
+	api.recordOperation(r, id, "", action, params, operationSucceeded)
 	writeJSON(w, http.StatusOK, item)
 }
 

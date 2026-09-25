@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,40 +15,6 @@ import (
 
 	"github.com/GitOpsHub/kubeops/backend/internal/config"
 )
-
-func TestHTTPArgoClientStreamsPodLogs(t *testing.T) {
-	var requested string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requested = r.URL.RequestURI()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"result":{"content":"ready","last":false}}` + "\n"))
-	}))
-	defer server.Close()
-	client, err := NewHTTPArgoClient(config.ArgoTarget{
-		SourceID: "gcp", ServerURL: server.URL, Token: "test-token",
-	}, config.OnboardingConfig{RequestTimeout: time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	stream, err := client.PodLogs(
-		context.Background(), "nginx", "argo-cd",
-		ResourceRef{Version: "v1", Kind: "Pod", Namespace: "dev", Name: "nginx-123"},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer stream.Close()
-	body, err := io.ReadAll(stream)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(body), `"content":"ready"`) {
-		t.Fatalf("unexpected stream: %s", body)
-	}
-	if requested != "/api/v1/applications/nginx/pods/nginx-123/logs?appNamespace=argo-cd&follow=true&namespace=dev&tailLines=200" {
-		t.Fatalf("unexpected request: %s", requested)
-	}
-}
 
 func TestHTTPArgoClientTreatsForbiddenGetAsMissingApplication(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -324,7 +289,7 @@ func TestHTTPArgoClientSyncsAndCascadeDeletesApplication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.SyncApplication(context.Background(), "payments", "argo-cd"); err != nil {
+	if _, err := client.SyncApplication(context.Background(), "payments", "argo-cd", DefaultSyncOptions()); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.DeleteApplication(context.Background(), "payments", "argo-cd"); err != nil {

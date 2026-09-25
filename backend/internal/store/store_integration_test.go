@@ -334,7 +334,7 @@ func TestInventoryLifecycle(t *testing.T) {
 		t.Fatalf("expected one removed cluster to be retained, got %#v, %v", all, err)
 	}
 
-	runs, err := repository.ListSyncRuns(ctx, 10)
+	runs, err := repository.ListSyncRuns(ctx, 10, nil)
 	if err != nil || len(runs) != 7 || runs[0].RemovedCount != 1 ||
 		runs[6].ID != interruptedRunID || runs[6].Status != "failed" ||
 		runs[6].Error != abandonedSyncMessage {

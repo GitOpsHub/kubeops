@@ -6,11 +6,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/url"
 	"regexp"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +27,14 @@ import (
 const maxValuesBytes = 256 * 1024
 
 var dnsLabel = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+
+// Environments and Regions are the release contexts an application can be
+// onboarded into. Defaults publishes them so the UI offers exactly what
+// validateInput accepts; the first entry of each is the default.
+var (
+	Environments = []string{"dev", "qa", "prod"}
+	Regions      = []string{"us-east-1", "us-east-2"}
+)
 
 type Repository interface {
 	GetClustersByIDs(context.Context, []string) ([]model.Cluster, error)
@@ -66,12 +74,23 @@ type CreateInput struct {
 }
 
 type Defaults struct {
-	ChartRepoURL            string `json:"chartRepoUrl"`
-	ChartName               string `json:"chartName"`
-	ChartRevision           string `json:"chartRevision"`
-	ValuesYAML              string `json:"valuesYaml"`
-	ValuesRepositoryBaseURL string `json:"valuesRepositoryBaseUrl"`
-	ValuesRevision          string `json:"valuesRevision"`
+	ChartRepoURL            string       `json:"chartRepoUrl"`
+	ChartName               string       `json:"chartName"`
+	ChartRevision           string       `json:"chartRevision"`
+	ValuesYAML              string       `json:"valuesYaml"`
+	ValuesRepositoryBaseURL string       `json:"valuesRepositoryBaseUrl"`
+	ValuesRevision          string       `json:"valuesRevision"`
+	Environments            []string     `json:"environments"`
+	Regions                 []string     `json:"regions"`
+	Capabilities            Capabilities `json:"capabilities"`
+}
+
+// Capabilities tells the UI which optional actions this deployment allows, so
+// it can hide controls the API would refuse.
+type Capabilities struct {
+	// ConsoleMutations covers the Argo CD console's rollback and terminate
+	// actions (ONBOARDING_CONSOLE_MUTATIONS).
+	ConsoleMutations bool `json:"consoleMutations"`
 }
 
 // ErrTargetNotFound reports that an onboarding has no deployment with the
@@ -170,11 +189,11 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 	input.Namespace = strings.TrimSpace(input.Namespace)
 	input.Environment = strings.ToLower(strings.TrimSpace(input.Environment))
 	if input.Environment == "" {
-		input.Environment = "dev"
+		input.Environment = Environments[0]
 	}
 	input.Region = strings.ToLower(strings.TrimSpace(input.Region))
 	if input.Region == "" {
-		input.Region = "us-east-1"
+		input.Region = Regions[0]
 	}
 	if err := s.validateInput(input); err != nil {
 		return model.ApplicationOnboarding{}, err
@@ -525,25 +544,6 @@ func (s *Service) DeleteResource(
 	return nil
 }
 
-// PodLogs streams one live Pod through Argo CD. Unlike short resource reads,
-// the caller's context controls this operation so it remains open until the UI
-// closes the viewer.
-func (s *Service) PodLogs(
-	ctx context.Context,
-	onboardingID string,
-	targetID string,
-	ref ResourceRef,
-) (io.ReadCloser, error) {
-	if !strings.EqualFold(ref.Kind, "Pod") {
-		return nil, ValidationError{Message: "logs are available only for Pods"}
-	}
-	target, client, err := s.target(ctx, onboardingID, targetID)
-	if err != nil {
-		return nil, err
-	}
-	return client.PodLogs(ctx, target.ArgoApplication, s.config.ArgoNamespace, ref)
-}
-
 func (s *Service) Scale(
 	ctx context.Context,
 	id string,
@@ -563,10 +563,8 @@ func (s *Service) Scale(
 			Message: "offboarded applications cannot be scaled",
 		}
 	}
-	if s.github == nil || record.ValuesRepositoryName == "" || record.ValuesRevision == "" {
-		return model.ApplicationOnboarding{}, ValidationError{
-			Message: "application values repository is not configured",
-		}
+	if _, err := s.valuesPath(record); err != nil {
+		return model.ApplicationOnboarding{}, err
 	}
 	update, err := s.github.UpdateReplicas(
 		ctx,
@@ -594,9 +592,32 @@ func (s *Service) Scale(
 }
 
 func (s *Service) Sync(ctx context.Context, id string) (model.ApplicationOnboarding, error) {
+	return s.SyncWithOptions(ctx, id, DefaultSyncOptions())
+}
+
+// SyncWithOptions runs a manual sync shaped by options. A dry run only asks
+// Argo CD to compute the result: it neither recreates a missing application
+// nor records anything, so the stored deployment state stays what Argo CD last
+// really did. The dry run's outcome is read back from the target's status.
+func (s *Service) SyncWithOptions(
+	ctx context.Context,
+	id string,
+	options SyncOptions,
+) (model.ApplicationOnboarding, error) {
 	record, err := s.store.GetApplicationOnboarding(ctx, id)
 	if err != nil {
 		return model.ApplicationOnboarding{}, err
+	}
+	targets, err := selectTargets(record.Targets, options.TargetIDs)
+	if err != nil {
+		return model.ApplicationOnboarding{}, err
+	}
+	record.Targets = targets
+	if options.DryRun {
+		if err := s.dryRun(ctx, record, options); err != nil {
+			return model.ApplicationOnboarding{}, err
+		}
+		return s.Get(ctx, id)
 	}
 	// A sync is a new deployment attempt, so the timeout window restarts here.
 	// Without this the reconciler fails every target of an onboarding older than
@@ -620,7 +641,7 @@ func (s *Service) Sync(ctx context.Context, id string) (model.ApplicationOnboard
 		}
 
 		state, syncErr := client.SyncApplication(
-			callCtx, target.ArgoApplication, s.config.ArgoNamespace,
+			callCtx, target.ArgoApplication, s.config.ArgoNamespace, options,
 		)
 		if syncErr != nil {
 			slog.Error("sync Argo CD application",
@@ -888,6 +909,9 @@ func (s *Service) Defaults() Defaults {
 		ValuesYAML:              s.config.HelmDefaultsYAML,
 		ValuesRepositoryBaseURL: s.config.GitHubWebURL + "/" + s.config.GitHubOrg,
 		ValuesRevision:          s.config.GitHubBranch,
+		Environments:            slices.Clone(Environments),
+		Regions:                 slices.Clone(Regions),
+		Capabilities:            Capabilities{ConsoleMutations: s.config.ConsoleMutations},
 	}
 }
 
@@ -1049,12 +1073,11 @@ func (s *Service) validateInput(input CreateInput) error {
 	if input.Environment != "" && !validDNSLabel(input.Environment) {
 		return ValidationError{Message: "environment must be a lowercase DNS label"}
 	}
-	if input.Environment != "" &&
-		input.Environment != "dev" && input.Environment != "qa" && input.Environment != "prod" {
-		return ValidationError{Message: "environment must be dev, qa, or prod"}
+	if input.Environment != "" && !slices.Contains(Environments, input.Environment) {
+		return ValidationError{Message: "environment must be " + joinChoices(Environments)}
 	}
-	if input.Region != "" && input.Region != "us-east-1" && input.Region != "us-east-2" {
-		return ValidationError{Message: "region must be us-east-1 or us-east-2"}
+	if input.Region != "" && !slices.Contains(Regions, input.Region) {
+		return ValidationError{Message: "region must be " + joinChoices(Regions)}
 	}
 	if len(input.ClusterIDs) == 0 {
 		return ValidationError{Message: "at least one target cluster is required"}
@@ -1098,6 +1121,20 @@ func (s *Service) validateInput(input CreateInput) error {
 		}
 	}
 	return nil
+}
+
+// joinChoices renders a list the way validation messages always have:
+// "a or b", "a, b, or c".
+func joinChoices(choices []string) string {
+	switch len(choices) {
+	case 0:
+		return ""
+	case 1:
+		return choices[0]
+	case 2:
+		return choices[0] + " or " + choices[1]
+	}
+	return strings.Join(choices[:len(choices)-1], ", ") + ", or " + choices[len(choices)-1]
 }
 
 // regionOverride returns the region only when an override file was committed for

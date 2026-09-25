@@ -228,6 +228,15 @@ type fakeArgoClient struct {
 	resourceErr     error
 	deletedResource ResourceRef
 	logStream       string
+	// Console calls.
+	logQuery     LogQuery
+	status       ArgoAppStatus
+	events       []ArgoEvent
+	eventQuery   EventQuery
+	syncedNames  []string
+	syncOptions  SyncOptions
+	terminated   string
+	terminateErr error
 }
 
 type fakeValuesRepositoryManager struct {
@@ -241,6 +250,17 @@ type fakeValuesRepositoryManager struct {
 	// calls counts Ensure invocations, so a refused onboarding can be shown to
 	// have left no repository behind.
 	calls int
+	// Values history and rollback.
+	history      []ValuesCommit
+	historyErr   error
+	historyPath  string
+	historyLimit int
+	valuesAt     map[string]string
+	valuesAtErr  error
+	restore      ValuesUpdate
+	restoreErr   error
+	restoredPath string
+	restoredSHA  string
 }
 
 func (f *fakeValuesRepositoryManager) Ensure(
@@ -261,6 +281,25 @@ func (f *fakeValuesRepositoryManager) Ensure(
 		f.repository.RegionValues = regionSet(targetRegions)
 	}
 	return f.repository, f.err
+}
+func (f *fakeValuesRepositoryManager) ValuesHistory(
+	_ context.Context,
+	_, _, path string,
+	limit int,
+) ([]ValuesCommit, error) {
+	f.historyPath, f.historyLimit = path, limit
+	return f.history, f.historyErr
+}
+func (f *fakeValuesRepositoryManager) ValuesAt(_ context.Context, _, path, ref string) (string, error) {
+	f.historyPath = path
+	return f.valuesAt[ref], f.valuesAtErr
+}
+func (f *fakeValuesRepositoryManager) RestoreValues(
+	_ context.Context,
+	_, _, path, sha string,
+) (ValuesUpdate, error) {
+	f.restoredPath, f.restoredSHA = path, sha
+	return f.restore, f.restoreErr
 }
 func (f *fakeValuesRepositoryManager) UpdateReplicas(
 	_ context.Context,
@@ -298,10 +337,13 @@ func (f *fakeArgoClient) GetApplication(
 func (f *fakeArgoClient) SyncApplication(
 	_ context.Context,
 	name, _ string,
+	options SyncOptions,
 ) (ApplicationState, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.synced = name
+	f.syncedNames = append(f.syncedNames, name)
+	f.syncOptions = options
 	if f.syncErr != nil {
 		return f.state, f.syncErr
 	}
@@ -355,17 +397,39 @@ func (f *fakeArgoClient) DeleteResource(
 	f.deletedResource = ref
 	return f.resourceErr
 }
-func (f *fakeArgoClient) PodLogs(
+func (f *fakeArgoClient) Logs(
 	_ context.Context,
 	_, _ string,
-	_ ResourceRef,
+	query LogQuery,
 ) (io.ReadCloser, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.logQuery = query
 	if f.resourceErr != nil {
 		return nil, f.resourceErr
 	}
 	return io.NopCloser(strings.NewReader(f.logStream)), nil
+}
+func (f *fakeArgoClient) ApplicationStatus(context.Context, string, string) (ArgoAppStatus, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.status, f.resourceErr
+}
+func (f *fakeArgoClient) ApplicationEvents(
+	_ context.Context,
+	_, _ string,
+	query EventQuery,
+) ([]ArgoEvent, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.eventQuery = query
+	return f.events, f.resourceErr
+}
+func (f *fakeArgoClient) TerminateOperation(_ context.Context, name, _ string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.terminated = name
+	return f.terminateErr
 }
 
 func TestResourceManifestsAllowsControllerGeneratedResourceWithoutDesiredObject(t *testing.T) {
@@ -403,18 +467,6 @@ func TestResourceManifestsAllowsControllerGeneratedResourceWithoutDesiredObject(
 	}
 }
 
-func TestPodLogsRejectsNonPodResource(t *testing.T) {
-	service := &Service{}
-	_, err := service.PodLogs(
-		context.Background(), "onboarding-1", "target-1",
-		ResourceRef{Version: "v1", Kind: "Service", Name: "api"},
-	)
-	var validationError ValidationError
-	if !errors.As(err, &validationError) {
-		t.Fatalf("expected validation error, got %v", err)
-	}
-}
-
 func TestDefaultsIncludeValuesRepositoryCoordinates(t *testing.T) {
 	service := &Service{config: config.OnboardingConfig{
 		HelmRepoURL:      "oci://ghcr.io/gitopshub/charts",
@@ -430,6 +482,71 @@ func TestDefaultsIncludeValuesRepositoryCoordinates(t *testing.T) {
 	if defaults.ValuesRepositoryBaseURL != "https://github.example.test/platform" ||
 		defaults.ValuesRevision != "main" {
 		t.Fatalf("unexpected repository defaults: %#v", defaults)
+	}
+}
+
+// The UI builds its environment and region pickers from Defaults, so every
+// published choice must pass validation and nothing else may.
+func TestDefaultsPublishTheReleaseContextsValidationAccepts(t *testing.T) {
+	for _, mutations := range []bool{true, false} {
+		service := &Service{
+			config: config.OnboardingConfig{
+				HelmRepoURL: "repo", HelmChart: "chart", HelmRevision: "1",
+				HelmDefaultsYAML: "replicaCount: 1\n", ConsoleMutations: mutations,
+			},
+			github: &fakeValuesRepositoryManager{},
+		}
+		defaults := service.Defaults()
+		if defaults.Capabilities.ConsoleMutations != mutations {
+			t.Fatalf("expected consoleMutations=%t, got %#v", mutations, defaults.Capabilities)
+		}
+		if len(defaults.Environments) == 0 || len(defaults.Regions) == 0 {
+			t.Fatalf("expected release contexts, got %#v", defaults)
+		}
+		valid := CreateInput{
+			Name: "payments", Namespace: "payments", ClusterIDs: []string{"cluster-1"},
+			ValuesYAML: "replicaCount: 1\n",
+		}
+		for _, environment := range defaults.Environments {
+			for _, region := range defaults.Regions {
+				input := valid
+				input.Environment, input.Region = environment, region
+				if err := service.validateInput(input); err != nil {
+					t.Fatalf("published %s/%s was rejected: %v", environment, region, err)
+				}
+			}
+		}
+		for _, input := range []CreateInput{
+			{Environment: "staging", Region: defaults.Regions[0]},
+			{Environment: defaults.Environments[0], Region: "eu-west-1"},
+		} {
+			candidate := valid
+			candidate.Environment, candidate.Region = input.Environment, input.Region
+			if err := service.validateInput(candidate); err == nil {
+				t.Fatalf("unpublished %s/%s was accepted", input.Environment, input.Region)
+			}
+		}
+		// Callers must not be able to edit the package-level lists through the
+		// response.
+		defaults.Environments[0] = "mutated"
+		if Environments[0] == "mutated" {
+			t.Fatal("Defaults exposed the shared environment list")
+		}
+	}
+}
+
+func TestJoinChoices(t *testing.T) {
+	for _, test := range []struct {
+		choices []string
+		want    string
+	}{
+		{[]string{"a"}, "a"},
+		{[]string{"us-east-1", "us-east-2"}, "us-east-1 or us-east-2"},
+		{[]string{"dev", "qa", "prod"}, "dev, qa, or prod"},
+	} {
+		if got := joinChoices(test.choices); got != test.want {
+			t.Errorf("joinChoices(%v) = %q, want %q", test.choices, got, test.want)
+		}
 	}
 }
 
@@ -1406,7 +1523,7 @@ func TestReconcileSkipsRecentlyCheckedTargets(t *testing.T) {
 	}
 }
 
-func (panickingArgoClient) SyncApplication(context.Context, string, string) (ApplicationState, error) {
+func (panickingArgoClient) SyncApplication(context.Context, string, string, SyncOptions) (ApplicationState, error) {
 	panic("boom")
 }
 

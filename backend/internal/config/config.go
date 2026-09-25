@@ -118,6 +118,10 @@ type OnboardingConfig struct {
 	// built against it because they are served by the reverse proxy on this origin
 	// rather than by the Argo CD server itself.
 	PublicBaseURL string
+	// ConsoleMutations enables the Argo CD console's rollback and terminate
+	// endpoints. They widen what an unauthenticated caller can change, so a
+	// deployment can switch them off without losing the read-only console.
+	ConsoleMutations bool
 }
 
 func Load(envFile string) (Config, error) {
@@ -303,6 +307,10 @@ func loadOnboardingConfig() (OnboardingConfig, error) {
 			return OnboardingConfig{}, fmt.Errorf("read global Helm defaults: %w", err)
 		}
 	}
+	consoleMutations, err := strconv.ParseBool(valueOrDefault("ONBOARDING_CONSOLE_MUTATIONS", "true"))
+	if err != nil {
+		return OnboardingConfig{}, fmt.Errorf("ONBOARDING_CONSOLE_MUTATIONS must be true or false")
+	}
 	visibility := valueOrDefault("GITHUB_REPO_VISIBILITY", "private")
 	if visibility != "private" && visibility != "public" {
 		return OnboardingConfig{}, fmt.Errorf("GITHUB_REPO_VISIBILITY must be private or public")
@@ -332,6 +340,7 @@ func loadOnboardingConfig() (OnboardingConfig, error) {
 		DeploymentTimeout: deploymentTimeout,
 		RequestTimeout:    requestTimeout,
 		PublicBaseURL:     publicBaseURL,
+		ConsoleMutations:  consoleMutations,
 	}, nil
 }
 
