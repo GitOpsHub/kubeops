@@ -110,6 +110,26 @@ describe('EventsFeed', () => {
     expect(screen.queryByText(/Showing events for/)).not.toBeInTheDocument()
   })
 
+  it('honours the uid-only link from a resource Info panel', async () => {
+    const { fetchMock } = mockAPI({
+      applications: [buildApplication()],
+      targetEvents: { 'target-1': events },
+    })
+    renderApp('/applications/onboarding-1?target=target-1&tab=events&uid=uid-pod')
+
+    expect(await screen.findByRole('tab', { name: 'Events' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    await screen.findByRole('region', { name: 'Pod payments-api-abc' })
+    expect(groupNames()).toEqual(['Pod payments-api-abc'])
+    expect(screen.getByRole('note')).toHaveTextContent('Showing events for Pod payments-api-abc')
+    const eventCalls = fetchMock.mock.calls
+      .map(([url]) => String(url))
+      .filter((url) => url.includes('/events'))
+    expect(eventCalls.at(-1)).toMatch(/\/targets\/target-1\/events\?uid=uid-pod$/)
+  })
+
   it('explains an empty feed', async () => {
     mockAPI({ applications: [buildApplication()] })
     renderApp('/applications/onboarding-1?tab=events')

@@ -26,7 +26,11 @@ export function StatusBadge({ status, domain, tone, label }: StatusProps) {
   const resolved = tone ?? meta.tone
   // A plain lowercase compare, not normalise(): normalise strips spaces, which
   // would treat "OutOfSync" → "Out of Sync" as a case-only change.
-  const caseOnly = !label && meta.label.toLowerCase() === status.trim().toLowerCase()
+  // An exact match needs no CSS casing — capitalize would turn "Out of Sync"
+  // into "Out Of Sync".
+  const trimmed = status.trim()
+  const caseOnly =
+    !label && meta.label !== trimmed && meta.label.toLowerCase() === trimmed.toLowerCase()
   const text = label ?? (caseOnly ? status : meta.label)
   const classes = [
     'status-badge',

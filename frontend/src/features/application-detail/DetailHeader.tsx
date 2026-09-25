@@ -62,9 +62,7 @@ export function DetailHeader({
 
       <div className="detail-actions" aria-label="Application actions" role="group">
         <span role="img" aria-label={`Application sync: ${sync}`} className="detail-sync">
-          {/* An explicit label keeps "Out of Sync" as written rather than
-              letting the badge title-case a value it only differs from in case. */}
-          <StatusBadge domain="sync" status={sync} label={sync} />
+          <StatusBadge domain="sync" status={sync} />
         </span>
         <Button disabled={noTargets} onClick={onManifests} icon={<ManifestIcon />}>
           Manifest

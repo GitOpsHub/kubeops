@@ -1,4 +1,4 @@
-import { act, renderHook, screen, within } from '@testing-library/react'
+import { act, renderHook, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -136,6 +136,39 @@ describe('application detail page', () => {
     expect(
       await screen.findByRole('heading', { name: 'Sync operation on prod-us-east' }),
     ).toBeInTheDocument()
+  })
+
+  it('flows the resource graph edges only while the selected cluster syncs', async () => {
+    const running = buildTarget({ id: 'target-1', clusterName: 'prod-us-east' })
+    const idle = buildTarget({ id: 'target-2', clusterName: 'prod-eu', region: 'eu-west-1' })
+    mockAPI({
+      applications: [buildApplication({ targets: [running, idle] })],
+      resources: [
+        buildResource({ uid: 'uid-dep', kind: 'Deployment', name: 'payments-api' }),
+        buildResource({
+          uid: 'uid-rs',
+          kind: 'ReplicaSet',
+          name: 'payments-api-1',
+          parentUid: 'uid-dep',
+        }),
+      ],
+      argoStatuses: {
+        'target-1': buildArgoStatus(running, { operation: buildOperation({ phase: 'Running' }) }),
+      },
+    })
+    const { container } = renderApp('/applications/onboarding-1')
+    const user = userEvent.setup()
+
+    await screen.findByRole('region', { name: 'Sync in progress' })
+    await waitFor(() => expect(container.querySelector('.graph-edges.is-flowing')).not.toBeNull())
+
+    await user.click(
+      within(screen.getByRole('group', { name: 'Choose a cluster' })).getByRole('button', {
+        name: /prod-eu/,
+      }),
+    )
+    await waitFor(() => expect(container.querySelector('.graph-edges')).not.toBeNull())
+    expect(container.querySelector('.graph-edges.is-flowing')).toBeNull()
   })
 
   it('merges audit, commits, deploys, and warnings into the timeline', async () => {
