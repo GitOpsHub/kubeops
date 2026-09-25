@@ -396,3 +396,70 @@ func TestHTTPArgoClientTerminateOperation(t *testing.T) {
 		})
 	}
 }
+
+func TestScrubMessage(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		message string
+		want    string
+	}{
+		{name: "no URL", message: "rpc error: deadline exceeded", want: "rpc error: deadline exceeded"},
+		{name: "userinfo", message: "failed to fetch https://bot:ghp_secret@github.com/org/repo.git",
+			want: "failed to fetch https://github.com/org/repo.git"},
+		{name: "password containing @", message: "clone https://user:p@ss@host.example/repo failed",
+			want: "clone https://host.example/repo failed"},
+		{name: "token without a password", message: "pull oci://ghp_token@ghcr.io/org/chart",
+			want: "pull oci://ghcr.io/org/chart"},
+		{name: "every URL in the message",
+			message: "tried http://a:b@one.example and https://c:d@two.example/x",
+			want:    "tried http://one.example and https://two.example/x"},
+		{name: "an email after the path is not userinfo",
+			message: "https://github.com/org/repo: denied for dev@example.com",
+			want:    "https://github.com/org/repo: denied for dev@example.com"},
+		{name: "query credentials",
+			message: `Get "https://host/chart.tgz?access_token=abc&ref=main&sig=xyz": 403`,
+			want:    `Get "https://host/chart.tgz?access_token=<redacted>&ref=main&sig=<redacted>": 403`},
+		{name: "signed URL",
+			message: "https://bucket.s3.amazonaws.com/c.tgz?X-Amz-Credential=AKIA%2F&X-Amz-Signature=deadbeef",
+			want:    "https://bucket.s3.amazonaws.com/c.tgz?X-Amz-Credential=<redacted>&X-Amz-Signature=<redacted>"},
+		{name: "key, secret, and password parameters",
+			message: "https://api.example/v1?key=k1&client_secret=s1&password=p1&page=2",
+			want:    "https://api.example/v1?key=<redacted>&client_secret=<redacted>&password=<redacted>&page=2"},
+		{name: "quoted URL ends at the quote",
+			message: `fetch "https://host/x?token=abc" failed`,
+			want:    `fetch "https://host/x?token=<redacted>" failed`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := ScrubMessage(test.message); got != test.want {
+				t.Fatalf("got %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+// The application state's message is stored on the target and returned by the
+// onboarding API, so it is scrubbed like the console's own messages.
+func TestHTTPArgoClientScrubsApplicationStateMessage(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		status string
+		want   string
+	}{
+		{name: "operation message",
+			status: `{"operationState":{"phase":"Failed","message":"fetch https://bot:ghp_x@github.com/o/r failed"}}`,
+			want:   "fetch https://github.com/o/r failed"},
+		{name: "health message",
+			status: `{"health":{"status":"Degraded","message":"pull oci://ghcr.io/o/c?token=abc denied"}}`,
+			want:   "pull oci://ghcr.io/o/c?token=<redacted> denied"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := testArgoClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`{"status":` + test.status + `}`))
+			})
+			state, err := client.GetApplication(context.Background(), "payments", "argo-cd")
+			if err != nil || state.Message != test.want {
+				t.Fatalf("got %q, %v; want %q", state.Message, err, test.want)
+			}
+		})
+	}
+}

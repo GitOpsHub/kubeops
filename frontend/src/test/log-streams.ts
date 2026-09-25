@@ -5,6 +5,8 @@ import type { ResourceContainer } from '../api/argo'
 /** An NDJSON response the test writes into line by line, then closes. */
 export type ControlledStream = {
   push: (...entries: PodLogEntry[]) => void
+  /** Writes text as is, e.g. a line cut off mid-JSON. */
+  pushRaw: (text: string) => void
   close: () => void
 }
 
@@ -43,6 +45,7 @@ export function mockLogsFetch({ containers = [], status }: LogsFetchOptions = {}
           controller.enqueue(
             encoder.encode(entries.map((entry) => `${JSON.stringify(entry)}\n`).join('')),
           ),
+        pushRaw: (text) => controller.enqueue(encoder.encode(text)),
         close: () => controller.close(),
       })
       return new Response(body, { headers: { 'Content-Type': 'application/x-ndjson' } })

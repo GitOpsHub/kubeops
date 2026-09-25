@@ -119,6 +119,8 @@ func (api *API) syncApplicationOnboarding(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadGateway, "Argo CD could not start the dry run on every target")
 	default:
 		slog.Error("sync application onboarding", "onboarding", id, "error", err)
+		kind, params := syncOperation(options)
+		api.recordOperation(r, id, "", kind, params, operationFailed)
 		writeError(w, http.StatusInternalServerError, "unable to sync application")
 	}
 }
@@ -140,7 +142,9 @@ func (api *API) terminateApplicationOperation(w http.ResponseWriter, r *http.Req
 	case errors.Is(err, onboarding.ErrNoOperation):
 		writeError(w, http.StatusConflict, "no sync operation is in progress")
 	default:
-		api.writeResourceError(w, r, err, "terminate Argo CD operation")
+		if api.writeResourceError(w, r, err, "terminate Argo CD operation") >= http.StatusInternalServerError {
+			api.recordOperation(r, id, targetID, "terminate", nil, operationFailed)
+		}
 	}
 }
 
@@ -203,6 +207,7 @@ func (api *API) rollbackApplicationOnboarding(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadGateway, "GitHub could not roll back application values")
 	default:
 		slog.Error("roll back application onboarding", "onboarding", id, "sha", request.CommitSHA, "error", err)
+		api.recordOperation(r, id, "", "rollback", map[string]any{"commitSha": request.CommitSHA}, operationFailed)
 		writeError(w, http.StatusInternalServerError, "unable to roll back application")
 	}
 }

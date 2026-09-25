@@ -17,7 +17,10 @@ const (
 
 // recordOperation appends to the application's audit trail. It runs after the
 // action has already happened, so a failure is logged rather than turned into
-// an error response, and it outlives a client that has hung up.
+// an error response, and it outlives a client that has hung up. Actions record
+// success and server-side failures (5xx: Argo CD, GitHub, or the database let
+// them down), which may have changed something; a request refused as invalid
+// (4xx) changed nothing and is not recorded.
 func (api *API) recordOperation(
 	r *http.Request,
 	onboardingID, targetID, kind string,

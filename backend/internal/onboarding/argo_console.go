@@ -149,13 +149,25 @@ func DefaultSyncOptions() SyncOptions {
 	return SyncOptions{Prune: true}
 }
 
-// credentialsInURL matches the userinfo of an http(s) URL. Argo CD condition and
-// operation messages quote repository URLs verbatim, and a URL configured with
-// embedded credentials would otherwise reach an unauthenticated caller.
-var credentialsInURL = regexp.MustCompile(`(?i)(https?://)[^/\s@]+@`)
+// Argo CD condition, operation, event, and log-stream error messages quote
+// repository and registry URLs verbatim, and credentials embedded in one would
+// otherwise reach an unauthenticated caller.
+var (
+	// credentialsInURL matches a URL's userinfo. It runs to the last @ before
+	// the host, because a password may itself contain @; the scheme is any, so
+	// oci:// and git+ssh:// URLs are covered too.
+	credentialsInURL = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.-]*://)[^/\s]*@`)
+	// credentialsInQuery matches the value of a query parameter that carries a
+	// credential, such as access_token, a signed URL's X-Amz-Signature, or
+	// sig.
+	credentialsInQuery = regexp.MustCompile(
+		`(?i)([?&][\w.-]*(?:token|key|secret|passw(?:or)?d|sig|signature|credential)[\w.-]*=)[^&\s#"']*`)
+)
 
-func scrubMessage(message string) string {
-	return credentialsInURL.ReplaceAllString(message, "$1")
+// ScrubMessage removes credentials from URLs quoted in an Argo CD message.
+func ScrubMessage(message string) string {
+	message = credentialsInURL.ReplaceAllString(message, "$1")
+	return credentialsInQuery.ReplaceAllString(message, "${1}"+RedactedValue)
 }
 
 type argoInitiatorPayload struct {
@@ -236,7 +248,7 @@ func (c *HTTPArgoClient) ApplicationStatus(
 		},
 		Health: ArgoHealth{
 			Status:  valueOrUnknown(status.Health.Status),
-			Message: scrubMessage(status.Health.Message),
+			Message: ScrubMessage(status.Health.Message),
 		},
 		History:      make([]ArgoHistoryEntry, 0, len(status.History)),
 		Conditions:   make([]ArgoCondition, 0, len(status.Conditions)),
@@ -245,7 +257,7 @@ func (c *HTTPArgoClient) ApplicationStatus(
 	}
 	if state := status.OperationState; state != nil && state.Phase != "" {
 		operation := &ArgoOperation{
-			Phase: state.Phase, Message: scrubMessage(state.Message),
+			Phase: state.Phase, Message: ScrubMessage(state.Message),
 			StartedAt: state.StartedAt, FinishedAt: state.FinishedAt,
 			RetryCount: state.RetryCount,
 			InitiatedBy: ArgoInitiator{
@@ -264,7 +276,7 @@ func (c *HTTPArgoClient) ApplicationStatus(
 				operation.Revisions = revisions
 			}
 			for _, resource := range result.Resources {
-				resource.Message = scrubMessage(resource.Message)
+				resource.Message = ScrubMessage(resource.Message)
 				operation.Resources = append(operation.Resources, resource)
 			}
 		}
@@ -284,7 +296,7 @@ func (c *HTTPArgoClient) ApplicationStatus(
 		})
 	}
 	for _, condition := range status.Conditions {
-		condition.Message = scrubMessage(condition.Message)
+		condition.Message = ScrubMessage(condition.Message)
 		result.Conditions = append(result.Conditions, condition)
 	}
 	return result, nil
@@ -394,7 +406,7 @@ func (c *HTTPArgoClient) ApplicationEvents(
 			source = item.ReportingComponent
 		}
 		events = append(events, ArgoEvent{
-			Type: item.Type, Reason: item.Reason, Message: scrubMessage(item.Message),
+			Type: item.Type, Reason: item.Reason, Message: ScrubMessage(item.Message),
 			Count: count, FirstSeen: first,
 			LastSeen: firstTime(item.LastTimestamp, seriesLast, item.EventTime, first),
 			Source:   source,

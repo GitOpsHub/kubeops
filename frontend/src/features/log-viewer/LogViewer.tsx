@@ -71,6 +71,7 @@ const sinceOptions: { value: SinceOption; label: string; seconds?: number }[] = 
 const tailOptions = [100, 500, 1_000, 5_000]
 
 const statusTones: Record<LogStreamStatus, Tone> = {
+  idle: 'idle',
   connecting: 'info',
   live: 'ok',
   paused: 'warn',
@@ -80,6 +81,7 @@ const statusTones: Record<LogStreamStatus, Tone> = {
 }
 
 const statusLabels: Record<LogStreamStatus, string> = {
+  idle: 'Idle',
   connecting: 'Connecting',
   live: 'Live',
   paused: 'Paused',

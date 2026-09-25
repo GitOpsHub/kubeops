@@ -9,8 +9,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/GitOpsHub/kubeops/backend/internal/cloudauth"
 	"github.com/GitOpsHub/kubeops/backend/internal/config"
@@ -149,7 +151,9 @@ type fakeApplicationOnboarder struct {
 	logRef          onboarding.ResourceRef
 	resourceTargets []string
 	logStream       string
-	reconcileCalls  int
+	// logStreamErr, when set, fails the log stream after logStream is read.
+	logStreamErr   error
+	reconcileCalls int
 	// Console endpoints.
 	logQuery      onboarding.LogQuery
 	status        onboarding.ArgoAppStatus
@@ -211,7 +215,11 @@ func (f *fakeApplicationOnboarder) Logs(
 	if f.resourceErr != nil {
 		return nil, f.resourceErr
 	}
-	return io.NopCloser(strings.NewReader(f.logStream)), nil
+	var stream io.Reader = strings.NewReader(f.logStream)
+	if f.logStreamErr != nil {
+		stream = io.MultiReader(stream, iotest.ErrReader(f.logStreamErr))
+	}
+	return io.NopCloser(stream), nil
 }
 func (f *fakeApplicationOnboarder) TargetStatus(
 	_ context.Context,
@@ -962,6 +970,80 @@ func TestStreamApplicationPodLogs(t *testing.T) {
 	}
 	if entry.Content != "ready" || entry.PodName != "api-123" {
 		t.Fatalf("unexpected log entry: %#v", entry)
+	}
+}
+
+func TestStreamApplicationPodLogsScrubsArgoErrors(t *testing.T) {
+	onboarder := &fakeApplicationOnboarder{logStream: strings.Join([]string{
+		`{"result":{"timeStampStr":"2026-08-04T12:00:00Z","podName":"api-123","content":"ready"}}`,
+		`{"error":{"message":"pull https://bot:ghp_secret@ghcr.io/org/img?token=abc denied"}}`,
+		`{"result":{"timeStampStr":"2026-08-04T12:00:01Z","podName":"api-123","content":"after"}}`,
+	}, "\n")}
+	handler := NewHandlerWithOnboarding(
+		config.Config{}, &fakeRepository{}, &fakeClusterManager{}, onboarder,
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet,
+		"/api/application-onboardings/onboarding-1/targets/target-1/logs?kind=Pod&name=api-123", nil))
+
+	lines := strings.Split(strings.TrimSpace(response.Body.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("the stream must end at the error: %q", lines)
+	}
+	var entry podLogEntry
+	if err := json.Unmarshal([]byte(lines[1]), &entry); err != nil {
+		t.Fatal(err)
+	}
+	if entry.Error != "pull https://ghcr.io/org/img?token=<redacted> denied" {
+		t.Fatalf("unexpected error line: %#v", entry)
+	}
+}
+
+func TestStreamApplicationPodLogsReportsAnUnfinishedStream(t *testing.T) {
+	const line = `{"result":{"timeStampStr":"2026-08-04T12:00:00Z","podName":"api-123","content":"ready"}}`
+	for _, test := range []struct {
+		name      string
+		stream    string
+		streamErr error
+		want      []podLogEntry
+	}{
+		{name: "clean end", stream: line,
+			want: []podLogEntry{{Timestamp: "2026-08-04T12:00:00Z", PodName: "api-123", Content: "ready"}}},
+		// The client resumes after this one, so it must be distinguishable from
+		// an error that would only repeat.
+		{name: "upstream reset", stream: line + "\n", streamErr: errors.New("connection reset by peer"),
+			want: []podLogEntry{
+				{Timestamp: "2026-08-04T12:00:00Z", PodName: "api-123", Content: "ready"},
+				{Error: "the log stream from Argo CD was interrupted", Retryable: true},
+			}},
+		{name: "line over 1 MiB",
+			stream: line + "\n" + `{"result":{"content":"` + strings.Repeat("x", maxLogLine) + `"}}` + "\n",
+			want: []podLogEntry{
+				{Timestamp: "2026-08-04T12:00:00Z", PodName: "api-123", Content: "ready"},
+				{Error: "a log line exceeded 1 MiB, so the stream stopped"},
+			}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			onboarder := &fakeApplicationOnboarder{logStream: test.stream, logStreamErr: test.streamErr}
+			handler := NewHandlerWithOnboarding(
+				config.Config{}, &fakeRepository{}, &fakeClusterManager{}, onboarder,
+			)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet,
+				"/api/application-onboardings/onboarding-1/targets/target-1/logs?kind=Pod&name=api-123", nil))
+
+			var got []podLogEntry
+			for _, raw := range strings.Split(strings.TrimSpace(response.Body.String()), "\n") {
+				var entry podLogEntry
+				if err := json.Unmarshal([]byte(raw), &entry); err != nil {
+					t.Fatalf("invalid line %q: %v", raw, err)
+				}
+				got = append(got, entry)
+			}
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("got %#v\nwant %#v", got, test.want)
+			}
+		})
 	}
 }
 

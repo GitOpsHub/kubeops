@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { streamTargetLogs, type LogResourceRef, type PodLogEntry } from '../../api/argo'
+import {
+  LogStreamInterruptedError,
+  streamTargetLogs,
+  type LogResourceRef,
+  type PodLogEntry,
+} from '../../api/argo'
 import { ApiError, errorMessage, isAbortError } from '../../api/client'
 import { defaultLogCapacity, RingBuffer } from './log-buffer'
 import { parseLogLine, type LogLevel } from './log-parse'
@@ -17,7 +22,9 @@ export type LogLine = {
   json?: Record<string, unknown>
 }
 
-export type LogStreamStatus = 'connecting' | 'live' | 'paused' | 'reconnecting' | 'ended' | 'error'
+/** `idle` means no resource is picked, so nothing streams. */
+export type LogStreamStatus =
+  'idle' | 'connecting' | 'live' | 'paused' | 'reconnecting' | 'ended' | 'error'
 
 export type LogStreamError = { message: string; status?: number }
 
@@ -99,7 +106,7 @@ export function useLogStream({
   maxReconnectAttempts = defaultMaxReconnectAttempts,
 }: LogStreamParams) {
   const [snapshot, setSnapshot] = useState<Snapshot>(emptySnapshot)
-  const [status, setStatus] = useState<LogStreamStatus>('connecting')
+  const [status, setStatus] = useState<LogStreamStatus>(resource ? 'connecting' : 'idle')
   const [error, setError] = useState<LogStreamError | null>(null)
   const [held, setHeld] = useState(0)
   const [reconnectAttempt, setReconnectAttempt] = useState(0)
@@ -152,7 +159,10 @@ export function useLogStream({
     setHeld(0)
     setError(null)
     setReconnectAttempt(0)
-    if (!kind || !name) return
+    if (!kind || !name) {
+      setStatus('idle')
+      return
+    }
 
     const controller = new AbortController()
     const delays = delaysKey.split(',').map(Number)
@@ -161,13 +171,23 @@ export function useLogStream({
     let newestValue = Number.NEGATIVE_INFINITY
     let overlap: Set<string> | null = null
     let overlapCutoff = Number.NEGATIVE_INFINITY
+    // Keys of the newest timestamped lines received, kept apart from the
+    // buffer so a resume after clear() still skips what was already shown.
+    let recentKeys: string[] = []
     let attempt = 0
     let timer: ReturnType<typeof setTimeout> | undefined
 
     const accept = (entry: PodLogEntry) => {
       const key = logLineKey(entry)
       const value = timeValue(entry.timestamp)
-      if (overlap && overlap.has(key) && !(value > overlapCutoff)) return false
+      // Only a timestamped line can be told apart from a later identical
+      // one; untimed lines (heartbeats, "ok") may repeat after a resume
+      // rather than be dropped.
+      if (entry.timestamp) {
+        if (overlap && overlap.has(key) && !(value > overlapCutoff)) return false
+        recentKeys.push(key)
+        if (recentKeys.length > resumeTailLines * 2) recentKeys = recentKeys.slice(-resumeTailLines)
+      }
       if (value > newestValue) {
         newestValue = value
         newest = entry.timestamp
@@ -190,14 +210,8 @@ export function useLogStream({
       return true
     }
 
-    // Everything already shown or queued that a resumed stream may replay.
-    const overlapKeys = () => {
-      const current = bufferRef.current
-      const shown = current ? current.slice(-resumeTailLines) : []
-      const keys = new Set<string>()
-      for (const line of [...shown, ...pendingRef.current]) keys.add(line.key)
-      return keys
-    }
+    // Everything already received that a resumed stream may replay.
+    const overlapKeys = () => new Set(recentKeys.slice(-resumeTailLines))
 
     const resumeOrEnd = (startedAt: number, fresh: number) => {
       if (!follow) {
@@ -243,9 +257,12 @@ export function useLogStream({
         resumeOrEnd(startedAt, fresh)
       } catch (streamError) {
         if (controller.signal.aborted || isAbortError(streamError)) return
-        // A dropped connection is worth resuming; a refusal from the API or
-        // an error line from Argo CD is not going to change on retry.
-        if (streamError instanceof TypeError && follow) {
+        // A dropped connection or a stream the server says broke off is
+        // worth resuming; a refusal from the API or an error line from Argo CD
+        // is not going to change on retry.
+        const interrupted =
+          streamError instanceof TypeError || streamError instanceof LogStreamInterruptedError
+        if (interrupted && follow) {
           resumeOrEnd(startedAt, fresh)
           return
         }

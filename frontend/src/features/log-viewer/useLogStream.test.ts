@@ -85,6 +85,75 @@ describe('useLogStream', () => {
     expect(result.current.status).toBe('live')
   })
 
+  it('does not replay cleared lines when it resumes', async () => {
+    const { streams, requests } = mockLogsFetch()
+    const { result } = renderHook(() => useLogStream(base))
+    await act(settle)
+    await act(async () => {
+      streams[0].push(
+        { timestamp: at(1), podName: 'a', content: 'old' },
+        { timestamp: at(1), podName: 'a', content: 'older' },
+      )
+      await settle()
+    })
+    await waitFor(() => expect(result.current.lines).toHaveLength(2))
+    act(() => result.current.clear())
+    expect(result.current.lines).toHaveLength(0)
+
+    await act(async () => {
+      streams[0].close()
+      await settle()
+    })
+    await waitFor(() => expect(requests).toHaveLength(2))
+    await act(async () => {
+      streams[1].push(
+        { timestamp: at(1), podName: 'a', content: 'old' },
+        { timestamp: at(1), podName: 'a', content: 'older' },
+        { timestamp: at(2), podName: 'a', content: 'new' },
+      )
+      await settle()
+    })
+    await waitFor(() => expect(result.current.lines.map((line) => line.content)).toEqual(['new']))
+  })
+
+  it('keeps untimed lines a resumed stream repeats rather than dropping them', async () => {
+    const { streams, requests } = mockLogsFetch()
+    const { result } = renderHook(() => useLogStream(base))
+    await act(settle)
+    await act(async () => {
+      streams[0].push({ timestamp: at(1), podName: 'a', content: 'start' }, { content: 'ok' })
+      streams[0].close()
+      await settle()
+    })
+    await waitFor(() => expect(requests).toHaveLength(2))
+    await act(async () => {
+      // A heartbeat without a timestamp cannot be told apart from the last one.
+      streams[1].push({ timestamp: at(1), podName: 'a', content: 'start' }, { content: 'ok' })
+      await settle()
+    })
+    await waitFor(() =>
+      expect(result.current.lines.map((line) => line.content)).toEqual(['start', 'ok', 'ok']),
+    )
+  })
+
+  it('is idle while no resource is picked', async () => {
+    const { requests } = mockLogsFetch()
+    const { result, rerender } = renderHook((props: LogStreamParams) => useLogStream(props), {
+      initialProps: { ...base, resource: null } as LogStreamParams,
+    })
+    await act(settle)
+    expect(result.current.status).toBe('idle')
+    expect(requests).toHaveLength(0)
+
+    rerender(base)
+    await act(settle)
+    expect(result.current.status).toBe('live')
+
+    rerender({ ...base, resource: null })
+    await act(settle)
+    expect(result.current.status).toBe('idle')
+  })
+
   it('reports reconnecting between streams', async () => {
     const { streams, requests } = mockLogsFetch()
     const { result } = renderHook(() => useLogStream({ ...base, reconnectDelaysMs: [60_000] }))
@@ -125,6 +194,52 @@ describe('useLogStream', () => {
     expect(result.current.error).toEqual({ message: 'container "app" is waiting to start' })
     await act(() => new Promise((resolve) => setTimeout(resolve, 30)))
     expect(requests).toHaveLength(1)
+  })
+
+  it('resumes after the server reports the stream broke off', async () => {
+    const { streams, requests } = mockLogsFetch()
+    const { result } = renderHook(() => useLogStream(base))
+    await act(settle)
+    await act(async () => {
+      streams[0].push(
+        { timestamp: at(1), podName: 'a', content: 'before' },
+        { error: 'the log stream from Argo CD was interrupted', retryable: true },
+      )
+      await settle()
+    })
+    await waitFor(() => expect(requests).toHaveLength(2))
+    expect(requests[1].searchParams.get('sinceTime')).toBe(at(1))
+    expect(result.current.error).toBeNull()
+    expect(result.current.status).toBe('live')
+  })
+
+  it('skips unparseable lines and resumes after a truncated final line', async () => {
+    const { streams, requests } = mockLogsFetch()
+    const { result } = renderHook(() => useLogStream(base))
+    await act(settle)
+    await act(async () => {
+      streams[0].push({ timestamp: at(1), podName: 'a', content: 'one' })
+      streams[0].pushRaw('<html>proxy error</html>\n')
+      streams[0].push({ timestamp: at(2), podName: 'a', content: 'two' })
+      // The connection drops mid-line.
+      streams[0].pushRaw(`{"timestamp":"${at(3)}","podName":"a","content":"thr`)
+      streams[0].close()
+      await settle()
+    })
+    await waitFor(() => expect(requests).toHaveLength(2))
+    expect(requests[1].searchParams.get('sinceTime')).toBe(at(2))
+    expect(result.current.error).toBeNull()
+
+    await act(async () => {
+      streams[1].push(
+        { timestamp: at(2), podName: 'a', content: 'two' },
+        { timestamp: at(3), podName: 'a', content: 'three' },
+      )
+      await settle()
+    })
+    await waitFor(() =>
+      expect(result.current.lines.map((line) => line.content)).toEqual(['one', 'two', 'three']),
+    )
   })
 
   it('keeps the HTTP status of a refused request', async () => {

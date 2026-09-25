@@ -422,7 +422,8 @@ one, as it always could without authentication.
   `…/resources/containers` — per-target Argo CD status, events, log stream, and containers
 - `DELETE /api/application-onboardings/{id}/targets/{targetId}/operation` — terminate a running sync
 - `GET /api/application-onboardings/{id}/operations` — audit trail of syncs, dry runs, rollbacks,
-  terminations, scaling, and offboarding requested through KubeOps
+  terminations, scaling, and offboarding requested through KubeOps; `result` is `failed` for
+  server-side failures (5xx), and requests rejected as invalid (4xx) are not recorded
 - `POST /api/application-onboardings/{id}/offboard` — remove every target from its cluster while preserving GitHub values
 - `GET /api/application-onboardings` — page, search, and filter onboarded applications with
   `page`, `pageSize`, `search` (case-insensitive over name and namespace), and `status`

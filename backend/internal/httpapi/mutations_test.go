@@ -230,3 +230,87 @@ func TestRollbackRoute(t *testing.T) {
 		})
 	}
 }
+
+// Server-side failures may have changed something, so they are audited; a
+// request refused as invalid changed nothing and is not.
+func TestActionFailuresAreAudited(t *testing.T) {
+	const prefix = "/api/application-onboardings/onboarding-1"
+	const jsonType = "application/json"
+	for _, test := range []struct {
+		name        string
+		method      string
+		path        string
+		contentType string
+		body        string
+		err         error
+		wantStatus  int
+		// wantKind is the audited operation's kind, empty when none is recorded.
+		wantKind   string
+		wantResult string
+	}{
+		{name: "sync fails", method: http.MethodPost, path: "/sync",
+			err: errors.New("db down"), wantStatus: http.StatusInternalServerError,
+			wantKind: "sync", wantResult: operationFailed},
+		{name: "sync with options fails", method: http.MethodPost, path: "/sync",
+			contentType: jsonType, body: `{"prune":false}`,
+			err: errors.New("db down"), wantStatus: http.StatusInternalServerError,
+			wantKind: "sync", wantResult: operationFailed},
+		{name: "dry run refused by Argo CD", method: http.MethodPost, path: "/sync",
+			contentType: jsonType, body: `{"dryRun":true}`, err: onboarding.ErrDryRunFailed,
+			wantStatus: http.StatusBadGateway, wantKind: "dry-run", wantResult: operationFailed},
+		{name: "offboard fails", method: http.MethodPost, path: "/offboard",
+			err: errors.New("db down"), wantStatus: http.StatusInternalServerError,
+			wantKind: "offboard", wantResult: operationFailed},
+		{name: "scale fails", method: http.MethodPost, path: "/scale",
+			contentType: jsonType, body: `{"replicas":3}`, err: errors.New("db down"),
+			wantStatus: http.StatusInternalServerError, wantKind: "scale", wantResult: operationFailed},
+		{name: "scale refused by GitHub", method: http.MethodPost, path: "/scale",
+			contentType: jsonType, body: `{"replicas":3}`, err: onboarding.ExternalError{Err: errors.New("500")},
+			wantStatus: http.StatusBadGateway, wantKind: "scale", wantResult: operationFailed},
+		{name: "terminate cannot reach Argo CD", method: http.MethodDelete, path: "/targets/target-1/operation",
+			err: errors.New("dial tcp: refused"), wantStatus: http.StatusBadGateway,
+			wantKind: "terminate", wantResult: operationFailed},
+		{name: "rollback fails", method: http.MethodPost, path: "/rollback",
+			contentType: jsonType, body: `{"commitSha":"abc1234"}`, err: errors.New("db down"),
+			wantStatus: http.StatusInternalServerError, wantKind: "rollback", wantResult: operationFailed},
+		{name: "sync succeeds", method: http.MethodPost, path: "/sync",
+			wantStatus: http.StatusOK, wantKind: "sync", wantResult: operationSucceeded},
+		{name: "sync of a missing onboarding", method: http.MethodPost, path: "/sync",
+			err: pgx.ErrNoRows, wantStatus: http.StatusNotFound},
+		{name: "sync of an unknown target", method: http.MethodPost, path: "/sync",
+			contentType: jsonType, body: `{"targetIds":["other"]}`,
+			err:        onboarding.ValidationError{Message: "targetIds must name deployment targets"},
+			wantStatus: http.StatusUnprocessableEntity},
+		{name: "scale rejected", method: http.MethodPost, path: "/scale",
+			contentType: jsonType, body: `{"replicas":3}`,
+			err: onboarding.ValidationError{Message: "replicas out of range"}, wantStatus: http.StatusUnprocessableEntity},
+		{name: "terminate with nothing running", method: http.MethodDelete, path: "/targets/target-1/operation",
+			err: onboarding.ErrNoOperation, wantStatus: http.StatusConflict},
+		{name: "terminate of an unknown target", method: http.MethodDelete, path: "/targets/target-1/operation",
+			err: onboarding.ErrTargetNotFound, wantStatus: http.StatusNotFound},
+		{name: "rollback rejected", method: http.MethodPost, path: "/rollback",
+			contentType: jsonType, body: `{"commitSha":"abc1234"}`,
+			err:        onboarding.ValidationError{Message: "values at abc1234 already match the current values"},
+			wantStatus: http.StatusUnprocessableEntity},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repository := &fakeRepository{}
+			onboarder := &fakeApplicationOnboarder{record: model.ApplicationOnboarding{ID: "onboarding-1"}, err: test.err}
+			response := serveMutationWithStore(repository, onboarder, true, test.method, prefix+test.path,
+				test.contentType, test.body)
+			if response.Code != test.wantStatus {
+				t.Fatalf("expected %d, got %d: %s", test.wantStatus, response.Code, response.Body.String())
+			}
+			if test.wantKind == "" {
+				if len(repository.operations) != 0 {
+					t.Fatalf("a %d must not be audited: %#v", response.Code, repository.operations)
+				}
+				return
+			}
+			if len(repository.operations) != 1 || repository.operations[0].Kind != test.wantKind ||
+				repository.operations[0].Result != test.wantResult {
+				t.Fatalf("expected one %s %s row, got %#v", test.wantResult, test.wantKind, repository.operations)
+			}
+		})
+	}
+}

@@ -660,27 +660,30 @@ func resourceRef(r *http.Request) (onboarding.ResourceRef, bool) {
 	return ref, true
 }
 
-// writeResourceError maps the shared failure modes of the resource endpoints.
-func (api *API) writeResourceError(w http.ResponseWriter, r *http.Request, err error, action string) {
+// writeResourceError maps the shared failure modes of the resource endpoints
+// and returns the status it wrote, or 0 when the caller had hung up.
+func (api *API) writeResourceError(w http.ResponseWriter, r *http.Request, err error, action string) int {
 	var validationError onboarding.ValidationError
+	status, message := http.StatusBadGateway, "Argo CD could not be reached"
 	switch {
 	case aborted(r):
-		return
+		return 0
 	case errors.Is(err, pgx.ErrNoRows):
-		writeError(w, http.StatusNotFound, "application onboarding not found")
+		status, message = http.StatusNotFound, "application onboarding not found"
 	case errors.Is(err, onboarding.ErrTargetNotFound):
-		writeError(w, http.StatusNotFound, "deployment target not found")
+		status, message = http.StatusNotFound, "deployment target not found"
 	case errors.Is(err, onboarding.ErrResourceNotFound),
 		errors.Is(err, onboarding.ErrApplicationNotFound):
-		writeError(w, http.StatusNotFound, "resource not found in Argo CD")
+		status, message = http.StatusNotFound, "resource not found in Argo CD"
 	case errors.Is(err, onboarding.ErrPodLogsForbidden):
-		writeError(w, http.StatusForbidden, "Pod log access is not configured in Argo CD")
+		status, message = http.StatusForbidden, "Pod log access is not configured in Argo CD"
 	case errors.As(err, &validationError):
-		writeError(w, http.StatusUnprocessableEntity, validationError.Message)
+		status, message = http.StatusUnprocessableEntity, validationError.Message
 	default:
 		slog.Error(action, "error", err)
-		writeError(w, http.StatusBadGateway, "Argo CD could not be reached")
 	}
+	writeError(w, status, message)
+	return status
 }
 
 func (api *API) applicationResources(w http.ResponseWriter, r *http.Request) {
@@ -853,6 +856,8 @@ func (api *API) scaleApplicationOnboarding(w http.ResponseWriter, r *http.Reques
 		return
 	case err != nil:
 		slog.Error("scale application onboarding", "error", err)
+		api.recordOperation(r, r.PathValue("id"), "", "scale",
+			map[string]any{"replicas": *input.Replicas}, operationFailed)
 		writeError(w, http.StatusInternalServerError, "unable to scale application")
 		return
 	}
@@ -885,17 +890,18 @@ func (api *API) runApplicationAction(
 		writeError(w, http.StatusNotFound, "application onboarding not found")
 		return
 	}
+	params := map[string]any{}
+	if action == "sync" {
+		_, params = syncOperation(onboarding.DefaultSyncOptions())
+	}
 	if err != nil {
 		if aborted(r) {
 			return
 		}
 		slog.Error(action+" application onboarding", "onboarding", id, "error", err)
+		api.recordOperation(r, id, "", action, params, operationFailed)
 		writeError(w, http.StatusInternalServerError, "unable to "+action+" application")
 		return
-	}
-	params := map[string]any{}
-	if action == "sync" {
-		_, params = syncOperation(onboarding.DefaultSyncOptions())
 	}
 	api.recordOperation(r, id, "", action, params, operationSucceeded)
 	writeJSON(w, http.StatusOK, item)
