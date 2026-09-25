@@ -1,21 +1,31 @@
 import { Link, useLocation } from 'react-router-dom'
 import type { SyncRun } from '../api/inventory'
+import { ChevronRightIcon, MenuIcon, SearchIcon } from '../components/icons'
 import { Button } from '../components/ui/Button'
-import { StatusDot } from '../components/ui/StatusDot'
-import { relativeTime } from '../lib/format'
+import { Kbd } from '../components/ui/Kbd'
+import { modifierKeyLabel } from '../hooks/useHotkey'
 import { breadcrumbsFor } from './navigation'
-import { MenuIcon } from './nav-icons'
+import { SyncStatusMenu } from './SyncStatusMenu'
 import { ThemeMenu } from './ThemeMenu'
 
 type Props = {
   applicationName?: string
-  latestRun: SyncRun | null
+  runs: SyncRun[]
+  syncUnavailable: boolean
   onOpenNavigation: () => void
+  onOpenCommandPalette: () => void
 }
 
-export function AppHeader({ applicationName, latestRun, onOpenNavigation }: Props) {
+export function AppHeader({
+  applicationName,
+  runs,
+  syncUnavailable,
+  onOpenNavigation,
+  onOpenCommandPalette,
+}: Props) {
   const { pathname } = useLocation()
   const crumbs = breadcrumbsFor(pathname, applicationName)
+  const modifier = modifierKeyLabel()
 
   return (
     <header className="app-header">
@@ -35,6 +45,7 @@ export function AppHeader({ applicationName, latestRun, onOpenNavigation }: Prop
             const last = index === crumbs.length - 1
             return (
               <li key={`${crumb.label}-${index}`}>
+                {index > 0 && <ChevronRightIcon className="breadcrumb-separator" />}
                 {crumb.to && !last ? (
                   <Link to={crumb.to}>{crumb.label}</Link>
                 ) : (
@@ -48,11 +59,24 @@ export function AppHeader({ applicationName, latestRun, onOpenNavigation }: Prop
         </ol>
       </nav>
 
-      <Link className="app-header-sync" to="/sources" title="Cloud source sync activity">
-        <StatusDot domain="run" status={latestRun?.status} size="sm" plain />
-        {latestRun ? `Last sync ${relativeTime(latestRun.queuedAt)}` : 'No sync yet'}
-      </Link>
-      <ThemeMenu />
+      <div className="app-header-actions">
+        <button
+          type="button"
+          className="command-trigger"
+          onClick={onOpenCommandPalette}
+          aria-haspopup="dialog"
+          aria-keyshortcuts="Meta+K Control+K"
+        >
+          <SearchIcon className="command-trigger-icon" />
+          <span className="command-trigger-label">Search…</span>
+          <span className="command-trigger-keys" aria-hidden="true">
+            <Kbd>{modifier}</Kbd>
+            <Kbd>K</Kbd>
+          </span>
+        </button>
+        <SyncStatusMenu runs={runs} unavailable={syncUnavailable} />
+        <ThemeMenu />
+      </div>
     </header>
   )
 }

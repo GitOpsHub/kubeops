@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { RetryIcon } from '../components/icons'
 import { Button } from '../components/ui/Button'
-import { EmptyState } from '../components/ui/EmptyState'
+import { ErrorState } from '../components/ui/ErrorState'
 
 type Props = {
   /** Changing this clears a caught error, e.g. on navigation. */
@@ -33,19 +34,22 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     if (!this.state.error) return this.props.children
     return (
-      <div className="page-error" role="alert">
-        <EmptyState
+      <div className="page-error">
+        {/* ErrorState is the alert; the actions sit outside it so the
+            announcement is the failure, not a list of buttons. */}
+        <ErrorState
           title="This page failed to render"
-          description={this.state.error.message || 'An unexpected error occurred.'}
-          action={
-            <div className="page-error-actions">
-              <Button onClick={() => this.setState({ error: null })}>Try again</Button>
-              <Button variant="primary" onClick={() => window.location.reload()}>
-                Reload page
-              </Button>
-            </div>
-          }
+          message={this.state.error.message || 'An unexpected error occurred.'}
         />
+        <div className="page-error-actions">
+          <Button onClick={() => this.setState({ error: null })}>Try again</Button>
+          <Button variant="primary" icon={<RetryIcon />} onClick={() => window.location.reload()}>
+            Reload page
+          </Button>
+        </div>
+        <p className="page-error-hint">
+          The rest of KubeOps still works — pick another page from the sidebar.
+        </p>
       </div>
     )
   }
