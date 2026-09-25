@@ -9,10 +9,12 @@ afterEach(() => {
   // independent tests. Restore any test-specific storage stub before clearing
   // the jsdom implementation used by CI.
   vi.unstubAllGlobals()
-  try {
-    window.localStorage.clear()
-  } catch {
-    // Some Node environments expose localStorage without a configured backing
-    // file. Production code guards the same unavailable-storage case.
+  for (const storage of ['localStorage', 'sessionStorage'] as const) {
+    try {
+      window[storage].clear()
+    } catch {
+      // Some Node environments expose storage without a configured backing
+      // file. Production code guards the same unavailable-storage case.
+    }
   }
 })

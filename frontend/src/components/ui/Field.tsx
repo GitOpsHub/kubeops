@@ -59,13 +59,27 @@ export function Field({ label, hint, error, required, id, className = '', childr
             {hint}
           </p>
         )}
-        {error && (
-          <p className="field-error" id={errorId}>
-            {error}
-          </p>
-        )}
+        <FieldMessage id={errorId}>{error}</FieldMessage>
       </div>
     </FieldContext.Provider>
+  )
+}
+
+/**
+ * The error slot. The live region is mounted before any error so a screen
+ * reader hears the message when validation fills it in. It stays polite and
+ * role-less: an assertive `alert` per field would talk over the focus move to
+ * the first invalid control and be confused with a form's own alert.
+ */
+function FieldMessage({ id, children }: { id: string; children?: ReactNode }) {
+  return (
+    <div className="field-message" aria-live="polite">
+      {children && (
+        <p className="field-error" id={id}>
+          {children}
+        </p>
+      )}
+    </div>
   )
 }
 
@@ -230,11 +244,7 @@ export function RadioCards<T extends string>({
           </label>
         ))}
       </div>
-      {error && (
-        <p className="field-error" id={errorId}>
-          {error}
-        </p>
-      )}
+      <FieldMessage id={errorId}>{error}</FieldMessage>
     </fieldset>
   )
 }

@@ -29,6 +29,27 @@ describe('Field', () => {
     expect(input).toHaveAccessibleDescription('From 1 to 1000. Enter a whole number.')
   })
 
+  it('announces an error through a live region mounted before it appears', () => {
+    const { rerender } = render(
+      <Field label="Replicas">
+        <TextInput />
+      </Field>,
+    )
+    const input = screen.getByRole('textbox', { name: 'Replicas' })
+    const region = input.parentElement?.querySelector('[aria-live="polite"]')
+    expect(region).toBeEmptyDOMElement()
+
+    rerender(
+      <Field label="Replicas" error="Enter a whole number.">
+        <TextInput />
+      </Field>,
+    )
+    expect(input.parentElement?.querySelector('[aria-live="polite"]')).toBe(region)
+    expect(region).toHaveTextContent('Enter a whole number.')
+    // Polite and role-less, so it never competes with a form-level alert.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
   it('keeps a control’s own description alongside the field’s', () => {
     render(
       <>

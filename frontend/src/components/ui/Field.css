@@ -168,3 +168,9 @@
   color: var(--text-muted);
   font-size: var(--text-xs);
 }
+
+/* An empty error slot takes no grid row, so it adds no gap under the control,
+   yet stays in the accessibility tree as a live region. */
+.field-message:empty {
+  display: contents;
+}

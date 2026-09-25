@@ -1171,9 +1171,6 @@ describe('application detail', () => {
 })
 
 describe('application onboarding form', () => {
-  // The wizard keeps a draft in sessionStorage, which jsdom shares across tests.
-  beforeEach(() => window.sessionStorage.clear())
-
   async function next(user: ReturnType<typeof userEvent.setup>) {
     await user.click(screen.getByRole('button', { name: 'Next' }))
   }
