@@ -392,6 +392,11 @@ a.bar-list-row:hover .bar-list-label {
   stroke-linejoin: round;
 }
 
+/* Round caps grow each dash by the stroke width, so the gap is set wider. */
+.time-series-line.is-dashed {
+  stroke-dasharray: 4 6;
+}
+
 .time-series-area {
   fill: var(--series);
   opacity: 0.1;

@@ -213,6 +213,26 @@ describe('TimeSeries', () => {
     expect(points.filter((point) => point.getAttribute('tabindex') === '0')).toHaveLength(1)
   })
 
+  it('dashes a line series and its legend key when asked', () => {
+    const tail = {
+      id: 'p95',
+      label: 'Slowest 5%',
+      kind: 'line' as const,
+      tone: 'chart-2' as const,
+      dashed: true,
+      points: days.map((x) => ({ x, y: 5 })),
+    }
+    const { container } = render(
+      <TimeSeries series={[...series, tail]} height={160} label="Runs per day" />,
+    )
+    const lines = container.querySelectorAll('.time-series-line')
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).not.toHaveClass('is-dashed')
+    expect(lines[1]).toHaveClass('is-dashed')
+    const keys = container.querySelectorAll<HTMLElement>('.chart-legend .chart-key--line')
+    expect(keys[1].style.background).toContain('repeating-linear-gradient')
+  })
+
   it('says so when no series has a value', () => {
     const { container } = render(
       <TimeSeries

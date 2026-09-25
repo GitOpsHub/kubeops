@@ -416,7 +416,10 @@ function SyncActivityCard({ data }: { data: Overview | undefined }) {
                   id: 'p95',
                   label: 'Slowest 5% (p95)',
                   kind: 'line',
-                  tone: 'chart-4',
+                  // Next categorical slot, never a skipped one, and dashed: the
+                  // tail is read against the median, so the two must not blur.
+                  tone: 'chart-2',
+                  dashed: true,
                   points: days.map((day) => ({ x: day.date, y: day.p95Ms })),
                 },
               ]}
