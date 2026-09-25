@@ -398,7 +398,10 @@ keep the read-only console. Disabled actions answer `403`, and
 `GET /api/application-onboardings/defaults` reports
 `capabilities.consoleMutations` so the UI hides them. Every console mutation
 that takes a body requires `Content-Type: application/json`, which forces a
-CORS preflight, and caps the body at 4 KiB.
+CORS preflight for a cross-origin request with a body, and caps the body at
+4 KiB. This is not CSRF protection: a bodyless `POST` (a default sync, an
+offboard) needs no preflight, so any site a user visits can still trigger
+one, as it always could without authentication.
 
 ## Inventory API
 

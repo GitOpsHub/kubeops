@@ -20,9 +20,13 @@ const maxMutationBody = 4 << 10
 
 // readJSONBody decodes an optional JSON body into target. present reports
 // whether there was a body at all; ok is false once an error response has been
-// written. Requiring application/json whenever a body is sent makes every
-// cross-origin browser request preflight, which the CORS policy then refuses
-// for other origins: with no authentication, that is this API's CSRF barrier.
+// written. Requiring application/json whenever a body is sent means a
+// cross-origin browser request carrying one must preflight, which the CORS
+// policy refuses for other origins, so another site cannot choose a body's
+// options (a dry run's targets, a rollback's commit). That is all it protects:
+// a bodyless POST is a simple request that skips the preflight, so a
+// cross-site page can still trigger a default sync or an offboard, as it
+// always could. Like the missing authentication, that is known and unresolved.
 func readJSONBody(w http.ResponseWriter, r *http.Request, target any) (present, ok bool) {
 	if r.Body == nil {
 		return false, true
