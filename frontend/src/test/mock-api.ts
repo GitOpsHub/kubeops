@@ -1,5 +1,7 @@
 import { vi } from 'vitest'
 import type { CloudSource, Cluster, SyncRun } from '../api/inventory'
+import type { Overview } from '../api/overview'
+import { staleAfterMs } from '../lib/providers'
 import type {
   ApplicationDeployment,
   ApplicationOnboarding,
@@ -364,6 +366,13 @@ export function mockAPI(initial: Partial<MockState> = {}) {
       return Response.json({ items: state.syncRuns })
     }
 
+    // GET /overview — derived from the same mock state the list routes serve,
+    // following the backend's rules (store/overview.go), so a test that changes
+    // applications, sources, or runs sees the dashboard change with them.
+    if (path === '/overview') {
+      return Response.json(buildOverview(state))
+    }
+
     const sourceSyncMatch = path.match(/^\/cloud-sources\/([^/]+)\/sync$/)
     if (sourceSyncMatch && init?.method === 'POST') {
       const sourceId = decodeURIComponent(sourceSyncMatch[1])
@@ -461,5 +470,156 @@ export function buildCluster(status = 'active', overrides: Partial<Cluster> = {}
     updatedAt: timestamp,
     removedAt: null,
     ...overrides,
+  }
+}
+
+/**
+ * The `/overview` payload for a mock state. Provider counts come from the
+ * sources' `clusterCount`, as the Clusters page's provider buttons do, because
+ * the mock cluster list is only a sample of the fleet those counts describe.
+ */
+export function buildOverview(state: MockState, now = Date.now()): Overview {
+  const day = 24 * 60 * 60 * 1000
+  const dates = Array.from({ length: 14 }, (_, index) =>
+    new Date(now - (13 - index) * day).toISOString().slice(0, 10),
+  )
+  const enabledSources = state.sources.filter((source) => source.enabled)
+  const byProvider: Record<string, number> = {}
+  for (const source of enabledSources) {
+    byProvider[source.provider] = (byProvider[source.provider] ?? 0) + source.clusterCount
+  }
+  const clusterTotal = Object.values(byProvider).reduce((sum, count) => sum + count, 0)
+  const clusters = state.clusters
+    .filter((cluster) => !cluster.removedAt)
+    .map((cluster) =>
+      cluster.id === 'cluster-1' ? { ...cluster, status: state.clusterStatus } : cluster,
+    )
+  const byStatus: Record<string, number> = {}
+  for (const cluster of clusters) {
+    const status = cluster.status.toLowerCase()
+    byStatus[status] = (byStatus[status] ?? 0) + 1
+  }
+
+  const applications = state.applications.filter((item) => item.status !== 'offboarded')
+  const appStatus: Record<string, number> = {}
+  const byHealth: Record<string, number> = {}
+  const bySync: Record<string, number> = {}
+  let targetTotal = 0
+  for (const application of applications) {
+    appStatus[application.status] = (appStatus[application.status] ?? 0) + 1
+    for (const target of application.targets.filter((item) => item.status !== 'offboarded')) {
+      targetTotal += 1
+      byHealth[target.healthStatus] = (byHealth[target.healthStatus] ?? 0) + 1
+      bySync[target.syncStatus] = (bySync[target.syncStatus] ?? 0) + 1
+    }
+  }
+
+  const completedWithin = (run: SyncRun, ms: number) =>
+    run.completedAt !== null && now - new Date(run.completedAt).getTime() <= ms
+  const durations = (runs: SyncRun[]) =>
+    runs
+      .filter((run) => run.status === 'succeeded' && run.startedAt && run.completedAt)
+      .map((run) => new Date(run.completedAt!).getTime() - new Date(run.startedAt!).getTime())
+      .sort((left, right) => left - right)
+  const percentile = (sorted: number[], p: number) =>
+    sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(p * (sorted.length - 1)))] : null
+  const series14d = dates.map((date) => {
+    const runs = state.syncRuns.filter((run) => run.completedAt?.slice(0, 10) === date)
+    const sorted = durations(runs)
+    return {
+      date,
+      succeeded: runs.filter((run) => run.status === 'succeeded').length,
+      failed: runs.filter((run) => run.status === 'failed').length,
+      p50Ms: percentile(sorted, 0.5),
+      p95Ms: percentile(sorted, 0.95),
+    }
+  })
+
+  type Ranked = { severity: number; item: Overview['attention'][number] }
+  const ranked: Ranked[] = [
+    ...applications
+      .filter((item) => item.status === 'failed' || item.status === 'partial')
+      .map((item) => ({
+        severity: item.status === 'failed' ? 0 : 1,
+        item: {
+          kind: 'application' as const,
+          id: item.id,
+          name: item.name,
+          status: item.status,
+          message: item.targets.find((target) => target.status === 'failed' && target.message)
+            ?.message,
+          href: `/applications/${encodeURIComponent(item.id)}`,
+        },
+      })),
+    ...clusters
+      .filter((cluster) => ['failed', 'error', 'degraded'].includes(cluster.status))
+      .map((cluster) => ({
+        severity: cluster.status === 'degraded' ? 1 : 0,
+        item: {
+          kind: 'cluster' as const,
+          id: cluster.id,
+          name: cluster.name,
+          status: cluster.status,
+          message: `The provider reports this cluster as ${cluster.status}`,
+          href: `/clusters?${new URLSearchParams({ source: cluster.sourceId, status: cluster.status, search: cluster.name })}`,
+        },
+      })),
+    ...enabledSources
+      .filter(
+        (source) =>
+          source.lastSyncStatus === 'failed' ||
+          (source.lastSyncAt !== null &&
+            now - new Date(source.lastSyncAt).getTime() > staleAfterMs),
+      )
+      .map((source) => ({
+        severity: source.lastSyncStatus === 'failed' ? 0 : 2,
+        item: {
+          kind: 'source' as const,
+          id: source.id,
+          name: source.name,
+          status: source.lastSyncStatus === 'failed' ? 'failed' : 'stale',
+          message:
+            source.lastSyncStatus === 'failed'
+              ? source.lastSyncError
+              : 'No successful sync in the last 11 minutes',
+          href: `/sources?source=${encodeURIComponent(source.id)}`,
+        },
+      })),
+  ]
+  const kindOrder = { application: 0, cluster: 1, source: 2 }
+  ranked.sort(
+    (left, right) =>
+      left.severity - right.severity ||
+      kindOrder[left.item.kind] - kindOrder[right.item.kind] ||
+      left.item.name.localeCompare(right.item.name),
+  )
+
+  return {
+    generatedAt: new Date(now).toISOString(),
+    clusters: {
+      total: clusterTotal,
+      byProvider,
+      byStatus,
+      series14d: dates.map((date) => ({ date, total: clusterTotal })),
+    },
+    applications: {
+      total: applications.length,
+      byStatus: appStatus,
+      targets: { total: targetTotal, byHealth, bySync },
+    },
+    syncRuns: {
+      last24h: {
+        succeeded: state.syncRuns.filter(
+          (run) => run.status === 'succeeded' && completedWithin(run, day),
+        ).length,
+        failed: state.syncRuns.filter((run) => run.status === 'failed' && completedWithin(run, day))
+          .length,
+        running: state.syncRuns.filter((run) => run.status === 'queued' || run.status === 'running')
+          .length,
+      },
+      series14d,
+      recent: state.syncRuns.slice(0, 10),
+    },
+    attention: ranked.slice(0, 20).map((entry) => entry.item),
   }
 }
