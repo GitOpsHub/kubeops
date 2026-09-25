@@ -2,7 +2,7 @@ import type { SyncRun } from '../../api/inventory'
 import type { Overview, SyncRunDay } from '../../api/overview'
 import { chartSlot, type ChartColor } from '../../components/charts/chart-utils'
 import { providers } from '../../lib/providers'
-import { normalise, statusMeta, type StatusDomain } from '../../lib/status'
+import { normalise, statusMeta, type StatusDomain, type Tone } from '../../lib/status'
 
 /**
  * The arithmetic behind the Overview tiles and charts, kept out of the page so
@@ -92,6 +92,36 @@ export function syncSuccessRate(last24h: Overview['syncRuns']['last24h'] | undef
     running: count(last24h?.running),
     percent: completed > 0 ? (succeeded / completed) * 100 : null,
   }
+}
+
+/**
+ * When a KPI share earns a status colour. A tile coloured on every blip trains
+ * people to ignore it, so a healthy-looking fleet stays plain ink and colour
+ * is kept for a share that asks for action:
+ *
+ * - Sync success, 24h: one failed poll in dozens is normal cloud-API noise
+ *   that the next run retries, so 95% and up is plain; below 95% (more than
+ *   one failure in twenty) is a warning; below 80% means a source is failing
+ *   outright and is an error.
+ * - Healthy targets: 95% and up is plain, since a lone degraded target in a
+ *   large fleet is already listed under "Needs attention"; below 95% is a
+ *   warning, and below 80% — one target in five unhealthy — is an error.
+ *
+ * With nothing to judge (no runs, no targets) the tile stays plain.
+ */
+export const shareThresholds = {
+  syncSuccess: { warnBelow: 95, errBelow: 80 },
+  healthyTargets: { warnBelow: 95, errBelow: 80 },
+} as const
+
+export function shareTone(
+  percent: number | null,
+  { warnBelow, errBelow }: { warnBelow: number; errBelow: number },
+): Tone | undefined {
+  if (percent === null) return undefined
+  if (percent < errBelow) return 'err'
+  if (percent < warnBelow) return 'warn'
+  return undefined
 }
 
 /** Each day's success rate, with a gap on days nothing completed. */
