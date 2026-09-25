@@ -92,6 +92,9 @@
   --border: light-dark(#e4e7ec, #23272e);
   --border-strong: light-dark(#d0d5dd, #343a45);
   --border-subtle: light-dark(#eef0f3, #1a1d22);
+  /* The edge of a text field or an off switch is the only sign the control is
+     there, so unlike the dividers above it clears 3:1 on every surface. */
+  --border-control: light-dark(#868d99, #636a76);
 
   --text: light-dark(#16181d, #e8eaee);
   --text-muted: light-dark(#555c68, #a3a9b4);
@@ -130,7 +133,7 @@
   --idle-fg: light-dark(#5f6673, #949ba6);
   --idle-soft: light-dark(rgb(95 102 115 / 10%), rgb(148 155 166 / 14%));
   --idle-border: light-dark(rgb(95 102 115 / 26%), rgb(148 155 166 / 30%));
-  --idle-solid: light-dark(#8a919d, #6d7480);
+  --idle-solid: light-dark(#868d99, #6d7480);
 
   /* Categorical series, assigned in this order and never skipped. Neighbours
      differ in hue and lightness and stay apart for the common colour-vision

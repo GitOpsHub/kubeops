@@ -56,7 +56,7 @@
   width: 32px;
   height: 18px;
   margin-top: 1px;
-  background: var(--border-strong);
+  background: var(--border-control);
   border-radius: var(--radius-pill);
   transition: background var(--dur-fast) var(--ease-out);
 }
