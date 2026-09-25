@@ -1,9 +1,11 @@
 import type { ApplicationOnboarding } from '../../api/onboarding'
-import { ProviderLogo } from '../../components/BrandIcons'
+import { KubernetesLogo } from '../../components/BrandIcons'
+import { DeploymentTargetLogo } from '../../components/DeploymentTargetLogo'
 import { ManifestIcon, MoreIcon, ScaleIcon, SyncIcon } from '../../components/icons'
-import { StatusBadge } from '../../components/ui/Badge'
+import { StatusBadge, Tag } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { Menu, MenuItem } from '../../components/ui/Menu'
+import { environmentTone } from '../../lib/status'
 import { releaseSyncStatus } from './application-detail'
 
 export type DetailAction = 'sync' | 'scale' | 'offboard' | null
@@ -29,19 +31,28 @@ export function DetailHeader({
   const sync = releaseSyncStatus(record.targets)
   const noTargets = record.targets.length === 0
   const offboarded = record.status === 'offboarded'
+  // The mark is where the release runs, not what it is built from: a release
+  // spans one provider in practice, so its first target speaks for it.
+  const firstTarget = record.targets[0]
 
   return (
     <header className="detail-header">
       <div className="detail-identity">
         <span className="detail-mark" aria-hidden="true">
-          <ProviderLogo provider="docker" />
+          {firstTarget ? <DeploymentTargetLogo target={firstTarget} /> : <KubernetesLogo />}
         </span>
         <div className="detail-identity-copy">
-          <div className="detail-title-row">
-            <h1 id="application-heading">{record.name}</h1>
-            <span aria-label={`Application sync: ${sync}`} className="detail-sync">
-              <StatusBadge domain="sync" status={sync} />
+          <h1 id="application-heading">{record.name}</h1>
+          <div className="detail-tags">
+            <span className="tag detail-env" data-tone={environmentTone(record.environment)}>
+              {record.environment}
             </span>
+            <Tag mono title="Region">
+              {record.region}
+            </Tag>
+            {/* One text node, so the namespace reads as a label here and the
+                target cards keep the bare name to themselves. */}
+            <Tag mono title="Kubernetes namespace">{`ns/${record.namespace}`}</Tag>
           </div>
           <span className="mono detail-image" title={record.image}>
             {record.image || 'Image not reported'}
@@ -50,15 +61,11 @@ export function DetailHeader({
       </div>
 
       <div className="detail-actions" aria-label="Application actions" role="group">
+        <span role="img" aria-label={`Application sync: ${sync}`} className="detail-sync">
+          <StatusBadge domain="sync" status={sync} />
+        </span>
         <Button disabled={noTargets} onClick={onManifests} icon={<ManifestIcon />}>
           Manifest
-        </Button>
-        <Button
-          disabled={action !== null || noTargets || offboarded}
-          onClick={onScale}
-          icon={<ScaleIcon />}
-        >
-          Scale
         </Button>
         <Button
           variant="primary"
@@ -68,6 +75,13 @@ export function DetailHeader({
           icon={<SyncIcon />}
         >
           {action === 'sync' ? 'Deploying…' : offboarded ? 'Deploy again' : 'Deploy'}
+        </Button>
+        <Button
+          disabled={action !== null || noTargets || offboarded}
+          onClick={onScale}
+          icon={<ScaleIcon />}
+        >
+          Scale
         </Button>
         {/* Delete stays out of the primary row, as in Argo CD: an irreversible
             action should not sit one mis-click from Deploy. */}
