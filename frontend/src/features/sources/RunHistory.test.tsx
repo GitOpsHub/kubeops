@@ -132,6 +132,8 @@ describe('sync runs table', () => {
         }),
       ],
     })
+    const scrollIntoView = vi.fn()
+    Element.prototype.scrollIntoView = scrollIntoView
     renderApp('/sources?source=gcp-platform')
 
     const table = await screen.findByRole('table', { name: 'Sync runs' })
@@ -148,6 +150,11 @@ describe('sync runs table', () => {
     expect(screen.getByRole('listitem', { name: 'Google Cloud Platform' })).toHaveClass(
       'is-selected',
     )
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled())
+    expect(scrollIntoView.mock.contexts[0]).toBe(
+      screen.getByRole('listitem', { name: 'Google Cloud Platform' }),
+    )
+    delete (Element.prototype as Partial<Element>).scrollIntoView
   })
 
   it('switches the source filter from a card and from the menu', async () => {
