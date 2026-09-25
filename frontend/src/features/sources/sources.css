@@ -13,9 +13,9 @@
 }
 
 .source-card {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: var(--space-3);
-  align-content: start;
   min-width: 0;
   padding: var(--space-4);
   background: var(--surface);
@@ -144,6 +144,7 @@
 
 .source-card-foot {
   display: flex;
+  margin-top: auto;
   gap: var(--space-2);
   align-items: center;
   justify-content: space-between;

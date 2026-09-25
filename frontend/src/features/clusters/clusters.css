@@ -141,3 +141,12 @@
     margin-left: 0;
   }
 }
+
+/* Narrow screens scroll the table sideways rather than crushing the name. */
+.data-table th.col-cluster {
+  min-width: 240px;
+}
+
+.nowrap {
+  white-space: nowrap;
+}

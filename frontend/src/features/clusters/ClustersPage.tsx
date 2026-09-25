@@ -203,7 +203,7 @@ export function ClustersPage() {
     {
       id: 'location',
       header: 'Location',
-      cell: (cluster) => <span className="mono cell-muted">{cluster.location || '—'}</span>,
+      cell: (cluster) => <span className="mono cell-muted nowrap">{cluster.location || '—'}</span>,
     },
     {
       id: 'version',

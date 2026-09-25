@@ -33,11 +33,10 @@
 }
 
 .status-strip {
-  position: relative;
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1);
-  padding-bottom: var(--space-2);
+  align-items: center;
 }
 
 .status-strip-item {
@@ -85,15 +84,13 @@
   color: var(--tone-fg, var(--accent));
 }
 
-/* The mix at a glance, under the counts that it proportions. */
+/* The mix at a glance, beside the counts it proportions. */
 .status-strip-bar {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
   display: flex;
   gap: 2px;
-  height: 3px;
+  width: 140px;
+  height: 6px;
+  margin-left: var(--space-3);
 }
 
 .status-strip-bar > span {
@@ -415,5 +412,9 @@
 
   .application-tiles-frame {
     padding: var(--space-3);
+  }
+
+  .status-strip-bar {
+    display: none;
   }
 }
