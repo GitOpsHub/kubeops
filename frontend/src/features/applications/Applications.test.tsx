@@ -2,7 +2,13 @@ import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderApp } from '../../test/render'
-import { buildApplication, buildResource, buildTarget, mockAPI } from '../../test/mock-api'
+import {
+  buildApplication,
+  buildCluster,
+  buildResource,
+  buildTarget,
+  mockAPI,
+} from '../../test/mock-api'
 
 function onboardingRequests(fetchMock: ReturnType<typeof mockAPI>['fetchMock']) {
   return fetchMock.mock.calls
@@ -1161,6 +1167,13 @@ describe('application detail', () => {
 })
 
 describe('application onboarding form', () => {
+  // The wizard keeps a draft in sessionStorage, which jsdom shares across tests.
+  beforeEach(() => window.sessionStorage.clear())
+
+  async function next(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole('button', { name: 'Next' }))
+  }
+
   it('redirects to the new application detail after a successful submission', async () => {
     const { fetchMock } = mockAPI()
     renderApp('/applications/new')
@@ -1171,8 +1184,13 @@ describe('application onboarding form', () => {
     ).toBeInTheDocument()
     await user.type(screen.getByLabelText('Application name'), 'payments-api')
     expect(screen.queryByLabelText('Namespace')).not.toBeInTheDocument()
+    await next(user)
     await user.selectOptions(screen.getByLabelText('Environment'), 'prod')
     await user.selectOptions(screen.getByLabelText('Region'), 'us-east-1')
+    await next(user)
+    await user.click(await screen.findByRole('checkbox'))
+    await next(user)
+    await next(user)
     const preview = screen.getByRole('table', { name: 'Generated Kubernetes resources' })
     expect(
       within(preview).getByRole('row', {
@@ -1201,7 +1219,6 @@ describe('application onboarding form', () => {
       }),
     ).toBeInTheDocument()
     expect(within(preview).getByRole('row', { name: 'GitHub Branch main' })).toBeInTheDocument()
-    await user.click(await screen.findByRole('checkbox'))
     await user.click(screen.getByRole('button', { name: 'Onboard' }))
 
     await waitFor(() => {
@@ -1241,7 +1258,12 @@ describe('application onboarding form', () => {
     expect(screen.queryByRole('textbox', { name: /Base Helm values/ })).not.toBeInTheDocument()
 
     await user.type(screen.getByLabelText('Application name'), 'payments-api')
+    await next(user)
+    await next(user)
     await user.click(await screen.findByRole('checkbox'))
+    await next(user)
+    expect(screen.queryByLabelText('Base Helm values YAML')).not.toBeInTheDocument()
+    await next(user)
     await user.click(screen.getByRole('button', { name: 'Onboard' }))
 
     await waitFor(() => {
@@ -1260,13 +1282,21 @@ describe('application onboarding form', () => {
         return Response.json({ error: 'defaults are not configured' }, { status: 503 })
       }
       if (url.includes('/clusters?')) {
-        return Response.json({ items: [], total: 0, page: 1, pageSize: 200 })
+        return Response.json({ items: [buildCluster()], total: 1, page: 1, pageSize: 200 })
       }
       return Response.json({ error: 'not found' }, { status: 404 })
     })
     renderApp('/applications/new')
+    const user = userEvent.setup()
 
     expect(await screen.findByRole('alert')).toHaveTextContent('defaults are not configured')
+    // The Onboard button lives on the review step, so walk a valid release there.
+    await user.type(screen.getByLabelText('Application name'), 'payments-api')
+    await next(user)
+    await next(user)
+    await user.click(await screen.findByRole('checkbox'))
+    await next(user)
+    await next(user)
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Onboard' })).toBeDisabled()
     })
@@ -1279,7 +1309,9 @@ describe('application onboarding form', () => {
 
     await screen.findByRole('heading', { name: 'Onboard an application' })
     await user.type(screen.getByLabelText('Application name'), 'payments-api')
-    await user.click(screen.getByRole('button', { name: 'Onboard' }))
+    await next(user)
+    await next(user)
+    await next(user)
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Select at least one target cluster.',
