@@ -177,7 +177,7 @@ func (api *API) applicationLogs(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if frame.Error != nil {
-			_ = encoder.Encode(podLogEntry{Error: frame.Error.Message})
+			_ = encoder.Encode(podLogEntry{Error: onboarding.ScrubMessage(frame.Error.Message)})
 			if flusher != nil {
 				flusher.Flush()
 			}

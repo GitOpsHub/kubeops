@@ -965,6 +965,32 @@ func TestStreamApplicationPodLogs(t *testing.T) {
 	}
 }
 
+func TestStreamApplicationPodLogsScrubsArgoErrors(t *testing.T) {
+	onboarder := &fakeApplicationOnboarder{logStream: strings.Join([]string{
+		`{"result":{"timeStampStr":"2026-08-04T12:00:00Z","podName":"api-123","content":"ready"}}`,
+		`{"error":{"message":"pull https://bot:ghp_secret@ghcr.io/org/img?token=abc denied"}}`,
+		`{"result":{"timeStampStr":"2026-08-04T12:00:01Z","podName":"api-123","content":"after"}}`,
+	}, "\n")}
+	handler := NewHandlerWithOnboarding(
+		config.Config{}, &fakeRepository{}, &fakeClusterManager{}, onboarder,
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet,
+		"/api/application-onboardings/onboarding-1/targets/target-1/logs?kind=Pod&name=api-123", nil))
+
+	lines := strings.Split(strings.TrimSpace(response.Body.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("the stream must end at the error: %q", lines)
+	}
+	var entry podLogEntry
+	if err := json.Unmarshal([]byte(lines[1]), &entry); err != nil {
+		t.Fatal(err)
+	}
+	if entry.Error != "pull https://ghcr.io/org/img?token=<redacted> denied" {
+		t.Fatalf("unexpected error line: %#v", entry)
+	}
+}
+
 // An incomplete reference must not reach Argo CD, where a missing kind or name
 // could match something other than what the caller meant.
 func TestDeleteApplicationResourceRequiresFullReference(t *testing.T) {

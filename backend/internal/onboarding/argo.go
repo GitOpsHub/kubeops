@@ -860,7 +860,8 @@ func (c *HTTPArgoClient) do(request *http.Request) (ApplicationState, error) {
 		SyncStatus:     valueOrUnknown(application.Status.Sync.Status),
 		HealthStatus:   valueOrUnknown(application.Status.Health.Status),
 		OperationPhase: application.Status.OperationState.Phase,
-		Message:        message,
+		// Stored as the target message, which the unauthenticated API returns.
+		Message: ScrubMessage(message),
 	}, nil
 }
 
