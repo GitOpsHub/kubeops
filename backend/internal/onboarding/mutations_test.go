@@ -107,13 +107,22 @@ func TestTerminateOperation(t *testing.T) {
 func TestRollback(t *testing.T) {
 	const full = "abc1234def5678abc1234def5678abc1234def56"
 	history := []ValuesCommit{{SHA: "fff0000"}, {SHA: full}}
+	success := func() *fakeValuesRepositoryManager {
+		return &fakeValuesRepositoryManager{
+			history: history, restore: ValuesUpdate{CommitSHA: "rollback-commit", ValuesYAML: "replicaCount: 2\n"},
+		}
+	}
 	for _, test := range []struct {
-		name      string
-		sha       string
-		values    *fakeValuesRepositoryManager
-		mutate    func(*model.ApplicationOnboarding)
-		wantError string
-		external  bool
+		name       string
+		sha        string
+		values     *fakeValuesRepositoryManager
+		mutate     func(*model.ApplicationOnboarding)
+		repository func(*fakeRepository)
+		wantError  string
+		external   bool
+		conflict   bool
+		// followUp names the step that failed after the values commit landed.
+		followUp string
 	}{
 		{name: "invalid sha", sha: "HEAD", values: &fakeValuesRepositoryManager{}, wantError: "commitSha must be"},
 		{name: "offboarded", sha: "abc1234", values: &fakeValuesRepositoryManager{},
@@ -130,11 +139,18 @@ func TestRollback(t *testing.T) {
 		{name: "history failure", sha: "abc1234",
 			values: &fakeValuesRepositoryManager{historyErr: errors.New("status 502")}, external: true},
 		{name: "restore failure", sha: "abc1234",
-			values:   &fakeValuesRepositoryManager{history: history, restoreErr: errors.New("status 409")},
+			values:   &fakeValuesRepositoryManager{history: history, restoreErr: errors.New("status 500")},
 			external: true},
-		{name: "success", sha: "abc1234", values: &fakeValuesRepositoryManager{
-			history: history, restore: ValuesUpdate{CommitSHA: "rollback-commit", ValuesYAML: "replicaCount: 2\n"},
-		}},
+		{name: "values changed during the rollback", sha: "abc1234",
+			values:   &fakeValuesRepositoryManager{history: history, restoreErr: ErrValuesConflict},
+			conflict: true},
+		{name: "commit recorded but not stored", sha: "abc1234", values: success(),
+			repository: func(repository *fakeRepository) { repository.valuesErr = errors.New("connection reset") },
+			followUp:   RollbackStepRecord},
+		{name: "commit stored but not synced", sha: "abc1234", values: success(),
+			repository: func(repository *fakeRepository) { repository.restartErr = errors.New("connection reset") },
+			followUp:   RollbackStepSync},
+		{name: "success", sha: "abc1234", values: success()},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			client := &fakeArgoClient{state: ApplicationState{SyncStatus: "OutOfSync", HealthStatus: "Progressing"}}
@@ -142,10 +158,31 @@ func TestRollback(t *testing.T) {
 			if test.mutate != nil {
 				test.mutate(&repository.record)
 			}
+			if test.repository != nil {
+				test.repository(repository)
+			}
 			record, err := service.Rollback(context.Background(), "onboarding-1", test.sha)
 			var validationError ValidationError
 			var externalError ExternalError
+			var followUpError RollbackFollowUpError
 			switch {
+			case test.followUp != "":
+				if !errors.As(err, &followUpError) || followUpError.Step != test.followUp ||
+					followUpError.CommitSHA != "rollback-commit" {
+					t.Fatalf("expected a %s follow-up error, got %v", test.followUp, err)
+				}
+				if !strings.HasPrefix(followUpError.Message(), "Rolled back values in commit rollbac, but ") ||
+					strings.Contains(followUpError.Message(), "connection reset") {
+					t.Fatalf("unexpected message: %q", followUpError.Message())
+				}
+				if test.followUp == RollbackStepSync && repository.valuesCommitSHA != "rollback-commit" {
+					t.Fatalf("a failed sync must still leave the commit recorded, got %q", repository.valuesCommitSHA)
+				}
+				return
+			case test.conflict:
+				if !errors.Is(err, ErrValuesConflict) || errors.As(err, &externalError) {
+					t.Fatalf("expected ErrValuesConflict, got %v", err)
+				}
 			case test.wantError != "":
 				if !errors.As(err, &validationError) || !strings.Contains(validationError.Message, test.wantError) {
 					t.Fatalf("expected %q, got %v", test.wantError, err)
@@ -157,7 +194,7 @@ func TestRollback(t *testing.T) {
 			case err != nil:
 				t.Fatal(err)
 			}
-			if test.wantError != "" || test.external {
+			if test.wantError != "" || test.external || test.conflict {
 				if client.synced != "" || repository.valuesCommitSHA != "" {
 					t.Fatal("a failed rollback must not record values or sync")
 				}

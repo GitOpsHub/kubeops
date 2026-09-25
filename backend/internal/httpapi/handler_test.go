@@ -253,7 +253,10 @@ func (f *fakeApplicationOnboarder) RevisionValues(
 	sha string,
 ) (onboarding.RevisionValues, error) {
 	f.revisionSHA = sha
-	return onboarding.RevisionValues{SHA: sha, Path: "dev/us-east-1/values.yaml", ValuesYAML: "a: 1\n"}, f.valuesErr
+	return onboarding.RevisionValues{
+		SHA: sha, Path: "dev/us-east-1/values.yaml",
+		ValuesYAML: "a: 1\ntoken: <redacted>\n", RedactedKeys: []string{"token"},
+	}, f.valuesErr
 }
 
 func (f *fakeApplicationOnboarder) Create(

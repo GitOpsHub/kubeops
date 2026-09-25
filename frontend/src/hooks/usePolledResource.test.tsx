@@ -175,6 +175,70 @@ describe('usePolledResource', () => {
     expect(result.current.data).toBe(2)
   })
 
+  it('ignores a response that lands after a newer reload', async () => {
+    // Deferred responses that ignore their abort signal, so only the request
+    // id can keep the older one from committing.
+    const pending: { resolve: (value: string) => void; reject: (error: Error) => void }[] = []
+    const load = vi.fn(
+      () =>
+        new Promise<string>((resolve, reject) => {
+          pending.push({ resolve, reject })
+        }),
+    )
+    const { result } = renderHook(() => usePolledResource(load))
+    await flush()
+    await act(async () => pending[0].resolve('initial'))
+    expect(result.current.data).toBe('initial')
+
+    // A poll is in flight when the caller reloads.
+    let reloaded: Promise<void> = Promise.resolve()
+    act(() => void result.current.reload())
+    act(() => {
+      reloaded = result.current.reload()
+    })
+    expect(load).toHaveBeenCalledTimes(3)
+
+    await act(async () => pending[2].resolve('after reload'))
+    await act(() => reloaded)
+    expect(result.current.data).toBe('after reload')
+
+    await act(async () => pending[1].resolve('before reload'))
+    expect(result.current.data).toBe('after reload')
+    expect(result.current.refreshing).toBe(false)
+
+    // A superseded request's failure is not the resource's error either.
+    act(() => void result.current.reload())
+    act(() => void result.current.reload())
+    await act(async () => pending[4].resolve('latest'))
+    await act(async () => pending[3].reject(new Error('late failure')))
+    expect(result.current.data).toBe('latest')
+    expect(result.current.error).toBeNull()
+  })
+
+  it('aborts the in-flight request when reloaded', async () => {
+    const signals: AbortSignal[] = []
+    const load = vi.fn((signal: AbortSignal) => {
+      signals.push(signal)
+      return new Promise<string>((resolve, reject) => {
+        signal.addEventListener('abort', () =>
+          reject(new DOMException('The operation was aborted.', 'AbortError')),
+        )
+        if (signals.length > 1) resolve(`response ${signals.length}`)
+      })
+    })
+    const { result } = renderHook(() => usePolledResource(load))
+    await flush()
+    expect(result.current.loading).toBe(true)
+
+    await act(() => result.current.reload())
+    expect(signals[0].aborted).toBe(true)
+    expect(signals[1].aborted).toBe(false)
+    expect(result.current.data).toBe('response 2')
+    expect(result.current.error).toBeNull()
+    expect(result.current.loading).toBe(false)
+    expect(result.current.refreshing).toBe(false)
+  })
+
   it('fetches nothing while disabled', () => {
     const load = vi.fn(async () => 'data')
     const { result } = renderHook(() => usePolledResource(load, { enabled: false }))

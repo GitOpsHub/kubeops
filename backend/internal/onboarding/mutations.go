@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
@@ -16,6 +15,42 @@ import (
 // ErrDryRunFailed reports that Argo CD refused a dry run on at least one of
 // the selected targets.
 var ErrDryRunFailed = errors.New("Argo CD could not start the dry run")
+
+// Rollback steps that can fail after the values commit already landed.
+const (
+	RollbackStepRecord = "record"
+	RollbackStepSync   = "sync"
+)
+
+// RollbackFollowUpError reports a rollback whose values commit landed on the
+// branch but whose later step failed. The commit cannot be taken back, so the
+// caller must say it exists rather than that the rollback failed: retrying
+// would only find the values already match.
+type RollbackFollowUpError struct {
+	// CommitSHA is the rollback commit now on the values branch.
+	CommitSHA string
+	Step      string
+	Err       error
+}
+
+func (e RollbackFollowUpError) Error() string {
+	return fmt.Sprintf("rolled back values in commit %s, then %s failed: %v", shortSHA(e.CommitSHA), e.Step, e.Err)
+}
+
+func (e RollbackFollowUpError) Unwrap() error { return e.Err }
+
+// Message explains the outcome without the underlying error, which may carry
+// internal detail.
+func (e RollbackFollowUpError) Message() string {
+	outcome := "KubeOps could not record it"
+	if e.Step == RollbackStepSync {
+		outcome = "KubeOps could not start the sync"
+	}
+	// The generated Applications sync automatically, so the commit deploys
+	// on Argo CD's next poll whatever failed here.
+	return fmt.Sprintf("Rolled back values in commit %s, but %s. Argo CD's automated sync will still apply it.",
+		shortSHA(e.CommitSHA), outcome)
+}
 
 // selectTargets narrows targets to ids, preserving their stored order. No ids
 // means every target; an id the onboarding does not own is a validation error
@@ -123,28 +158,14 @@ func (s *Service) Rollback(ctx context.Context, id, sha string) (model.Applicati
 	if err != nil {
 		return model.ApplicationOnboarding{}, err
 	}
-	history, err := s.github.ValuesHistory(
-		ctx, record.ValuesRepositoryName, record.ValuesRevision, path, MaxRevisionPage,
-	)
-	if err != nil {
-		return model.ApplicationOnboarding{}, ExternalError{Err: fmt.Errorf("list values history: %w", err)}
-	}
-	if len(history) == 0 {
-		return model.ApplicationOnboarding{}, ValidationError{Message: "application has no release-scoped values file"}
-	}
-	// Only a commit that changed this file is a meaningful rollback point; any
-	// other commit in the repository would restore another release's intent.
-	fullSHA := ""
-	for _, commit := range history {
-		if strings.HasPrefix(commit.SHA, sha) {
-			fullSHA = commit.SHA
-			break
-		}
-	}
-	if fullSHA == "" {
+	fullSHA, err := s.historyCommit(ctx, record, path, sha)
+	if errors.Is(err, errNotInHistory) {
 		return model.ApplicationOnboarding{}, ValidationError{
 			Message: fmt.Sprintf("commit %s is not in the recent history of %s", shortSHA(sha), path),
 		}
+	}
+	if err != nil {
+		return model.ApplicationOnboarding{}, err
 	}
 	update, err := s.github.RestoreValues(ctx, record.ValuesRepositoryName, record.ValuesRevision, path, fullSHA)
 	switch {
@@ -152,6 +173,8 @@ func (s *Service) Rollback(ctx context.Context, id, sha string) (model.Applicati
 		return model.ApplicationOnboarding{}, ValidationError{
 			Message: fmt.Sprintf("values at %s already match the current values", shortSHA(fullSHA)),
 		}
+	case errors.Is(err, ErrValuesConflict):
+		return model.ApplicationOnboarding{}, err
 	case errors.Is(err, ErrRevisionNotFound):
 		return model.ApplicationOnboarding{}, ValidationError{
 			Message: fmt.Sprintf("%s did not exist at %s", path, shortSHA(fullSHA)),
@@ -162,10 +185,20 @@ func (s *Service) Rollback(ctx context.Context, id, sha string) (model.Applicati
 	slog.Info("rolled back application values",
 		"onboarding", record.ID, "sha", fullSHA, "commit", update.CommitSHA)
 	digest := sha256.Sum256([]byte(update.ValuesYAML))
+	// The commit has landed, so record it even if the caller has hung up.
 	if err := s.store.UpdateApplicationOnboardingValues(
-		ctx, record.ID, "sha256:"+hex.EncodeToString(digest[:]), update.CommitSHA,
+		context.WithoutCancel(ctx), record.ID, "sha256:"+hex.EncodeToString(digest[:]), update.CommitSHA,
 	); err != nil {
-		return model.ApplicationOnboarding{}, fmt.Errorf("store rolled back application values: %w", err)
+		return model.ApplicationOnboarding{}, RollbackFollowUpError{
+			CommitSHA: update.CommitSHA, Step: RollbackStepRecord,
+			Err: fmt.Errorf("store rolled back application values: %w", err),
+		}
 	}
-	return s.Sync(ctx, id)
+	synced, err := s.Sync(ctx, id)
+	if err != nil {
+		return model.ApplicationOnboarding{}, RollbackFollowUpError{
+			CommitSHA: update.CommitSHA, Step: RollbackStepSync, Err: err,
+		}
+	}
+	return synced, nil
 }

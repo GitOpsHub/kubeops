@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { rollbackApplication, type ValuesRevision } from '../../api/argo'
+import { PartialRollbackError, rollbackApplication, type ValuesRevision } from '../../api/argo'
 import { errorMessage } from '../../api/client'
 import type { ApplicationOnboarding } from '../../api/onboarding'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
@@ -16,6 +16,8 @@ type Props = {
   branch: string
   onClose: () => void
   onRolledBack: (next: ApplicationOnboarding) => void
+  /** The rollback commit landed but a later step failed; history has changed. */
+  onCommitted?: () => void
 }
 
 /**
@@ -32,6 +34,7 @@ export function RollbackDialog({
   branch,
   onClose,
   onRolledBack,
+  onCommitted,
 }: Props) {
   const toast = useToast()
   const [submitting, setSubmitting] = useState(false)
@@ -51,6 +54,14 @@ export function RollbackDialog({
       onRolledBack(next)
       onClose()
     } catch (reason) {
+      if (reason instanceof PartialRollbackError) {
+        // The commit is on the branch: confirming again would only be told
+        // the values already match, so the dialog's question is answered.
+        toast.error(reason.message)
+        onCommitted?.()
+        onClose()
+        return
+      }
       setError(errorMessage(reason, 'The rollback could not be committed.'))
     } finally {
       setSubmitting(false)

@@ -20,9 +20,13 @@ const maxMutationBody = 4 << 10
 
 // readJSONBody decodes an optional JSON body into target. present reports
 // whether there was a body at all; ok is false once an error response has been
-// written. Requiring application/json whenever a body is sent makes every
-// cross-origin browser request preflight, which the CORS policy then refuses
-// for other origins: with no authentication, that is this API's CSRF barrier.
+// written. Requiring application/json whenever a body is sent means a
+// cross-origin browser request carrying one must preflight, which the CORS
+// policy refuses for other origins, so another site cannot choose a body's
+// options (a dry run's targets, a rollback's commit). That is all it protects:
+// a bodyless POST is a simple request that skips the preflight, so a
+// cross-site page can still trigger a default sync or an offboard, as it
+// always could. Like the missing authentication, that is known and unresolved.
 func readJSONBody(w http.ResponseWriter, r *http.Request, target any) (present, ok bool) {
 	if r.Body == nil {
 		return false, true
@@ -163,17 +167,36 @@ func (api *API) rollbackApplicationOnboarding(w http.ResponseWriter, r *http.Req
 	item, err := api.onboarder.Rollback(r.Context(), id, request.CommitSHA)
 	var validationError onboarding.ValidationError
 	var externalError onboarding.ExternalError
+	var followUpError onboarding.RollbackFollowUpError
 	switch {
 	case err == nil:
 		api.recordOperation(r, id, "", "rollback",
 			map[string]any{"commitSha": request.CommitSHA, "valuesCommitSha": item.ValuesCommitSHA},
 			operationSucceeded)
 		writeJSON(w, http.StatusOK, item)
+	case errors.As(err, &followUpError):
+		// The values commit exists whatever failed after it, so the audit
+		// trail records the rollback and the response names the commit. This
+		// runs before the aborted check: a caller hanging up mid-sync must not
+		// erase a commit that already landed.
+		slog.Error("finish application rollback", "onboarding", id, "sha", request.CommitSHA, "error", err)
+		api.recordOperation(r, id, "", "rollback",
+			map[string]any{"commitSha": request.CommitSHA, "valuesCommitSha": followUpError.CommitSHA},
+			operationSucceeded)
+		status := http.StatusInternalServerError
+		if followUpError.Step == onboarding.RollbackStepSync {
+			status = http.StatusBadGateway
+		}
+		writeJSON(w, status, map[string]string{
+			"error": followUpError.Message(), "valuesCommitSha": followUpError.CommitSHA,
+		})
 	case aborted(r):
 	case errors.Is(err, pgx.ErrNoRows):
 		writeError(w, http.StatusNotFound, "application onboarding not found")
 	case errors.As(err, &validationError):
 		writeError(w, http.StatusUnprocessableEntity, validationError.Message)
+	case errors.Is(err, onboarding.ErrValuesConflict):
+		writeError(w, http.StatusConflict, "the values file changed while rolling back; refresh and try again")
 	case errors.As(err, &externalError):
 		slog.Error("roll back application through GitHub", "onboarding", id, "sha", request.CommitSHA, "error", externalError)
 		api.recordOperation(r, id, "", "rollback", map[string]any{"commitSha": request.CommitSHA}, operationFailed)

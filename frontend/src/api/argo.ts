@@ -3,7 +3,7 @@
  * talks to the `/argo` proxy for these: every call goes through `/api`, which
  * validates input and never passes Argo's own error bodies through.
  */
-import { apiUrl, ensureOk, request, requestVoid } from './client'
+import { ApiError, apiUrl, ensureOk, request, requestVoid } from './client'
 import type { ApplicationOnboarding, PodLogEntry, ResourceRef } from './onboarding'
 
 export type { PodLogEntry } from './onboarding'
@@ -316,24 +316,62 @@ export function getValuesRevisions(onboardingId: string, limit = 20, signal?: Ab
   )
 }
 
+/**
+ * The values file at one commit. The server replaces secret-looking values
+ * with `<redacted>` and lists their dotted paths; `*` means the file did not
+ * parse and was withheld entirely.
+ */
+export type RevisionValues = {
+  sha: string
+  path: string
+  valuesYaml: string
+  redactedKeys: string[]
+}
+
 export function getRevisionValues(onboardingId: string, sha: string, signal?: AbortSignal) {
-  return request<{ sha: string; path: string; valuesYaml: string }>(
+  return request<RevisionValues>(
     `/application-onboardings/${encodeURIComponent(onboardingId)}` +
       `/revisions/${encodeURIComponent(sha)}/values`,
     { signal },
   )
 }
 
+/**
+ * A rollback whose values commit landed although a later step (recording it,
+ * starting the sync) failed. The commit stands, so the UI must not say the
+ * rollback failed; Argo CD's automated sync still deploys it.
+ */
+export class PartialRollbackError extends ApiError {
+  readonly valuesCommitSha: string
+
+  constructor(message: string, status: number, valuesCommitSha: string) {
+    super(message, status)
+    this.name = 'PartialRollbackError'
+    this.valuesCommitSha = valuesCommitSha
+  }
+}
+
 /** Commits the values file as it was at `commitSha`, then syncs. */
-export function rollbackApplication(onboardingId: string, commitSha: string) {
-  return request<ApplicationOnboarding>(
-    `/application-onboardings/${encodeURIComponent(onboardingId)}/rollback`,
+export async function rollbackApplication(onboardingId: string, commitSha: string) {
+  const response = await fetch(
+    apiUrl(`/application-onboardings/${encodeURIComponent(onboardingId)}/rollback`),
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ commitSha }),
     },
   )
+  if (!response.ok) {
+    const body = (await response
+      .clone()
+      .json()
+      .catch(() => ({}))) as { error?: string; valuesCommitSha?: unknown }
+    if (body.error && typeof body.valuesCommitSha === 'string') {
+      throw new PartialRollbackError(body.error, response.status, body.valuesCommitSha)
+    }
+  }
+  await ensureOk(response)
+  return (await response.json()) as ApplicationOnboarding
 }
 
 export type ApplicationOperationKind =

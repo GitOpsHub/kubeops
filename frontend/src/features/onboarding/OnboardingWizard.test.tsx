@@ -217,6 +217,56 @@ describe('onboarding wizard draft', () => {
     expect(window.sessionStorage.getItem(draftStorageKey)).toBeNull()
   })
 
+  it('never keeps typed values in session storage', async () => {
+    mockAPI()
+    const user = await openWizard()
+    await reachTargets(user)
+    await user.click(await screen.findByRole('checkbox'))
+    await next(user)
+
+    expect(screen.getByText(/Values overrides are not saved in drafts/)).toBeInTheDocument()
+    await user.type(screen.getByLabelText('us-east-1 values override'), 'dbPassword: hunter2')
+    await waitFor(() =>
+      expect(JSON.parse(window.sessionStorage.getItem(draftStorageKey) ?? '{}')).toMatchObject({
+        name: 'payments-api',
+        step: 'values',
+        regionValues: {},
+      }),
+    )
+    const stored = Object.keys(window.sessionStorage).map((key) =>
+      window.sessionStorage.getItem(key),
+    )
+    expect(stored.join('\n')).not.toContain('hunter2')
+  })
+
+  it('drops values an older draft stored and restores everything else', async () => {
+    window.sessionStorage.setItem(
+      draftStorageKey,
+      JSON.stringify({
+        name: 'orders-api',
+        environment: 'dev',
+        region: 'us-east-1',
+        clusterIds: [],
+        regionValues: { 'us-east-1': 'apiToken: hunter2' },
+        showAllClusters: false,
+        step: 'targets',
+      }),
+    )
+    mockAPI()
+    await openWizard()
+
+    expect(screen.getByText('Draft restored')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Pick target clusters' })).toBeInTheDocument()
+    // Restoring rewrites the stored draft, scrubbing what the older build kept.
+    await waitFor(() =>
+      expect(window.sessionStorage.getItem(draftStorageKey)).not.toContain('hunter2'),
+    )
+    expect(JSON.parse(window.sessionStorage.getItem(draftStorageKey) ?? '{}')).toMatchObject({
+      name: 'orders-api',
+      regionValues: {},
+    })
+  })
+
   it('saves progress as the operator types and clears it once onboarded', async () => {
     mockAPI()
     const user = await openWizard()

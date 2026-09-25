@@ -264,12 +264,49 @@ func (s *Service) Revisions(ctx context.Context, id string, limit int) (ValuesHi
 	return ValuesHistory{Path: path, Branch: record.ValuesRevision, Items: items}, nil
 }
 
+// RevisionValues is a release values file as it was at one commit, with
+// secret-looking values hidden.
 type RevisionValues struct {
-	SHA        string `json:"sha"`
-	Path       string `json:"path"`
-	ValuesYAML string `json:"valuesYaml"`
+	SHA          string   `json:"sha"`
+	Path         string   `json:"path"`
+	ValuesYAML   string   `json:"valuesYaml"`
+	RedactedKeys []string `json:"redactedKeys"`
 }
 
+// errNotInHistory reports a commit that did not change the values file within
+// the newest MaxRevisionPage commits that did.
+var errNotInHistory = errors.New("commit is not in the values file history")
+
+// historyCommit resolves sha, which may be abbreviated, to a commit that
+// changed the release values file. Only such a commit is a meaningful
+// revision: any other commit in the repository would restore or reveal
+// another release's values.
+func (s *Service) historyCommit(
+	ctx context.Context,
+	record model.ApplicationOnboarding,
+	path, sha string,
+) (string, error) {
+	history, err := s.github.ValuesHistory(
+		ctx, record.ValuesRepositoryName, record.ValuesRevision, path, MaxRevisionPage,
+	)
+	if err != nil {
+		return "", ExternalError{Err: fmt.Errorf("list values history: %w", err)}
+	}
+	if len(history) == 0 {
+		return "", ValidationError{Message: "application has no release-scoped values file"}
+	}
+	for _, commit := range history {
+		if strings.HasPrefix(commit.SHA, sha) {
+			return commit.SHA, nil
+		}
+	}
+	return "", errNotInHistory
+}
+
+// RevisionValues reads the release values file at sha. The API has no
+// authentication, so it only serves commits from the file's own history and
+// redacts secret-looking values: a values file may hold credentials that were
+// never meant to leave the repository.
 func (s *Service) RevisionValues(ctx context.Context, id, sha string) (RevisionValues, error) {
 	if !ValidCommitSHA(sha) {
 		return RevisionValues{}, ValidationError{Message: "sha must be a 7 to 40 character hex commit id"}
@@ -282,12 +319,21 @@ func (s *Service) RevisionValues(ctx context.Context, id, sha string) (RevisionV
 	if err != nil {
 		return RevisionValues{}, err
 	}
-	values, err := s.github.ValuesAt(ctx, record.ValuesRepositoryName, path, sha)
+	fullSHA, err := s.historyCommit(ctx, record, path, sha)
+	var validationError ValidationError
+	if errors.Is(err, errNotInHistory) || errors.As(err, &validationError) {
+		return RevisionValues{}, ErrRevisionNotFound
+	}
+	if err != nil {
+		return RevisionValues{}, err
+	}
+	values, err := s.github.ValuesAt(ctx, record.ValuesRepositoryName, path, fullSHA)
 	if errors.Is(err, ErrRevisionNotFound) {
 		return RevisionValues{}, err
 	}
 	if err != nil {
 		return RevisionValues{}, ExternalError{Err: fmt.Errorf("read values at revision: %w", err)}
 	}
-	return RevisionValues{SHA: sha, Path: path, ValuesYAML: values}, nil
+	redacted, keys := RedactValues(values)
+	return RevisionValues{SHA: sha, Path: path, ValuesYAML: redacted, RedactedKeys: keys}, nil
 }

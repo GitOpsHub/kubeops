@@ -369,11 +369,27 @@ values history through scoped `/api/application-onboardings/{id}/…` endpoints,
 never through the `/argo` proxy. Status responses carry no chart or values
 repository URLs, and Argo CD and GitHub error bodies are never passed through.
 
+Because the API has no authentication, values reads are redacted.
+`…/revisions/{sha}/values` only serves commits from the release values file's
+own recent history (anything else is `404`), and replaces secret-looking
+values with `<redacted>` before they leave the server: values under keys such
+as `password`, `token`, `apiKey`, `secret`, `auth`, or `cert` (and everything
+nested below them), `env` entries whose `name` looks like a secret, URLs with
+embedded credentials, and embedded config files containing a secret-looking
+assignment. The response's `redactedKeys` lists their paths, and a file that is
+not valid YAML is withheld entirely (`redactedKeys: ["*"]`). Keep real secrets
+out of values files regardless: the values repository itself is not redacted.
+
 Rollback is a GitOps revert: KubeOps commits the release-scoped
 `{environment}/{region}/values.yaml` as it was at the chosen commit and then
 syncs, exactly as scaling does. Argo CD's own rollback cannot be used because
 the generated Applications sync automatically with self-heal. The chart
-revision and the shared root `values.yaml` are not rolled back.
+revision and the shared root `values.yaml` are not rolled back. If the values
+file changes on the branch mid-rollback, GitHub refuses the commit and the
+API answers `409`. If the commit lands but recording it or starting the sync
+fails, the error response names the commit in `valuesCommitSha`, the audit
+trail still records the rollback, and Argo CD's automated sync deploys it
+anyway.
 
 `ONBOARDING_CONSOLE_MUTATIONS` (default `true`) enables the console's
 rollback and terminate-operation actions. The API has no authentication, and
@@ -382,7 +398,10 @@ keep the read-only console. Disabled actions answer `403`, and
 `GET /api/application-onboardings/defaults` reports
 `capabilities.consoleMutations` so the UI hides them. Every console mutation
 that takes a body requires `Content-Type: application/json`, which forces a
-CORS preflight, and caps the body at 4 KiB.
+CORS preflight for a cross-origin request with a body, and caps the body at
+4 KiB. This is not CSRF protection: a bodyless `POST` (a default sync, an
+offboard) needs no preflight, so any site a user visits can still trigger
+one, as it always could without authentication.
 
 ## Inventory API
 

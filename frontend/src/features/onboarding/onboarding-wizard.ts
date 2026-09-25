@@ -204,7 +204,11 @@ function isStep(value: unknown): value is StepId {
   return wizardSteps.some((step) => step.id === value)
 }
 
-/** A draft from this tab's session, or null. Storage can be missing or hold junk. */
+/**
+ * A draft from this tab's session, or null. Storage can be missing or hold
+ * junk. Values overrides are never read back, even from a draft an older
+ * build stored: they are not persisted (see saveDraft).
+ */
 export function loadDraft(): WizardDraft | null {
   try {
     const raw = window.sessionStorage.getItem(draftStorageKey)
@@ -216,14 +220,6 @@ export function loadDraft(): WizardDraft | null {
       clusterIds: Array.isArray(stored.clusterIds)
         ? stored.clusterIds.filter((id): id is string => typeof id === 'string')
         : [],
-      regionValues:
-        stored.regionValues && typeof stored.regionValues === 'object'
-          ? Object.fromEntries(
-              Object.entries(stored.regionValues).filter(
-                (entry): entry is [string, string] => typeof entry[1] === 'string',
-              ),
-            )
-          : {},
       showAllClusters: stored.showAllClusters === true,
       step: isStep(stored.step) ? stored.step : 'application',
     }
@@ -243,10 +239,16 @@ export function hasDraftContent(draft: WizardDraft) {
   )
 }
 
+/**
+ * Keeps the draft for the rest of the tab's session, minus its values
+ * overrides: operators paste secrets into values despite the warning, and
+ * browser storage is readable by any script on the origin.
+ */
 export function saveDraft(draft: WizardDraft) {
+  const persisted: WizardDraft = { ...draft, regionValues: {} }
   try {
-    if (hasDraftContent(draft)) {
-      window.sessionStorage.setItem(draftStorageKey, JSON.stringify(draft))
+    if (hasDraftContent(persisted)) {
+      window.sessionStorage.setItem(draftStorageKey, JSON.stringify(persisted))
     } else {
       window.sessionStorage.removeItem(draftStorageKey)
     }

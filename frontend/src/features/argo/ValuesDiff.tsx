@@ -25,7 +25,10 @@ export function ValuesDiff({ onboardingId, fromSha, toSha, fromLabel, toLabel, l
         getRevisionValues(onboardingId, fromSha, signal),
         getRevisionValues(onboardingId, toSha, signal),
       ])
-      return unifiedValuesDiff(from.valuesYaml, to.valuesYaml)
+      return {
+        lines: unifiedValuesDiff(from.valuesYaml, to.valuesYaml),
+        hidden: hiddenValues(from.redactedKeys, to.redactedKeys),
+      }
     },
     [onboardingId, fromSha, toSha],
   )
@@ -43,7 +46,7 @@ export function ValuesDiff({ onboardingId, fromSha, toSha, fromLabel, toLabel, l
     )
   }
 
-  const lines = query.data
+  const { lines, hidden } = query.data
   const stats = diffStats(lines)
   return (
     <figure className="values-diff" aria-label={label}>
@@ -57,6 +60,13 @@ export function ValuesDiff({ onboardingId, fromSha, toSha, fromLabel, toLabel, l
           <span className="tabular">
             <span className="values-diff-added">+{stats.added}</span>{' '}
             <span className="values-diff-removed">−{stats.removed}</span>
+          </span>
+        )}
+        {hidden !== null && (
+          <span className="values-diff-same" role="note">
+            {hidden === 'all'
+              ? 'Values that are not valid YAML are hidden'
+              : `${hidden} secret-looking ${hidden === 1 ? 'value is' : 'values are'} hidden`}
           </span>
         )}
       </figcaption>
@@ -83,4 +93,15 @@ export function ValuesDiff({ onboardingId, fromSha, toSha, fromLabel, toLabel, l
       )}
     </figure>
   )
+}
+
+/**
+ * How many distinct values the server redacted across both commits — changes
+ * to them cannot show in the diff — `all` when a file was withheld whole, or
+ * null when nothing is hidden.
+ */
+function hiddenValues(from: string[], to: string[]): number | 'all' | null {
+  const keys = new Set([...from, ...to])
+  if (keys.has('*')) return 'all'
+  return keys.size > 0 ? keys.size : null
 }
