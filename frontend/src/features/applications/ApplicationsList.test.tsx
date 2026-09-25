@@ -96,16 +96,17 @@ describe('application tiles', () => {
     )
   })
 
-  it('keeps raw platform IDs in the table, where they are compared', async () => {
+  it('names platforms in the table too, keeping the raw ID in the title', async () => {
     storedPreferences.set('kubeops.applications.view', 'table')
     mockAPI({ applications: [buildApplication()] })
     renderApp('/applications')
 
     const row = (await screen.findByRole('link', { name: 'payments-api' })).closest('tr')!
-    expect(within(row).getByText('aws-platform')).toHaveAttribute(
+    expect(await within(row).findByText('AWS Platform')).toHaveAttribute(
       'title',
-      expect.stringContaining('AWS Platform'),
+      expect.stringContaining('aws-platform'),
     )
+    expect(within(row).queryByText('aws-platform')).not.toBeInTheDocument()
   })
 })
 

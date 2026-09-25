@@ -191,8 +191,9 @@ describe('applications list', () => {
     expect(applicationLinks).toHaveLength(1)
     const row = applicationLinks[0].closest('tr')
     expect(row).not.toBeNull()
-    expect(within(row!).getByText('aws-platform')).toBeInTheDocument()
-    expect(within(row!).getByText('gcp-platform')).toBeInTheDocument()
+    // Platforms read by source name; the raw ID lives in the chip's title.
+    expect(await within(row!).findByTitle('AWS Platform · aws-platform')).toBeInTheDocument()
+    expect(within(row!).getByTitle('Google Cloud Platform · gcp-platform')).toBeInTheDocument()
     expect(within(row!).getByText('2 releases')).toBeInTheDocument()
     expect(within(row!).getByText('2 targets')).toBeInTheDocument()
     expect(screen.getByText('Showing 1–1 of 1 application')).toBeInTheDocument()

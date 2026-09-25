@@ -69,7 +69,7 @@ export function ApplicationTiles({ groups, sources }: Props) {
               <div className="application-tile-fact--wide">
                 <dt>Platforms</dt>
                 <dd>
-                  <PlatformIds ids={group.platformIds} sources={sources} show="name" />
+                  <PlatformIds ids={group.platformIds} sources={sources} />
                 </dd>
               </div>
             </dl>
