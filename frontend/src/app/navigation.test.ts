@@ -11,6 +11,7 @@ describe('routeIdFor', () => {
     // remount the page or replay its entrance.
     ['/applications/onboarding-1', '/applications/:id'],
     ['/applications/onboarding-2', '/applications/:id'],
+    ['/applications/onboarding-1/logs', '/applications/:id/logs'],
     // Unknown routes fall back to their own path.
     ['/nowhere', '/nowhere'],
   ])('%s → %s', (pathname, expected) => {
@@ -31,6 +32,15 @@ describe('breadcrumbsFor', () => {
       '/applications/onboarding-1',
       'payments-api',
       [{ label: 'Applications', to: '/applications' }, { label: 'payments-api' }],
+    ],
+    [
+      '/applications/onboarding-1/logs',
+      'payments-api',
+      [
+        { label: 'Applications', to: '/applications' },
+        { label: 'payments-api', to: '/applications/onboarding-1' },
+        { label: 'Logs' },
+      ],
     ],
     ['/nowhere', undefined, [{ label: 'Not found' }]],
   ])('%s', (pathname, name, expected) => {
