@@ -10,6 +10,7 @@ export function NotFound() {
       <div className="page-error">
         <EmptyState
           icon={<HelpIcon />}
+          titleAs="h1"
           title={<span id="not-found-heading">Page not found</span>}
           description={
             <>
