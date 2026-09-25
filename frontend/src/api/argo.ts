@@ -316,8 +316,20 @@ export function getValuesRevisions(onboardingId: string, limit = 20, signal?: Ab
   )
 }
 
+/**
+ * The values file at one commit. The server replaces secret-looking values
+ * with `<redacted>` and lists their dotted paths; `*` means the file did not
+ * parse and was withheld entirely.
+ */
+export type RevisionValues = {
+  sha: string
+  path: string
+  valuesYaml: string
+  redactedKeys: string[]
+}
+
 export function getRevisionValues(onboardingId: string, sha: string, signal?: AbortSignal) {
-  return request<{ sha: string; path: string; valuesYaml: string }>(
+  return request<RevisionValues>(
     `/application-onboardings/${encodeURIComponent(onboardingId)}` +
       `/revisions/${encodeURIComponent(sha)}/values`,
     { signal },

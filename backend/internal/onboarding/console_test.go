@@ -230,20 +230,75 @@ func TestRevisions(t *testing.T) {
 }
 
 func TestRevisionValues(t *testing.T) {
-	values := &fakeValuesRepositoryManager{valuesAt: map[string]string{"abc1234": "replicaCount: 3\n"}}
-	service, _ := consoleService(&fakeArgoClient{}, values)
-	result, err := service.RevisionValues(context.Background(), "onboarding-1", "abc1234")
-	if err != nil || result.ValuesYAML != "replicaCount: 3\n" || result.Path != "dev/us-east-1/values.yaml" {
-		t.Fatalf("unexpected values: %#v, %v", result, err)
-	}
-	for _, sha := range []string{"abc", "ABC1234", "abc1234;", strings.Repeat("a", 41)} {
-		if _, err := service.RevisionValues(context.Background(), "onboarding-1", sha); err == nil {
-			t.Fatalf("expected %q to be rejected", sha)
-		}
-	}
-	values.valuesAtErr = ErrRevisionNotFound
-	if _, err := service.RevisionValues(context.Background(), "onboarding-1", "abc1234"); !errors.Is(err, ErrRevisionNotFound) {
-		t.Fatalf("expected ErrRevisionNotFound, got %v", err)
+	const full = "abc1234def5678abc1234def5678abc1234def56"
+	history := []ValuesCommit{{SHA: "fff0000", Current: true}, {SHA: full}}
+	for _, test := range []struct {
+		name         string
+		sha          string
+		values       *fakeValuesRepositoryManager
+		want         RevisionValues
+		wantNotFound bool
+		wantError    string
+		external     bool
+	}{
+		{name: "abbreviated sha from the file history", sha: "abc1234",
+			values: &fakeValuesRepositoryManager{history: history,
+				valuesAt: map[string]string{full: "replicaCount: 3\n"}},
+			want: RevisionValues{SHA: "abc1234", Path: "dev/us-east-1/values.yaml",
+				ValuesYAML: "replicaCount: 3\n", RedactedKeys: []string{}}},
+		{name: "secrets are redacted", sha: full,
+			values: &fakeValuesRepositoryManager{history: history,
+				valuesAt: map[string]string{full: "db:\n  host: db\n  password: hunter2\n"}},
+			want: RevisionValues{SHA: full, Path: "dev/us-east-1/values.yaml",
+				ValuesYAML: "db:\n  host: db\n  password: <redacted>\n", RedactedKeys: []string{"db.password"}}},
+		// A commit outside the file's history may be any file of the repository,
+		// including another release's values.
+		{name: "sha outside the file history", sha: "0123456",
+			values:       &fakeValuesRepositoryManager{history: history, valuesAt: map[string]string{"0123456": "a: 1\n"}},
+			wantNotFound: true},
+		{name: "no values file", sha: "abc1234", values: &fakeValuesRepositoryManager{}, wantNotFound: true},
+		{name: "file missing at the commit", sha: "abc1234",
+			values:       &fakeValuesRepositoryManager{history: history, valuesAtErr: ErrRevisionNotFound},
+			wantNotFound: true},
+		{name: "uppercase sha", sha: "ABC1234", values: &fakeValuesRepositoryManager{history: history},
+			wantError: "sha must be"},
+		{name: "short sha", sha: "abc", values: &fakeValuesRepositoryManager{history: history},
+			wantError: "sha must be"},
+		{name: "sha with a suffix", sha: "abc1234;", values: &fakeValuesRepositoryManager{history: history},
+			wantError: "sha must be"},
+		{name: "overlong sha", sha: strings.Repeat("a", 41), values: &fakeValuesRepositoryManager{history: history},
+			wantError: "sha must be"},
+		{name: "unconfigured repository", sha: "abc1234", wantError: "not configured"},
+		{name: "history failure", sha: "abc1234",
+			values: &fakeValuesRepositoryManager{historyErr: errors.New("status 500")}, external: true},
+		{name: "read failure", sha: "abc1234",
+			values:   &fakeValuesRepositoryManager{history: history, valuesAtErr: errors.New("status 500")},
+			external: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service, _ := consoleService(&fakeArgoClient{}, test.values)
+			result, err := service.RevisionValues(context.Background(), "onboarding-1", test.sha)
+			var validationError ValidationError
+			var externalError ExternalError
+			switch {
+			case test.wantNotFound:
+				if !errors.Is(err, ErrRevisionNotFound) {
+					t.Fatalf("expected ErrRevisionNotFound, got %#v, %v", result, err)
+				}
+			case test.wantError != "":
+				if !errors.As(err, &validationError) || !strings.Contains(validationError.Message, test.wantError) {
+					t.Fatalf("expected %q, got %v", test.wantError, err)
+				}
+			case test.external:
+				if !errors.As(err, &externalError) {
+					t.Fatalf("expected an external error, got %v", err)
+				}
+			default:
+				if err != nil || !reflect.DeepEqual(result, test.want) {
+					t.Fatalf("unexpected values: %#v, %v", result, err)
+				}
+			}
+		})
 	}
 }
 

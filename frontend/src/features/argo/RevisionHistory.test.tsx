@@ -130,6 +130,33 @@ describe('RevisionHistory', () => {
     expect(diff).toHaveTextContent('Added: replicaCount: 5')
   })
 
+  it('says how many values the server hid and diffs <redacted> lines as text', async () => {
+    setup({
+      revisionValues: {
+        ...values,
+        ccc3333aaaa0000: 'replicaCount: 5\ndb:\n  password: <redacted>\n',
+        bbb2222aaaa0000: 'replicaCount: 2\ndb:\n  password: <redacted>\napiKey: <redacted>\n',
+      },
+      revisionRedactedKeys: {
+        ccc3333aaaa0000: ['db.password'],
+        bbb2222aaaa0000: ['db.password', 'apiKey'],
+      },
+    })
+    renderApp('/applications/onboarding-1?tab=history')
+    const user = userEvent.setup()
+
+    await screen.findByRole('list', { name: 'Values revisions' })
+    const bump = revision('Bump image to 2.4.1')
+    await user.click(within(bump).getByRole('button', { name: 'View diff for bbb2222' }))
+    const diff = await within(bump).findByRole('figure', {
+      name: 'Values diff from bbb2222 to the current commit',
+    })
+    expect(within(diff).getByRole('note')).toHaveTextContent('2 secret-looking values are hidden')
+    expect(diff).toHaveTextContent('Removed: apiKey: <redacted>')
+    expect(diff).toHaveTextContent('password: <redacted>')
+    expect(diff).toHaveTextContent('+1 −2')
+  })
+
   it('rolls back through Git after the diff is reviewed and the name typed', async () => {
     const { fetchMock, state } = setup()
     renderApp('/applications/onboarding-1?tab=history')

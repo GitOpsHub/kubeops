@@ -97,6 +97,8 @@ export type MockState = {
   revisionsStatus: number
   /** Values file content by commit SHA. */
   revisionValues: Record<string, string>
+  /** Redacted keys the server reports for a commit's values; none by default. */
+  revisionRedactedKeys: Record<string, string[]>
   operations: ApplicationOperation[]
   consoleMutations: boolean
   /** Each sync request's parsed body, or null when it was sent without one. */
@@ -145,6 +147,7 @@ export function mockAPI(initial: Partial<MockState> = {}) {
     revisions: initial.revisions ?? [],
     revisionsStatus: initial.revisionsStatus ?? 200,
     revisionValues: initial.revisionValues ?? {},
+    revisionRedactedKeys: initial.revisionRedactedKeys ?? {},
     operations: initial.operations ?? [],
     consoleMutations: initial.consoleMutations ?? true,
     syncRequests: [],
@@ -342,7 +345,12 @@ export function mockAPI(initial: Partial<MockState> = {}) {
         if (valuesYaml === undefined) {
           return Response.json({ error: 'no values file at that commit' }, { status: 404 })
         }
-        return Response.json({ sha, path: valuesPath, valuesYaml })
+        return Response.json({
+          sha,
+          path: valuesPath,
+          valuesYaml,
+          redactedKeys: state.revisionRedactedKeys[sha] ?? [],
+        })
       }
       if (endpoint === 'revisions') {
         return Response.json({ path: valuesPath, branch: 'main', items: state.revisions })

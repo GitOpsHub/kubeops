@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
@@ -123,28 +122,14 @@ func (s *Service) Rollback(ctx context.Context, id, sha string) (model.Applicati
 	if err != nil {
 		return model.ApplicationOnboarding{}, err
 	}
-	history, err := s.github.ValuesHistory(
-		ctx, record.ValuesRepositoryName, record.ValuesRevision, path, MaxRevisionPage,
-	)
-	if err != nil {
-		return model.ApplicationOnboarding{}, ExternalError{Err: fmt.Errorf("list values history: %w", err)}
-	}
-	if len(history) == 0 {
-		return model.ApplicationOnboarding{}, ValidationError{Message: "application has no release-scoped values file"}
-	}
-	// Only a commit that changed this file is a meaningful rollback point; any
-	// other commit in the repository would restore another release's intent.
-	fullSHA := ""
-	for _, commit := range history {
-		if strings.HasPrefix(commit.SHA, sha) {
-			fullSHA = commit.SHA
-			break
-		}
-	}
-	if fullSHA == "" {
+	fullSHA, err := s.historyCommit(ctx, record, path, sha)
+	if errors.Is(err, errNotInHistory) {
 		return model.ApplicationOnboarding{}, ValidationError{
 			Message: fmt.Sprintf("commit %s is not in the recent history of %s", shortSHA(sha), path),
 		}
+	}
+	if err != nil {
+		return model.ApplicationOnboarding{}, err
 	}
 	update, err := s.github.RestoreValues(ctx, record.ValuesRepositoryName, record.ValuesRevision, path, fullSHA)
 	switch {

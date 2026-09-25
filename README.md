@@ -369,6 +369,17 @@ values history through scoped `/api/application-onboardings/{id}/…` endpoints,
 never through the `/argo` proxy. Status responses carry no chart or values
 repository URLs, and Argo CD and GitHub error bodies are never passed through.
 
+Because the API has no authentication, values reads are redacted.
+`…/revisions/{sha}/values` only serves commits from the release values file's
+own recent history (anything else is `404`), and replaces secret-looking
+values with `<redacted>` before they leave the server: values under keys such
+as `password`, `token`, `apiKey`, `secret`, `auth`, or `cert` (and everything
+nested below them), `env` entries whose `name` looks like a secret, URLs with
+embedded credentials, and embedded config files containing a secret-looking
+assignment. The response's `redactedKeys` lists their paths, and a file that is
+not valid YAML is withheld entirely (`redactedKeys: ["*"]`). Keep real secrets
+out of values files regardless: the values repository itself is not redacted.
+
 Rollback is a GitOps revert: KubeOps commits the release-scoped
 `{environment}/{region}/values.yaml` as it was at the chosen commit and then
 syncs, exactly as scaling does. Argo CD's own rollback cannot be used because
