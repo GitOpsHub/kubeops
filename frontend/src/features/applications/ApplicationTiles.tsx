@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import type { CloudSource } from '../../api/inventory'
 import { ArgoHealthState, ArgoSyncState } from '../../components/ArgoStateIcons'
-import { ExternalLinkIcon } from '../../components/icons'
+import { ArgoIcon, ExternalLinkIcon } from '../../components/icons'
 import { StatusBadge } from '../../components/ui/Badge'
 import { plural } from '../../lib/format'
 import { deltaTone, deltaToneColour, rollupState } from '../../lib/status'
@@ -69,7 +69,7 @@ export function ApplicationTiles({ groups, sources }: Props) {
               <div className="application-tile-fact--wide">
                 <dt>Platforms</dt>
                 <dd>
-                  <PlatformIds ids={group.platformIds} sources={sources} show="name" />
+                  <PlatformIds ids={group.platformIds} sources={sources} />
                 </dd>
               </div>
             </dl>
@@ -82,6 +82,7 @@ export function ApplicationTiles({ groups, sources }: Props) {
                   target="_blank"
                   rel="noreferrer"
                 >
+                  <ArgoIcon aria-hidden="true" />
                   Argo CD
                   <ExternalLinkIcon aria-hidden="true" />
                 </a>

@@ -578,7 +578,14 @@
   .log-field .select {
     flex: 1;
     width: 100%;
+    /* Room for "10,000" beside the chevron; squeezed further, a select shows
+       only its arrow and the chosen value disappears. */
+    min-width: 88px;
     max-width: none;
+  }
+
+  .log-field-pair {
+    flex-basis: 200px;
   }
 
   .log-row {

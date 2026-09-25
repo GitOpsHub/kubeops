@@ -8,14 +8,25 @@
   --page-bottom: var(--space-7);
   --page-gap: var(--space-5);
 
+  --rail: var(--sidebar-width);
+
   display: grid;
-  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  grid-template-columns: var(--rail) minmax(0, 1fr);
   min-height: 100vh;
-  background: var(--canvas);
+  /* The sidebar is sticky and one viewport tall, so the rail's surface and
+     edge are painted here too: below the fold of a long page (a full-page
+     capture, a print, a mobile browser whose 100vh overshoots) the column
+     stays sidebar-coloured instead of showing canvas. */
+  background: linear-gradient(
+    to right,
+    var(--surface) calc(var(--rail) - 1px),
+    var(--border) calc(var(--rail) - 1px) var(--rail),
+    var(--canvas) var(--rail)
+  );
 }
 
 .app-shell.is-collapsed {
-  grid-template-columns: var(--sidebar-width-collapsed) minmax(0, 1fr);
+  --rail: var(--sidebar-width-collapsed);
 }
 
 .skip-link {
@@ -579,6 +590,10 @@
   width: 100%;
 }
 
+.page-error h1.empty-state-title {
+  font-size: var(--text-lg);
+}
+
 .page-error-actions {
   display: flex;
   flex-wrap: wrap;
@@ -616,6 +631,7 @@
   .app-shell,
   .app-shell.is-collapsed {
     grid-template-columns: minmax(0, 1fr);
+    background: var(--canvas);
   }
 
   .app-shell > .sidebar {

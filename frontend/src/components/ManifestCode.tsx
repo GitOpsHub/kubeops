@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { WrapIcon } from '../../components/icons'
-import { CopyButton } from '../../components/ui/CopyButton'
+import { WrapIcon } from './icons'
+import { CopyButton } from './ui/CopyButton'
+import './ManifestCode.css'
 
 type Props = {
   code: string

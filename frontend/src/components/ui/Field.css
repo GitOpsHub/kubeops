@@ -56,7 +56,7 @@
   width: 32px;
   height: 18px;
   margin-top: 1px;
-  background: var(--border-strong);
+  background: var(--border-control);
   border-radius: var(--radius-pill);
   transition: background var(--dur-fast) var(--ease-out);
 }
@@ -167,4 +167,10 @@
 .radio-card-description {
   color: var(--text-muted);
   font-size: var(--text-xs);
+}
+
+/* An empty error slot takes no grid row, so it adds no gap under the control,
+   yet stays in the accessibility tree as a live region. */
+.field-message:empty {
+  display: contents;
 }

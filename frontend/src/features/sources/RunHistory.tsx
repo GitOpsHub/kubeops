@@ -37,8 +37,10 @@ export function RunHistory({ runs, slots = 20, label }: Props) {
       {shown.map((run) => {
         const meta = statusMeta('run', run.status)
         return (
+          // Newest runs sit at the right edge, so tips open leftwards.
           <Tooltip
             key={run.id}
+            side="top-end"
             content={`${meta.label} · ${run.trigger} · ${relativeTime(run.queuedAt)} · ${formatDuration(
               runDurationMs(run),
             )}`}

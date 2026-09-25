@@ -9,19 +9,16 @@ type Props = {
   ids: string[]
   /** Known sources, by ID; an unknown ID still shows, as itself. */
   sources?: Map<string, CloudSource>
-  /**
-   * `name` for reading (tiles), `id` where the identifier is what gets
-   * compared or copied (the table). Either way the other is in the title.
-   */
-  show?: 'name' | 'id'
 }
 
 /**
- * An application spread over six platforms stacked six chips and made one row
- * as tall as four. Two are shown and the rest collapse into a counter that
+ * Platforms read by source name and provider logo; the raw ID, which is what
+ * filters and the API use, stays in the title for comparing or copying. An
+ * application spread over six platforms stacked six chips and made one row as
+ * tall as four, so two are shown and the rest collapse into a counter that
  * names them on hover; the expanded row lists them all.
  */
-export function PlatformIds({ ids, sources, show = 'id' }: Props) {
+export function PlatformIds({ ids, sources }: Props) {
   if (ids.length === 0) return <>—</>
   const overflow = ids.slice(visiblePlatformIds)
   const nameOf = (id: string) => sources?.get(id)?.name ?? id
@@ -30,21 +27,13 @@ export function PlatformIds({ ids, sources, show = 'id' }: Props) {
       {ids.slice(0, visiblePlatformIds).map((id) => {
         const source = sources?.get(id)
         return (
-          <Tag
-            key={id}
-            mono={show === 'id' || !source}
-            title={source ? `${source.name} · ${id}` : id}
-          >
+          <Tag key={id} mono={!source} title={source ? `${source.name} · ${id}` : id}>
             {source && <ProviderLogo provider={source.provider} className="platform-logo" />}
-            {show === 'name' ? nameOf(id) : id}
+            {nameOf(id)}
           </Tag>
         )
       })}
-      {overflow.length > 0 && (
-        <Tag title={overflow.map(show === 'name' ? nameOf : (id) => id).join(', ')}>
-          +{overflow.length}
-        </Tag>
-      )}
+      {overflow.length > 0 && <Tag title={overflow.map(nameOf).join(', ')}>+{overflow.length}</Tag>}
     </span>
   )
 }

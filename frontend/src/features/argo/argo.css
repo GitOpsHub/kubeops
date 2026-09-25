@@ -362,8 +362,11 @@
   height: 16px;
 }
 
+/* Resource names break at hyphens, which made "db-migrate" read as two
+   words; they stay whole and a narrow table scrolls inside its card. */
 .op-name {
   font-size: var(--text-xs);
+  white-space: nowrap;
 }
 
 .op-hook {

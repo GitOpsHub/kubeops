@@ -1,14 +1,12 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { buildCluster, mockAPI } from '../../test/mock-api'
 import { renderApp } from '../../test/render'
 import { draftStorageKey, serverErrorField } from './onboarding-wizard'
 
 type User = ReturnType<typeof userEvent.setup>
-
-beforeEach(() => window.sessionStorage.clear())
 
 afterEach(() => {
   vi.restoreAllMocks()

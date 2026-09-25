@@ -46,3 +46,26 @@ describe('Tabs', () => {
     expect(screen.queryByText('Resource tree')).not.toBeInTheDocument()
   })
 })
+
+describe('Tabs on a narrow strip', () => {
+  it('scrolls a selected tab that starts out of sight into the strip', () => {
+    // jsdom has no layout: give each tab a 100px slot and the strip 150px.
+    const place = (element: HTMLElement, left: number, width: number) => {
+      Object.defineProperty(element, 'offsetLeft', { configurable: true, value: left })
+      Object.defineProperty(element, 'offsetWidth', { configurable: true, value: width })
+      Object.defineProperty(element, 'clientWidth', { configurable: true, value: width })
+    }
+    const items = ['a', 'b', 'c', 'd'].map((id) => ({ id, label: id, content: id }))
+    const { rerender } = render(
+      <Tabs label="Details" activeId="a" onChange={() => {}} items={items} />,
+    )
+    const list = screen.getByRole('tablist')
+    place(list, 0, 150)
+    screen.getAllByRole('tab').forEach((tab, index) => place(tab, index * 100, 100))
+
+    rerender(<Tabs label="Details" activeId="d" onChange={() => {}} items={items} />)
+    expect(list.scrollLeft).toBe(250)
+    rerender(<Tabs label="Details" activeId="b" onChange={() => {}} items={items} />)
+    expect(list.scrollLeft).toBe(100)
+  })
+})

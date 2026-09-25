@@ -13,6 +13,12 @@ export type TimeSeriesSeries = {
   kind: 'bar' | 'line' | 'area'
   points: TimeSeriesPoint[]
   tone: ChartColor
+  /**
+   * Draws a line series dashed, so two related lines (a median and its tail)
+   * stay apart by pattern as well as colour — in print, forced colours, and
+   * for readers who cannot separate the hues.
+   */
+  dashed?: boolean
 }
 
 type Props = {
@@ -36,6 +42,14 @@ const dayFormat = new Intl.DateTimeFormat(undefined, {
   day: 'numeric',
   timeZone: 'UTC',
 })
+
+/** The legend and tooltip key repeats the line's dash, so the pattern maps back. */
+function keyBackground(entry: TimeSeriesSeries) {
+  const colour = colorVar(entry.tone)
+  return entry.dashed
+    ? `repeating-linear-gradient(90deg, ${colour} 0 4px, transparent 4px 7px)`
+    : colour
+}
 
 /** Plain dates ("2026-09-24") are UTC days; anything else parses as an instant. */
 function toDate(key: string) {
@@ -118,7 +132,7 @@ export function TimeSeries({
           <span className="chart-legend-item">
             <span
               className={entry.kind === 'line' ? 'chart-key chart-key--line' : 'chart-swatch'}
-              style={{ background: colorVar(entry.tone) }}
+              style={{ background: keyBackground(entry) }}
             />
             <span className="chart-legend-label">{entry.label}</span>
           </span>
@@ -319,7 +333,10 @@ export function TimeSeries({
               {paths.map(({ entry, line, area }) => (
                 <g key={entry.id} style={{ '--series': colorVar(entry.tone) } as CSSProperties}>
                   {area && <path className="time-series-area" d={area} />}
-                  <path className="time-series-line" d={line} />
+                  <path
+                    className={entry.dashed ? 'time-series-line is-dashed' : 'time-series-line'}
+                    d={line}
+                  />
                 </g>
               ))}
             </g>
@@ -369,7 +386,7 @@ export function TimeSeries({
                 <span key={entry.id} className="chart-tooltip-row">
                   <span
                     className="chart-key chart-key--line"
-                    style={{ background: colorVar(entry.tone) }}
+                    style={{ background: keyBackground(entry) }}
                   />
                   <strong>{reading === null ? '—' : yFormat(reading)}</strong>
                   <span>{entry.label}</span>

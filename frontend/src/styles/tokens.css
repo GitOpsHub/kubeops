@@ -92,6 +92,9 @@
   --border: light-dark(#e4e7ec, #23272e);
   --border-strong: light-dark(#d0d5dd, #343a45);
   --border-subtle: light-dark(#eef0f3, #1a1d22);
+  /* The edge of a text field or an off switch is the only sign the control is
+     there, so unlike the dividers above it clears 3:1 on every surface. */
+  --border-control: light-dark(#868d99, #636a76);
 
   --text: light-dark(#16181d, #e8eaee);
   --text-muted: light-dark(#555c68, #a3a9b4);
@@ -130,16 +133,18 @@
   --idle-fg: light-dark(#5f6673, #949ba6);
   --idle-soft: light-dark(rgb(95 102 115 / 10%), rgb(148 155 166 / 14%));
   --idle-border: light-dark(rgb(95 102 115 / 26%), rgb(148 155 166 / 30%));
-  --idle-solid: light-dark(#8a919d, #6d7480);
+  --idle-solid: light-dark(#868d99, #6d7480);
 
-  /* Categorical series, ordered so neighbours differ in hue and lightness and
-     stay apart for the common colour-vision deficiencies in both themes. */
-  --chart-1: light-dark(#3056d3, #809cff);
-  --chart-2: light-dark(#0f8a8c, #2ec4c6);
-  --chart-3: light-dark(#c47400, #f2b33d);
-  --chart-4: light-dark(#7a4fe0, #b69cff);
-  --chart-5: light-dark(#cc2f6b, #f37aa6);
-  --chart-6: light-dark(#4f7d12, #9fd65a);
+  /* Categorical series, assigned in this order and never skipped. Neighbours
+     differ in hue and lightness and stay apart for the common colour-vision
+     deficiencies. Each theme is its own step, not a flip: OKLCH L 0.43-0.77
+     and chroma >= 0.10 on white, L 0.48-0.67 on the dark surface, all >= 3:1. */
+  --chart-1: light-dark(#3056d3, #6e89f3);
+  --chart-2: light-dark(#028f78, #0baa92);
+  --chart-3: light-dark(#c47400, #c68206);
+  --chart-4: light-dark(#7a4fe0, #9a7be9);
+  --chart-5: light-dark(#cc2f6b, #e15e91);
+  --chart-6: light-dark(#4f7d12, #72a427);
   --chart-grid: var(--border-subtle);
   --chart-axis: var(--text-subtle);
 

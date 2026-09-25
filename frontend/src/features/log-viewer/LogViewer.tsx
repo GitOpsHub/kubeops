@@ -108,6 +108,8 @@ export type LogViewerProps = {
   pickers?: ReactNode
   /** Preselects a container, e.g. from a deep link. */
   initialContainer?: string
+  /** Called when the reader picks a container, so links can carry the choice. */
+  onContainerChange?: (container: string) => void
   /** Lines kept in memory; 10,000 by default, at most 50,000. */
   capacity?: number
   className?: string
@@ -218,6 +220,7 @@ export function LogViewer({
   resource,
   pickers,
   initialContainer = '',
+  onContainerChange,
   capacity,
   className = '',
 }: LogViewerProps) {
@@ -548,7 +551,10 @@ export function LogViewer({
                 <select
                   className="select"
                   value={container}
-                  onChange={(event) => setContainer(event.target.value)}
+                  onChange={(event) => {
+                    setContainer(event.target.value)
+                    onContainerChange?.(event.target.value)
+                  }}
                 >
                   {choosableContainers.map((item) => (
                     <option key={item.name} value={item.name}>

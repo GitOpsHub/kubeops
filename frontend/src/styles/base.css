@@ -147,7 +147,7 @@ pre,
   padding: 0 var(--space-3);
   color: var(--text);
   background: var(--surface);
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border-control);
   border-radius: var(--radius-sm);
   font-size: var(--text-sm);
   box-shadow: var(--shadow-xs);
@@ -288,6 +288,72 @@ pre,
   }
 }
 
+/* Touch targets --------------------------------------------------------- */
+
+/* Desktop density is 30px controls; a thumb needs more. On phones every
+   control clears 32px, and buttons and fields 36px. The `html` prefix outranks
+   each component's own sizing without depending on stylesheet order. */
+@media (max-width: 640px) {
+  html .btn,
+  html .btn--sm,
+  html .select,
+  html .input,
+  html .table-footer .select,
+  html .toggle-group-item,
+  html .status-strip-item {
+    min-height: 36px;
+  }
+
+  html .status-strip-item {
+    height: auto;
+  }
+
+  html .release-option,
+  html .target-card-op,
+  html .log-field .select,
+  html .log-search .input {
+    min-height: 36px;
+  }
+
+  html .toggle-group--sm .toggle-group-item,
+  html .log-tool,
+  html .log-level-chip {
+    min-width: 32px;
+    min-height: 32px;
+  }
+
+  html .target-card-action {
+    width: 32px;
+    height: 32px;
+  }
+
+  html .command-trigger,
+  html .sync-menu-trigger {
+    width: 36px;
+  }
+
+  html .switch,
+  html .application-tile-argo,
+  html .link-button,
+  html .page-back,
+  html .column-sort,
+  html .breadcrumbs a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;
+  }
+
+  html .row-expander {
+    width: 32px;
+    height: 32px;
+  }
+
+  /* Stays a block box so a long name still ends in an ellipsis. */
+  html .application-name {
+    padding-block: 6px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -313,10 +379,16 @@ pre,
   .chip,
   .tag,
   .status-badge,
-  .toggle-group-item[aria-pressed='true'],
   .banner,
   .toast {
     border: 1px solid CanvasText;
+  }
+
+  /* Every pill already has an outline here, so the chosen one needs more
+     than a border to stand apart. */
+  .toggle-group-item[aria-pressed='true'],
+  .target-switch-item[aria-pressed='true'] {
+    border: 2px solid Highlight;
   }
 
   .status-dot,
@@ -330,8 +402,10 @@ pre,
     outline-offset: -2px;
   }
 
+  /* Backgrounds are repainted as Canvas unless the mark opts out. */
   .tab[aria-selected='true']::after,
   .nav-link.is-active::before {
+    forced-color-adjust: none;
     background: Highlight;
   }
 }

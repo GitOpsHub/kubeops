@@ -1,4 +1,4 @@
-import { useId, useRef, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from 'react'
 import './Tabs.css'
 
 /**
@@ -22,6 +22,7 @@ type Props = {
 export function Tabs({ items, activeId, onChange, label }: Props) {
   const baseId = useId()
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({})
+  const listRef = useRef<HTMLDivElement | null>(null)
 
   function focusTab(id: string) {
     onChange(id)
@@ -53,9 +54,28 @@ export function Tabs({ items, activeId, onChange, label }: Props) {
 
   const active = items.find((item) => item.id === activeId) ?? items[0]
 
+  // On a phone the tab strip scrolls sideways, and a deep link to a late tab
+  // opened with the selected tab out of sight. Only the strip scrolls here,
+  // never the page, so this is not scrollIntoView.
+  useEffect(() => {
+    const list = listRef.current
+    const tab = tabRefs.current[active.id]
+    if (!list || !tab) return
+    const start = tab.offsetLeft - list.offsetLeft
+    const end = start + tab.offsetWidth
+    if (start < list.scrollLeft) list.scrollLeft = start
+    else if (end > list.scrollLeft + list.clientWidth) list.scrollLeft = end - list.clientWidth
+  }, [active.id])
+
   return (
     <>
-      <div className="tablist" role="tablist" aria-label={label} onKeyDown={handleKeyDown}>
+      <div
+        ref={listRef}
+        className="tablist"
+        role="tablist"
+        aria-label={label}
+        onKeyDown={handleKeyDown}
+      >
         {items.map((item) => {
           const selected = item.id === active.id
           return (

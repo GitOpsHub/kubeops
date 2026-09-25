@@ -122,6 +122,65 @@ The root `.env`, `config/cloud-sources.yaml`, and `config/argo-targets.yaml`
 are ignored. Only variables prefixed with `VITE_` are exposed to browser code;
 never place secrets in them.
 
+## UI
+
+The frontend is a React single-page app in `frontend/`, built with Vite and no
+component library beyond Radix primitives for dialogs and menus.
+
+**Design tokens and themes.** Every colour, space, radius, shadow, and duration
+is a custom property in `frontend/src/styles/tokens.css`. Colours are
+`light-dark()` pairs, so a theme is only a `color-scheme` switch: the theme menu
+in the header offers light, dark, or system, stored under `kubeops-theme` and
+applied before first paint. Status colours come in roles (`--ok-*`, `--warn-*`,
+`--err-*`, `--info-*`, `--idle-*`) rather than raw hues. `styles/guards.test.ts`
+fails on a raw colour outside the token sheet or a breakpoint other than 640,
+960, or 1280 px, and `styles/tokens.contrast.test.ts` holds text roles to
+4.5:1 and marks, control edges, the focus ring, and chart series to 3:1 in both
+themes. Inter and JetBrains Mono are bundled with `@fontsource-variable`, so no
+font request leaves the app.
+
+**Components.** Shared primitives live in `frontend/src/components/ui/`
+(buttons, fields, dialogs and sheets, toasts, tabs, data tables, pagination,
+status badges and dots, empty, loading, and error states). Icons are re-exported
+by semantic name from `components/icons.ts`; features never import
+`lucide-react` directly. Argo CD links use a neutral Git-reconcile glyph
+(`ArgoIcon`), not the Argo project's logo.
+
+**Charts.** The Overview's sparklines, donut, stacked bars, and time series are
+hand-built SVG in `components/charts/`, each with a hidden data table for
+screen readers and keyboard-reachable points. Series take the categorical
+tokens `--chart-1`…`--chart-6` in order; the palette is stepped separately for
+each theme and checked for colour-vision separation. Status meaning
+(succeeded, failed) always uses the status roles instead.
+
+**Log viewer.** `features/log-viewer/` streams pod logs through the API in a
+virtualised list that keeps up to 10,000 lines. It follows the tail, pauses,
+wraps, filters by level, searches (plain, case-sensitive, regex, or on the
+server), merges replicas with a pod column, reads the previous crashed
+container, and downloads or copies what is shown. It opens as a sheet beside a
+resource or full screen at `/applications/{id}/logs`, whose URL carries the
+target, resource, and container.
+
+**Application detail and the Argo CD console.** An application's page has
+tabs for Kubernetes resources (a tree graph with pan and zoom, or a list),
+Sync (the current or last operation, phase by phase), Logs, Events, History
+(values revisions with diffs and rollback), Chart & values, and Timeline.
+Rollback and terminate appear only when the API reports
+`capabilities.consoleMutations` (see [Argo CD console](#argo-cd-console)).
+
+**Keyboard.** <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>K</kbd> opens the command
+palette: go to any page, application, or cluster, switch theme, or sync
+sources. Tabs, toggle groups, and chart points move with the arrow keys; in
+the log viewer <kbd>End</kbd> resumes following and <kbd>Home</kbd> jumps to the
+oldest line; the resource graph zooms with <kbd>+</kbd>, <kbd>-</kbd>, and
+<kbd>0</kbd> to fit.
+
+**Accessibility.** `src/a11y.test.tsx` runs axe on every route in both themes,
+the onboarding wizard's steps, and each detail tab. Motion is limited to
+opacity and transform, nothing animates on a poll refresh, and
+`prefers-reduced-motion` and forced colours are respected. On phones every
+control is at least 32 px tall and tables scroll inside their card.
+
 ## Vercel deployment
 
 The frontend and backend deploy as separate Vercel projects from this monorepo.

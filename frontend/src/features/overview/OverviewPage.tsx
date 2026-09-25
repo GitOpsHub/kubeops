@@ -34,6 +34,8 @@ import {
   providerCounts,
   runDurationMs,
   seriesDelta,
+  shareThresholds,
+  shareTone,
   statusSegments,
   syncSuccessRate,
   targetHealthOrder,
@@ -180,7 +182,7 @@ function KpiRow({ data }: { data: Overview | undefined }) {
       <StatCard
         label="Healthy targets"
         value={formatShare(health.percent)}
-        tone={health.percent !== null && health.percent < 100 ? 'warn' : undefined}
+        tone={shareTone(health.percent, shareThresholds.healthyTargets)}
         hint={
           health.total === 0
             ? 'No deployment targets yet'
@@ -200,7 +202,7 @@ function KpiRow({ data }: { data: Overview | undefined }) {
       <StatCard
         label="Sync success · 24h"
         value={formatShare(sync.percent)}
-        tone={sync.failed > 0 ? 'warn' : undefined}
+        tone={shareTone(sync.percent, shareThresholds.syncSuccess)}
         hint={
           sync.completed === 0
             ? sync.running > 0
@@ -416,7 +418,10 @@ function SyncActivityCard({ data }: { data: Overview | undefined }) {
                   id: 'p95',
                   label: 'Slowest 5% (p95)',
                   kind: 'line',
-                  tone: 'chart-4',
+                  // Next categorical slot, never a skipped one, and dashed: the
+                  // tail is read against the median, so the two must not blur.
+                  tone: 'chart-2',
+                  dashed: true,
                   points: days.map((day) => ({ x: day.date, y: day.p95Ms })),
                 },
               ]}

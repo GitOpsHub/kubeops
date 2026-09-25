@@ -6,6 +6,8 @@ import {
   healthyTargetShare,
   providerCounts,
   runDurationMs,
+  shareThresholds,
+  shareTone,
   statusSegments,
   syncSuccessRate,
 } from './overview-metrics'
@@ -57,6 +59,19 @@ describe('overview metrics', () => {
       ['gcp', 'chart-3'],
     ])
     expect(counts.other).toBe(4)
+  })
+
+  it.each([
+    [null, undefined],
+    [100, undefined],
+    [98, undefined],
+    [95, undefined],
+    [94.9, 'warn'],
+    [80, 'warn'],
+    [79.9, 'err'],
+    [0, 'err'],
+  ])('tones a sync success share of %s as %s', (percent, tone) => {
+    expect(shareTone(percent, shareThresholds.syncSuccess)).toBe(tone)
   })
 
   it('reports shares as null rather than NaN when there is nothing to divide', () => {

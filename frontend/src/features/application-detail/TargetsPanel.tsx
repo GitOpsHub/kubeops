@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import type { ArgoAppStatus } from '../../api/argo'
 import type { ApplicationDeployment } from '../../api/onboarding'
 import { DeploymentTargetLogo } from '../../components/DeploymentTargetLogo'
-import { LogsIcon } from '../../components/icons'
+import { ArgoIcon, LogsIcon } from '../../components/icons'
 import { StateDelta } from '../../components/StateDelta'
 import { StatusDot } from '../../components/ui/StatusDot'
 import { healthTone } from '../../lib/status'
@@ -134,7 +134,7 @@ function TargetCard({
           aria-label={`Open ${target.clusterName} in Argo CD`}
           title="Open in Argo CD"
         >
-          ↗
+          <ArgoIcon aria-hidden="true" />
         </a>
       )}
       {operation && (running || lastFailed) && (

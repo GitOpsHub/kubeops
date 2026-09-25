@@ -108,8 +108,10 @@ export function DataTable<T>({
                   aria-sort={
                     column.sortable && sort ? sortState(active, sort.direction) : undefined
                   }
-                  aria-label={column.headerLabel}
                 >
+                  {/* Real text, not aria-label: an empty header cell reads as
+                      a missing header to screen readers and to axe. */}
+                  {column.headerLabel && <span className="sr-only">{column.headerLabel}</span>}
                   {column.sortable && onSort ? (
                     <button type="button" className="column-sort" onClick={() => onSort(column.id)}>
                       {column.header}

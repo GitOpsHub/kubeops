@@ -3,7 +3,8 @@ import './Tooltip.css'
 
 type Props = {
   content: ReactNode
-  side?: 'right' | 'top' | 'bottom'
+  /** `top-end` lines the tip's right edge up with the anchor's, for marks at a right edge. */
+  side?: 'right' | 'top' | 'top-end' | 'bottom'
   /** Lets a caller switch the tooltip off, e.g. while the label is visible. */
   disabled?: boolean
   children: ReactNode
