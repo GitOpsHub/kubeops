@@ -293,7 +293,7 @@ export function ApplicationDetailPage() {
             label: 'Kubernetes resources',
             content: perTarget((target) => (
               // Resources live on one cluster, so targets are inspected one at
-              // a time rather than merged.
+              // a time rather than merged. Edges flow while that cluster syncs.
               <ResourceExplorer
                 key={target.id}
                 onboardingId={record.id}
