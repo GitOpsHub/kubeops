@@ -8,6 +8,7 @@ import { Button } from '../../components/ui/Button'
 import { Dialog } from '../../components/ui/Dialog'
 import { DialogBody, DialogFooter, DialogHeader } from '../../components/ui/DialogParts'
 import { Checkbox } from '../../components/ui/Field'
+import { statusMeta } from '../../lib/status'
 import { describeSync } from './sync-summary'
 import './argo.css'
 
@@ -96,6 +97,8 @@ export function SyncDialog({
           <ul className="sync-targets">
             {record.targets.map((target) => {
               const status = statuses[target.id]
+              const sync = status?.sync.status || target.syncStatus || 'Unknown'
+              const health = status?.health.status || target.healthStatus || 'Unknown'
               return (
                 <li key={target.id}>
                   <Checkbox
@@ -113,11 +116,13 @@ export function SyncDialog({
                         <span className="mono">{target.region}</span>
                         <StatusBadge
                           domain="sync"
-                          status={status?.sync.status || target.syncStatus || 'Unknown'}
+                          status={sync}
+                          label={statusMeta('sync', sync).label}
                         />
                         <StatusBadge
                           domain="health"
-                          status={status?.health.status || target.healthStatus || 'Unknown'}
+                          status={health}
+                          label={statusMeta('health', health).label}
                         />
                       </span>
                     }

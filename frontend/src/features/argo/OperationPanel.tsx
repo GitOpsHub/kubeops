@@ -237,8 +237,8 @@ export function OperationPanel({
     },
     {
       id: 'actions',
-      header: '',
-      headerLabel: 'Actions',
+      // Visible-to-assistive-tech text: axe does not count aria-label on a th.
+      header: <span className="sr-only">Actions</span>,
       align: 'end',
       cell: (row) =>
         isLoggableKind(row.kind) ? (
