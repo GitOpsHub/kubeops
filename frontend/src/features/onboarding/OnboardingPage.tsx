@@ -512,7 +512,8 @@ export function OnboardingPage() {
                 <>
                   <Banner tone="warn" title="Keep secrets out of values">
                     Do not include passwords, tokens, certificates, or other secret material.
-                    Reference existing Kubernetes or external secrets from the chart values.
+                    Reference existing Kubernetes or external secrets from the chart values. Values
+                    overrides are not saved in drafts, so secrets never touch browser storage.
                   </Banner>
                   <ValuesEditor
                     id={fieldControlIds.values}
