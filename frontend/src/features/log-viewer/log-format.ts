@@ -56,6 +56,41 @@ export function podHue(podName: string) {
   return ((hash >>> 0) % 6) + 1
 }
 
+/** The pod column never grows past this; longer suffixes keep their tail. */
+export const maxPodLabelLength = 16
+
+/**
+ * What every pod name starts with, cut back to a `-` so a label never begins
+ * mid-token. Sibling pods then read by what tells them apart — `x7k2p` for a
+ * ReplicaSet's pods, `a1b2c-x7k2p` across two ReplicaSets mid-rollout, `0` for
+ * a StatefulSet. With a single pod there is nothing to compare against, so the
+ * workload's own name (`fallback`) is stripped instead.
+ */
+export function podNamePrefix(pods: string[], fallback = ''): string {
+  const distinct = [...new Set(pods.filter(Boolean))]
+  if (distinct.length < 2) {
+    const [only] = distinct
+    return only && fallback && only.startsWith(fallback) && only.length > fallback.length
+      ? fallback
+      : ''
+  }
+  let shared = distinct[0]
+  for (const pod of distinct.slice(1)) {
+    let length = 0
+    while (length < shared.length && shared[length] === pod[length]) length += 1
+    shared = shared.slice(0, length)
+  }
+  return shared.slice(0, shared.lastIndexOf('-') + 1)
+}
+
+/** A pod's distinguishing label: the prefix stripped, and at most `max` characters. */
+export function shortPodName(pod: string, prefix: string, max = maxPodLabelLength) {
+  const short =
+    prefix && pod.startsWith(prefix) && pod.length > prefix.length ? pod.slice(prefix.length) : pod
+  // The tail is kept: it is the random part that tells siblings apart.
+  return short.length > max ? `…${short.slice(-(max - 1))}` : short
+}
+
 /** Wall-clock time to the millisecond; the full timestamp is in the title. */
 export function formatLogTime(timestamp?: string) {
   if (!timestamp) return ''

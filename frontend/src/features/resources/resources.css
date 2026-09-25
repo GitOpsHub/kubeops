@@ -14,18 +14,36 @@
 
 .resource-kind {
   display: inline-flex;
+  gap: var(--space-2);
   align-items: center;
-  height: 22px;
-  padding: 0 var(--space-2);
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-radius: var(--radius-xs);
-  font-size: var(--text-2xs);
-  font-weight: 600;
+  color: var(--text);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+.resource-kind-icon {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
 }
 
 .resource-name {
-  font-weight: 500;
+  display: inline-block;
+  max-width: 44ch;
+  overflow: hidden;
+  font-weight: var(--weight-medium);
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.resource-count {
+  margin-left: auto;
+  color: var(--text-subtle);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
 }
 
 .resource-kind-filter {
@@ -129,4 +147,128 @@
   display: inline-flex;
   gap: var(--space-1);
   justify-content: flex-end;
+}
+
+.resource-row-actions .btn,
+.resource-row-gap {
+  min-width: 60px;
+}
+
+.resource-modal-events {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  margin-left: auto;
+  font-size: var(--text-xs);
+}
+
+.resource-modal-events svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Manifest code view ------------------------------------------------------- */
+
+.manifest-code {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--code-bg);
+}
+
+.manifest-code-bar {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: space-between;
+  min-height: 36px;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-5);
+  border-bottom: 1px solid var(--code-border);
+}
+
+.manifest-code-meta {
+  color: var(--code-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.manifest-code-actions {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+}
+
+/* The bar sits on the always-dark code surface, so its controls take the
+   code palette rather than the page's. */
+.manifest-code-tool,
+.manifest-code .manifest-code-copy {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--code-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+}
+
+.manifest-code-tool svg,
+.manifest-code .manifest-code-copy svg {
+  width: 15px;
+  height: 15px;
+}
+
+.manifest-code-tool:hover,
+.manifest-code .manifest-code-copy:hover:not(:disabled) {
+  color: var(--code-fg);
+  background: color-mix(in srgb, var(--code-fg) 10%, transparent);
+}
+
+.manifest-code-tool.is-active {
+  color: var(--code-fg);
+  border-color: var(--code-border);
+  background: color-mix(in srgb, var(--code-fg) 12%, transparent);
+}
+
+.manifest-code .code-pane {
+  flex: 1;
+  min-height: 0;
+  padding: var(--space-3) var(--space-5) var(--space-3) var(--space-3);
+}
+
+.manifest-code .code-pane code {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  font: inherit;
+}
+
+.manifest-code.is-wrapped .code-pane code {
+  width: auto;
+}
+
+.code-line {
+  display: grid;
+  grid-template-columns: var(--gutter, 4ch) minmax(0, 1fr);
+  column-gap: var(--space-4);
+}
+
+.code-line:hover {
+  background: color-mix(in srgb, var(--code-fg) 5%, transparent);
+}
+
+.code-ln {
+  color: var(--code-muted);
+  text-align: right;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.manifest-code.is-wrapped .code-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }

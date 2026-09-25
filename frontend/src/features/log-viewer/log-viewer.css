@@ -45,9 +45,28 @@
 
 .log-toolbar-actions {
   display: inline-flex;
+  flex-wrap: wrap;
   gap: 2px;
   align-items: center;
   margin-left: auto;
+}
+
+.log-field-pair,
+.log-tool-group {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+}
+
+.log-field-pair {
+  gap: var(--space-2);
+}
+
+.log-toolbar-divider {
+  width: 1px;
+  height: 18px;
+  margin-inline: var(--space-1);
+  background: var(--border);
 }
 
 .log-resource {
@@ -292,6 +311,7 @@
 .log-row {
   --ln-width: 6ch;
   --ts-width: 13ch;
+  /* LogViewer overrides this from the longest pod label on screen. */
   --pod-width: 18ch;
   --row-tone: transparent;
 
@@ -350,6 +370,7 @@
 }
 
 .log-ln {
+  align-self: start;
   color: var(--code-muted);
   text-align: right;
   opacity: 0.7;
@@ -358,13 +379,17 @@
 }
 
 .log-ts {
+  align-self: start;
   color: var(--code-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
+/* Gutter columns pin to the first line of a wrapped message, the way an
+   editor's line numbers do, instead of floating to its middle. */
 .log-pod {
   display: inline-flex;
+  align-self: start;
   height: 20px;
   gap: 6px;
   align-items: center;
@@ -540,9 +565,14 @@
     flex: 1 1 100%;
   }
 
-  .log-field {
+  .log-field,
+  .log-field-pair {
     flex: 1 1 140px;
     min-width: 0;
+  }
+
+  .log-field-pair .log-field {
+    flex: 1;
   }
 
   .log-field .select {
@@ -552,7 +582,6 @@
   }
 
   .log-row {
-    --pod-width: 14ch;
     --ts-width: 12ch;
     --ln-width: 4ch;
   }

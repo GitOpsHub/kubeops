@@ -1,5 +1,6 @@
 import type { ResourceNode } from '../api/onboarding'
 import { buildResourceForest, type ResourceTreeNode } from './resource-tree'
+import { statusMeta } from './status'
 
 /** Geometry for a Kubernetes topology with ownership and traffic relationships. */
 
@@ -23,6 +24,9 @@ export type PositionedNode = GraphResourceNode & {
 export type GraphEdge = {
   id: string
   relation: 'owns' | 'routes'
+  /** The uids at either end, so an edge can follow its cards (e.g. dimming). */
+  from: string
+  to: string
   fromX: number
   fromY: number
   toX: number
@@ -286,6 +290,8 @@ export function layoutResourceGraph(nodes: ResourceNode[]): ResourceGraphLayout 
     edges.push({
       id: `owns:${parent.uid}->${child.uid}`,
       relation: 'owns',
+      from: parent.uid,
+      to: child.uid,
       fromX: parent.x + cardWidth,
       fromY: parent.y + cardHeight / 2,
       toX: child.x,
@@ -300,6 +306,8 @@ export function layoutResourceGraph(nodes: ResourceNode[]): ResourceGraphLayout 
     edges.push({
       id: `routes:${service.uid}->${workload.uid}`,
       relation: 'routes',
+      from: service.uid,
+      to: workload.uid,
       fromX: service.x + cardWidth,
       fromY: service.y + cardHeight / 2,
       toX: workload.x,
@@ -314,6 +322,8 @@ export function layoutResourceGraph(nodes: ResourceNode[]): ResourceGraphLayout 
     edges.push({
       id: `routes:${loadBalancer.uid}->${service.uid}`,
       relation: 'routes',
+      from: loadBalancer.uid,
+      to: service.uid,
       fromX: positionedLoadBalancer.x + cardWidth,
       fromY: positionedLoadBalancer.y + cardHeight / 2,
       toX: service.x,
@@ -341,7 +351,7 @@ export function layoutResourceGraph(nodes: ResourceNode[]): ResourceGraphLayout 
  * to the child's row, then into the child. The quarter-circle corners keep it
  * from reading as a hard schematic.
  */
-export function edgePath(edge: GraphEdge, radius = 10): string {
+export function edgePath(edge: Omit<GraphEdge, 'from' | 'to'>, radius = 10): string {
   const midX = edge.fromX + (edge.toX - edge.fromX) / 2
   if (Math.abs(edge.toY - edge.fromY) < 1) {
     return `M ${edge.fromX} ${edge.fromY} H ${edge.toX}`
@@ -373,6 +383,136 @@ export function resourceCategory(kind: string) {
   if (normalized === 'pod') return 'pod'
   if (normalized === 'serviceaccount') return 'identity'
   return 'support'
+}
+
+/**
+ * Cards in DOM order: each owner directly before what it owns, depth first,
+ * and an external load balancer just before its Service. Position on the
+ * canvas is absolute, so this order is what assistive technology and Tab
+ * follow — it has to read as the ownership tree, not column by column.
+ */
+export function ownerFirstOrder(nodes: PositionedNode[]): PositionedNode[] {
+  const byUid = new Map(nodes.map((node) => [node.uid, node]))
+  const loadBalancers = new Map<string, PositionedNode[]>()
+  for (const node of nodes) {
+    if (!node.virtual || !node.sourceUid) continue
+    loadBalancers.set(node.sourceUid, [...(loadBalancers.get(node.sourceUid) ?? []), node])
+  }
+  const ordered: PositionedNode[] = []
+  const visit = (tree: ResourceTreeNode) => {
+    ordered.push(...(loadBalancers.get(tree.uid) ?? []))
+    const positioned = byUid.get(tree.uid)
+    if (positioned) ordered.push(positioned)
+    for (const child of tree.children) visit(child)
+  }
+  for (const root of buildResourceForest(nodes.filter((node) => !node.virtual))) visit(root)
+  // Anything the forest did not reach (a load balancer whose Service is gone)
+  // still gets drawn rather than silently dropped.
+  const placed = new Set(ordered)
+  return [...ordered, ...nodes.filter((node) => !placed.has(node))]
+}
+
+/**
+ * Shortens a name from the middle. Generated names differ at the end — a
+ * ReplicaSet hash, a Pod's random suffix — so an end ellipsis would hide the
+ * one part that tells siblings apart.
+ */
+export function middleTruncate(name: string, max: number) {
+  if (name.length <= max) return name
+  const tail = Math.ceil((max - 1) * 0.6)
+  return `${name.slice(0, max - 1 - tail)}…${name.slice(-tail)}`
+}
+
+/* Filtering for the graph ---------------------------------------------- */
+
+/** The health buckets offered as filters, in severity-neutral reading order. */
+export const healthFilterLabels = ['Healthy', 'Progressing', 'Degraded', 'Missing', 'Unknown']
+export const syncFilterLabels = ['Synced', 'Out of Sync']
+
+export type ResourceFilters = {
+  /** Kinds to show; empty shows every kind. */
+  kinds: string[]
+  /** A canonical health label, e.g. "Degraded"; empty for any. */
+  health: string
+  /** A canonical sync label, e.g. "Out of Sync"; empty for any. */
+  sync: string
+  /** Drops the high-churn objects a Deployment owns, leaving the declared shape. */
+  hideReplicaSetsAndPods: boolean
+  /** Dims rather than removes, so the owner structure around a match stays readable. */
+  search: string
+}
+
+export const emptyResourceFilters: ResourceFilters = {
+  kinds: [],
+  health: '',
+  sync: '',
+  hideReplicaSetsAndPods: false,
+  search: '',
+}
+
+/** Resources without a health status read as Unknown, as Argo CD shows them. */
+export function resourceHealthLabel(node: ResourceNode) {
+  return statusMeta('health', node.healthStatus || 'Unknown').label
+}
+
+/** Empty for resources Argo CD does not track for sync, such as Pods. */
+export function resourceSyncLabel(node: ResourceNode) {
+  return node.syncStatus ? statusMeta('sync', node.syncStatus).label : ''
+}
+
+const churnKinds = new Set(['replicaset', 'pod'])
+
+/** Whether anything but the dimming search is narrowing the set. */
+export function hasActiveFilters(filters: ResourceFilters) {
+  return (
+    filters.kinds.length > 0 ||
+    Boolean(filters.health) ||
+    Boolean(filters.sync) ||
+    filters.hideReplicaSetsAndPods
+  )
+}
+
+/** Applies every filter except the search, which only dims. */
+export function filterResources(nodes: ResourceNode[], filters: ResourceFilters) {
+  return nodes.filter(
+    (node) =>
+      (filters.kinds.length === 0 || filters.kinds.includes(node.kind)) &&
+      (!filters.health || resourceHealthLabel(node) === filters.health) &&
+      (!filters.sync || resourceSyncLabel(node) === filters.sync) &&
+      !(filters.hideReplicaSetsAndPods && churnKinds.has(normalizedKind(node.kind))),
+  )
+}
+
+export function matchesResourceSearch(node: ResourceNode, query: string) {
+  const needle = query.trim().toLowerCase()
+  if (!needle) return true
+  return node.name.toLowerCase().includes(needle) || node.kind.toLowerCase().includes(needle)
+}
+
+/** Counts per label, e.g. how many resources are Degraded. */
+export function countBy(nodes: ResourceNode[], label: (node: ResourceNode) => string) {
+  const counts = new Map<string, number>()
+  for (const node of nodes) {
+    const key = label(node)
+    if (key) counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  return counts
+}
+
+// Argo CD's per-node info rows carry the reason a Pod is unhealthy, e.g.
+// "Status Reason: CrashLoopBackOff".
+const reasonRows = new Set(['status reason', 'reason', 'message'])
+
+/**
+ * The line a card shows under its name when something needs attention: the
+ * canonical health label, plus the reason when Argo CD reports one. Healthy,
+ * suspended, and unknown resources get none, so the line itself is a signal.
+ */
+export function resourceStatusMessage(node: ResourceNode) {
+  const meta = statusMeta('health', node.healthStatus)
+  if (meta.tone !== 'err' && meta.tone !== 'warn' && !meta.inFlight) return ''
+  const reason = node.info?.find((row) => reasonRows.has(row.name.toLowerCase()))?.value
+  return reason ? `${meta.label} · ${reason}` : meta.label
 }
 
 /* Sorting for the list view ------------------------------------------- */

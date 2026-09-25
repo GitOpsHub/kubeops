@@ -23,6 +23,7 @@ import {
   CopyIcon,
   DownloadIcon,
   ExitFullscreenIcon,
+  FilterIcon,
   FullscreenIcon,
   JumpToLatestIcon,
   PauseIcon,
@@ -45,7 +46,10 @@ import {
   formatLogTime,
   levelCounts,
   logFileName,
+  maxPodLabelLength,
   podHue,
+  podNamePrefix,
+  shortPodName,
   virtualizeThreshold,
   type MatchRange,
 } from './log-format'
@@ -156,7 +160,7 @@ type RowProps = {
   index: number
   showTimestamps: boolean
   showPods: boolean
-  /** Stripped from pod names: every pod of a workload starts with it. */
+  /** Stripped from pod names: every pod on screen starts with it. */
   podPrefix: string
   ranges?: MatchRange[]
   /** Start offset of the active match when it is on this row, else -1. */
@@ -173,10 +177,7 @@ function LogRow({
   activeStart,
 }: RowProps) {
   const pod = line.podName ?? ''
-  const shortPod =
-    podPrefix && pod.startsWith(podPrefix) && pod.length > podPrefix.length
-      ? pod.slice(podPrefix.length)
-      : pod
+  const shortPod = shortPodName(pod, podPrefix)
   return (
     <>
       <span className="log-ln" aria-hidden="true">
@@ -294,6 +295,18 @@ export function LogViewer({
     [lines, levels],
   )
   const counts = useMemo(() => levelCounts(lines), [lines])
+  const pods = useMemo(
+    () => (showPods ? [...new Set(lines.map((line) => line.podName ?? ''))] : []),
+    [lines, showPods],
+  )
+  const podPrefix = podNamePrefix(pods, multiPod ? `${name}-` : '')
+  // Sized to the longest label, so two pods of a StatefulSet do not sit in a
+  // column built for ReplicaSet hashes; +2ch leaves room for the swatch.
+  const podWidth =
+    Math.min(
+      maxPodLabelLength,
+      Math.max(4, ...pods.map((pod) => shortPodName(pod, podPrefix).length)),
+    ) + 2
   const matcher = useMemo(
     () => buildMatcher(query, { caseSensitive, regex }),
     [query, caseSensitive, regex],
@@ -440,7 +453,7 @@ export function LogViewer({
         index={index}
         showTimestamps={showTimestamps}
         showPods={showPods}
-        podPrefix={multiPod ? `${name}-` : ''}
+        podPrefix={podPrefix}
         ranges={rangesByRow.get(index)}
         activeStart={active && active.row === index ? active.start : -1}
       />
@@ -557,78 +570,32 @@ export function LogViewer({
                 ))}
               </select>
             </label>
-            <label className="log-field">
-              <span>Lines</span>
-              <select
-                className="select"
-                value={tailLines}
-                onChange={(event) => setTailLines(Number(event.target.value))}
+            {/* Lines and Previous wrap as one unit, so Previous is never the
+                lone control a narrow row strands. */}
+            <span className="log-field-pair">
+              <label className="log-field">
+                <span>Lines</span>
+                <select
+                  className="select"
+                  value={tailLines}
+                  onChange={(event) => setTailLines(Number(event.target.value))}
+                >
+                  {tailOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {option.toLocaleString()}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <ToolToggle
+                pressed={previous}
+                onChange={setPrevious}
+                label="Previous container"
+                title="Logs from the previous, crashed container instance"
               >
-                {tailOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option.toLocaleString()}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <ToolToggle
-              pressed={previous}
-              onChange={setPrevious}
-              label="Previous container"
-              title="Logs from the previous, crashed container instance"
-            >
-              Previous
-            </ToolToggle>
-          </div>
-
-          <div className="log-toolbar-actions">
-            <ToolToggle
-              pressed={paused}
-              onChange={setPaused}
-              label={paused ? 'Resume stream' : 'Pause stream'}
-              icon={paused ? <PlayIcon /> : <PauseIcon />}
-            />
-            <Button
-              size="sm"
-              variant="ghost"
-              iconOnly
-              icon={<DownloadIcon />}
-              aria-label="Download logs"
-              title="Download logs"
-              disabled={lines.length === 0}
-              onClick={download}
-            />
-            <Button
-              size="sm"
-              variant="ghost"
-              iconOnly
-              icon={<CopyIcon />}
-              aria-label="Copy visible lines"
-              title="Copy visible lines"
-              disabled={visible.length === 0}
-              onClick={() => void copyVisible()}
-            />
-            <Button
-              size="sm"
-              variant="ghost"
-              iconOnly
-              icon={<ClearIcon />}
-              aria-label="Clear"
-              title="Clear the screen; the stream keeps running"
-              disabled={lines.length === 0}
-              onClick={clearLines}
-            />
-            {canFullscreen && (
-              <Button
-                size="sm"
-                variant="ghost"
-                iconOnly
-                icon={fullscreen ? <ExitFullscreenIcon /> : <FullscreenIcon />}
-                aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-                title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-                onClick={toggleFullscreen}
-              />
-            )}
+                Previous
+              </ToolToggle>
+            </span>
           </div>
         </div>
 
@@ -700,10 +667,9 @@ export function LogViewer({
                 if (!next) setAppliedFilter('')
               }}
               label="Server filter"
-              title="Only stream lines containing the search text (plain text, not a pattern)"
-            >
-              Server filter
-            </ToolToggle>
+              icon={<FilterIcon />}
+              title="Server filter: only stream lines containing the search text (plain text, not a pattern)"
+            />
           </div>
 
           <div className="log-levels" role="group" aria-label="Levels">
@@ -724,23 +690,82 @@ export function LogViewer({
             ))}
           </div>
 
-          <div className="log-toolbar-actions" role="group" aria-label="Display">
-            <ToolToggle
-              pressed={follow}
-              onChange={(next) => (next ? jumpToLatest() : stopFollowing())}
-              label="Follow"
-              icon={<JumpToLatestIcon />}
-              title="Keep the newest line in view"
-            >
-              Follow
-            </ToolToggle>
-            <ToolToggle pressed={wrap} onChange={setWrap} label="Wrap lines" icon={<WrapIcon />} />
-            <ToolToggle pressed={showTimestamps} onChange={setShowTimestamps} label="Timestamps">
-              Time
-            </ToolToggle>
-            <ToolToggle pressed={showPods} onChange={setShowPods} label="Pod column">
-              Pod
-            </ToolToggle>
+          {/* Reading and stream controls share one cluster at the end of the
+              second row, so the toolbar stays two rows on a wide screen. */}
+          <div className="log-toolbar-actions">
+            <div className="log-tool-group" role="group" aria-label="Display">
+              <ToolToggle
+                pressed={follow}
+                onChange={(next) => (next ? jumpToLatest() : stopFollowing())}
+                label="Follow"
+                icon={<JumpToLatestIcon />}
+                title="Keep the newest line in view"
+              >
+                Follow
+              </ToolToggle>
+              <ToolToggle
+                pressed={wrap}
+                onChange={setWrap}
+                label="Wrap lines"
+                icon={<WrapIcon />}
+              />
+              <ToolToggle pressed={showTimestamps} onChange={setShowTimestamps} label="Timestamps">
+                Time
+              </ToolToggle>
+              <ToolToggle pressed={showPods} onChange={setShowPods} label="Pod column">
+                Pod
+              </ToolToggle>
+            </div>
+            <span className="log-toolbar-divider" aria-hidden="true" />
+            <div className="log-tool-group" role="group" aria-label="Stream">
+              <ToolToggle
+                pressed={paused}
+                onChange={setPaused}
+                label={paused ? 'Resume stream' : 'Pause stream'}
+                icon={paused ? <PlayIcon /> : <PauseIcon />}
+              />
+              <Button
+                size="sm"
+                variant="ghost"
+                iconOnly
+                icon={<DownloadIcon />}
+                aria-label="Download logs"
+                title="Download logs"
+                disabled={lines.length === 0}
+                onClick={download}
+              />
+              <Button
+                size="sm"
+                variant="ghost"
+                iconOnly
+                icon={<CopyIcon />}
+                aria-label="Copy visible lines"
+                title="Copy visible lines"
+                disabled={visible.length === 0}
+                onClick={() => void copyVisible()}
+              />
+              <Button
+                size="sm"
+                variant="ghost"
+                iconOnly
+                icon={<ClearIcon />}
+                aria-label="Clear"
+                title="Clear the screen; the stream keeps running"
+                disabled={lines.length === 0}
+                onClick={clearLines}
+              />
+              {canFullscreen && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  iconOnly
+                  icon={fullscreen ? <ExitFullscreenIcon /> : <FullscreenIcon />}
+                  aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+                  title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+                  onClick={toggleFullscreen}
+                />
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -755,6 +780,7 @@ export function LogViewer({
             role="log"
             aria-live="off"
             aria-label={`Live logs for ${name}`}
+            style={showPods ? ({ '--pod-width': `${podWidth}ch` } as object) : undefined}
             tabIndex={0}
             onScroll={onScroll}
             onKeyDown={onLogKeyDown}
