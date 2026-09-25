@@ -12,7 +12,7 @@ import { Dialog, DialogClose } from '../../components/ui/Dialog'
 import { DialogFooter, DialogHeader } from '../../components/ui/DialogParts'
 import { Skeleton } from '../../components/ui/Skeleton'
 import { formatResourceManifest } from '../../lib/resource-manifest'
-import { ManifestCode } from './ManifestCode'
+import { ManifestCode } from '../../components/ManifestCode'
 import { toRef } from './resource-ref'
 
 type Props = {

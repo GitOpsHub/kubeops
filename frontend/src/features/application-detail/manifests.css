@@ -117,6 +117,10 @@
   background: var(--surface);
 }
 
+.manifest-diff--single {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
 .manifest-diff-columns {
   display: grid;
   grid-template-columns: 1fr 1fr;
