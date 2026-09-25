@@ -3,8 +3,8 @@
  * talks to the `/argo` proxy for these: every call goes through `/api`, which
  * validates input and never passes Argo's own error bodies through.
  */
-import { apiUrl, ensureOk, request } from './client'
-import type { PodLogEntry, ResourceRef } from './onboarding'
+import { apiUrl, ensureOk, request, requestVoid } from './client'
+import type { ApplicationOnboarding, PodLogEntry, ResourceRef } from './onboarding'
 
 export type { PodLogEntry } from './onboarding'
 
@@ -139,6 +139,225 @@ export async function getResourceContainers(
   })
   const response = await request<{ items: ResourceContainer[] }>(
     `${targetPath(onboardingId, targetId)}/resources/containers?${params}`,
+    { signal },
+  )
+  return response.items ?? []
+}
+
+// Sync operations, events, and values history ----------------------------
+
+export type ArgoInitiator = { username?: string; automated: boolean }
+
+/** One object's result within a sync operation, including hooks. */
+export type ArgoOperationResource = {
+  group: string
+  version: string
+  kind: string
+  namespace: string
+  name: string
+  /** Synced, SyncFailed, Pruned, PruneSkipped, OutOfSync… */
+  status: string
+  message?: string
+  /** PreSync, Sync, PostSync, SyncFail, Skip — set on hooks only. */
+  hookType?: string
+  /** Running, Succeeded, Failed, Error, Terminating — set on hooks only. */
+  hookPhase?: string
+  /** PreSync, Sync, PostSync, SyncFail: the wave the result belongs to. */
+  syncPhase?: string
+}
+
+export type ArgoOperationPhase = 'Running' | 'Terminating' | 'Succeeded' | 'Failed' | 'Error'
+
+export type ArgoOperation = {
+  phase: ArgoOperationPhase
+  message?: string
+  startedAt: string | null
+  finishedAt: string | null
+  retryCount: number
+  initiatedBy: ArgoInitiator
+  dryRun: boolean
+  prune: boolean
+  /** Multi-source apps report `[chartVersion, valuesRepoSha]`. */
+  revisions: string[]
+  resources: ArgoOperationResource[]
+}
+
+export type ArgoHistoryEntry = {
+  id: number
+  revisions: string[]
+  deployStartedAt: string | null
+  deployedAt: string | null
+  initiatedBy: ArgoInitiator
+}
+
+export type ArgoCondition = { type: string; message: string; lastTransitionTime: string | null }
+
+/** An Argo CD Application's live state on one target. Arrays are never null. */
+export type ArgoAppStatus = {
+  sync: { status: string; revisions: string[] }
+  health: { status: string; message?: string }
+  operation: ArgoOperation | null
+  /** Newest first. */
+  history: ArgoHistoryEntry[]
+  conditions: ArgoCondition[]
+  images: string[]
+  reconciledAt: string | null
+}
+
+export function getTargetArgoStatus(onboardingId: string, targetId: string, signal?: AbortSignal) {
+  return request<ArgoAppStatus>(`${targetPath(onboardingId, targetId)}/argo`, { signal })
+}
+
+/** Stops the running sync. Rejects with a 409 when nothing is running. */
+export function terminateTargetOperation(onboardingId: string, targetId: string) {
+  return requestVoid(`${targetPath(onboardingId, targetId)}/operation`, { method: 'DELETE' })
+}
+
+export type KubeEvent = {
+  type: 'Normal' | 'Warning' | string
+  reason: string
+  message: string
+  count: number
+  firstSeen: string | null
+  lastSeen: string | null
+  source?: string
+  object: { kind: string; name: string; namespace?: string; uid?: string }
+}
+
+/** Narrows events to one object; with neither name nor uid, the Application's own. */
+export type EventFilter = { kind?: string; name?: string; namespace?: string; uid?: string }
+
+export async function getTargetEvents(
+  onboardingId: string,
+  targetId: string,
+  filter: EventFilter = {},
+  signal?: AbortSignal,
+) {
+  const params = new URLSearchParams()
+  for (const key of ['kind', 'name', 'namespace', 'uid'] as const) {
+    if (filter[key]) params.set(key, filter[key] as string)
+  }
+  const query = params.toString() ? `?${params}` : ''
+  const response = await request<{ items: KubeEvent[] }>(
+    `${targetPath(onboardingId, targetId)}/events${query}`,
+    { signal },
+  )
+  return response.items ?? []
+}
+
+export type SyncOptions = {
+  /** Omitted or empty syncs every target. */
+  targetIds?: string[]
+  prune: boolean
+  dryRun: boolean
+  force: boolean
+  applyOutOfSyncOnly: boolean
+}
+
+export const defaultSyncOptions: SyncOptions = {
+  prune: true,
+  dryRun: false,
+  force: false,
+  applyOutOfSyncOnly: false,
+}
+
+/**
+ * The request body for a sync, or null when the options are the server's
+ * defaults. Sending no body then keeps a plain Deploy byte-for-byte the
+ * request it has always been, which older servers accept too.
+ */
+export function syncRequestBody(options: SyncOptions) {
+  const targetIds = options.targetIds?.filter(Boolean) ?? []
+  const isDefault =
+    targetIds.length === 0 &&
+    options.prune === defaultSyncOptions.prune &&
+    !options.dryRun &&
+    !options.force &&
+    !options.applyOutOfSyncOnly
+  if (isDefault) return null
+  return {
+    ...(targetIds.length > 0 ? { targetIds } : {}),
+    prune: options.prune,
+    dryRun: options.dryRun,
+    force: options.force,
+    applyOutOfSyncOnly: options.applyOutOfSyncOnly,
+  }
+}
+
+export function syncApplication(id: string, options: SyncOptions = defaultSyncOptions) {
+  const body = syncRequestBody(options)
+  const path = `/application-onboardings/${encodeURIComponent(id)}/sync`
+  if (!body) return request<ApplicationOnboarding>(path, { method: 'POST' })
+  return request<ApplicationOnboarding>(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+export type ValuesRevision = {
+  sha: string
+  /** The commit subject. */
+  message: string
+  author: string
+  committedAt: string | null
+  url: string
+  /** The newest commit touching the values file; only ever the first item. */
+  current: boolean
+}
+
+export type ValuesRevisionList = { path: string; branch: string; items: ValuesRevision[] }
+
+/** Commits touching this release's values file, newest first. */
+export function getValuesRevisions(onboardingId: string, limit = 20, signal?: AbortSignal) {
+  return request<ValuesRevisionList>(
+    `/application-onboardings/${encodeURIComponent(onboardingId)}/revisions?limit=${limit}`,
+    { signal },
+  )
+}
+
+export function getRevisionValues(onboardingId: string, sha: string, signal?: AbortSignal) {
+  return request<{ sha: string; path: string; valuesYaml: string }>(
+    `/application-onboardings/${encodeURIComponent(onboardingId)}` +
+      `/revisions/${encodeURIComponent(sha)}/values`,
+    { signal },
+  )
+}
+
+/** Commits the values file as it was at `commitSha`, then syncs. */
+export function rollbackApplication(onboardingId: string, commitSha: string) {
+  return request<ApplicationOnboarding>(
+    `/application-onboardings/${encodeURIComponent(onboardingId)}/rollback`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ commitSha }),
+    },
+  )
+}
+
+export type ApplicationOperationKind =
+  'sync' | 'dry-run' | 'rollback' | 'terminate' | 'scale' | 'offboard'
+
+/** An audit entry for a request KubeOps accepted (or, for some, rejected). */
+export type ApplicationOperation = {
+  id: string
+  onboardingId: string
+  targetId: string | null
+  kind: ApplicationOperationKind
+  params: Record<string, unknown>
+  /** Whether KubeOps's request was accepted, not how the deployment went. */
+  result: 'succeeded' | 'failed'
+  createdAt: string
+}
+
+export async function getApplicationOperations(
+  onboardingId: string,
+  limit = 50,
+  signal?: AbortSignal,
+) {
+  const response = await request<{ items: ApplicationOperation[] }>(
+    `/application-onboardings/${encodeURIComponent(onboardingId)}/operations?limit=${limit}`,
     { signal },
   )
   return response.items ?? []

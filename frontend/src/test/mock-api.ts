@@ -1,4 +1,11 @@
 import { vi } from 'vitest'
+import type {
+  ApplicationOperation,
+  ArgoAppStatus,
+  ArgoOperation,
+  KubeEvent,
+  ValuesRevision,
+} from '../api/argo'
 import type { CloudSource, Cluster, SyncRun } from '../api/inventory'
 import type {
   ApplicationDeployment,
@@ -79,6 +86,21 @@ export type MockState = {
   syncedSources: string[]
   /** Makes `POST /cloud-sources/:id/sync` fail with this message. */
   syncError: string | null
+  // Argo console. Statuses are keyed by target ID; a target without one
+  // reports its record's sync and health with no operation.
+  argoStatuses: Record<string, ArgoAppStatus>
+  targetEvents: Record<string, KubeEvent[]>
+  /** Commits for the values file; `revisionsStatus` other than 200 fails the list. */
+  revisions: ValuesRevision[]
+  revisionsStatus: number
+  /** Values file content by commit SHA. */
+  revisionValues: Record<string, string>
+  operations: ApplicationOperation[]
+  consoleMutations: boolean
+  /** Each sync request's parsed body, or null when it was sent without one. */
+  syncRequests: (Record<string, unknown> | null)[]
+  terminatedTargets: string[]
+  rollbacks: string[]
 }
 
 export function buildResource(overrides: Partial<ResourceNode> = {}): ResourceNode {
@@ -116,6 +138,16 @@ export function mockAPI(initial: Partial<MockState> = {}) {
     syncRuns: initial.syncRuns ?? [buildSyncRun()],
     syncedSources: [],
     syncError: initial.syncError ?? null,
+    argoStatuses: initial.argoStatuses ?? {},
+    targetEvents: initial.targetEvents ?? {},
+    revisions: initial.revisions ?? [],
+    revisionsStatus: initial.revisionsStatus ?? 200,
+    revisionValues: initial.revisionValues ?? {},
+    operations: initial.operations ?? [],
+    consoleMutations: initial.consoleMutations ?? true,
+    syncRequests: [],
+    terminatedTargets: [],
+    rollbacks: [],
   }
 
   const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (request, init) => {
@@ -217,7 +249,7 @@ export function mockAPI(initial: Partial<MockState> = {}) {
         valuesRevision: 'main',
         environments: ['dev', 'qa', 'prod'],
         regions: ['us-east-1', 'us-east-2'],
-        capabilities: { consoleMutations: true },
+        capabilities: { consoleMutations: state.consoleMutations },
       })
     }
 
@@ -241,6 +273,88 @@ export function mockAPI(initial: Partial<MockState> = {}) {
         page,
         pageSize,
       })
+    }
+
+    // Argo console: per-target status, events, and terminate; per-release
+    // values history, rollback, and the operations audit. Mirrors the
+    // backend's contract closely enough for the UI's branches (409, 422).
+    const consoleTargetMatch = path.match(
+      /^\/application-onboardings\/([^/]+)\/targets\/([^/]+)\/(argo|events|operation)$/,
+    )
+    if (consoleTargetMatch) {
+      const [, , rawTargetId, endpoint] = consoleTargetMatch
+      const targetId = decodeURIComponent(rawTargetId)
+      const target = state.applications
+        .flatMap((item) => item.targets)
+        .find((item) => item.id === targetId)
+      if (!target) return Response.json({ error: 'deployment target not found' }, { status: 404 })
+      if (endpoint === 'argo') {
+        return Response.json(state.argoStatuses[targetId] ?? buildArgoStatus(target))
+      }
+      if (endpoint === 'events') {
+        const uid = query.get('uid')
+        const kind = query.get('kind')
+        const name = query.get('name')
+        return Response.json({
+          items: (state.targetEvents[targetId] ?? []).filter(
+            (event) =>
+              (!uid || event.object.uid === uid) &&
+              (!kind || event.object.kind === kind) &&
+              (!name || event.object.name === name),
+          ),
+        })
+      }
+      if (init?.method === 'DELETE') {
+        if (!state.consoleMutations) {
+          return Response.json({ error: 'console mutations are disabled' }, { status: 403 })
+        }
+        const running = state.argoStatuses[targetId]?.operation
+        if (!running || !['Running', 'Terminating'].includes(running.phase)) {
+          return Response.json({ error: 'no sync operation is in progress' }, { status: 409 })
+        }
+        state.terminatedTargets.push(targetId)
+        running.phase = 'Terminating'
+        return new Response(null, { status: 204 })
+      }
+    }
+    const consoleReleaseMatch = path.match(
+      /^\/application-onboardings\/([^/]+)\/(revisions|rollback|operations)(?:\/([^/]+)\/values)?$/,
+    )
+    if (consoleReleaseMatch) {
+      const [, rawId, endpoint, sha] = consoleReleaseMatch
+      const found = state.applications.find((item) => item.id === decodeURIComponent(rawId))
+      if (endpoint === 'operations') {
+        return Response.json({ items: found ? state.operations : [] })
+      }
+      if (!found)
+        return Response.json({ error: 'application onboarding not found' }, { status: 404 })
+      if (state.revisionsStatus !== 200) {
+        return Response.json(
+          { error: 'the values repository is not configured' },
+          { status: state.revisionsStatus },
+        )
+      }
+      const valuesPath = `${found.environment}/${found.region}/values.yaml`
+      if (endpoint === 'revisions' && sha) {
+        const valuesYaml = state.revisionValues[sha]
+        if (valuesYaml === undefined) {
+          return Response.json({ error: 'no values file at that commit' }, { status: 404 })
+        }
+        return Response.json({ sha, path: valuesPath, valuesYaml })
+      }
+      if (endpoint === 'revisions') {
+        return Response.json({ path: valuesPath, branch: 'main', items: state.revisions })
+      }
+      if (init?.method === 'POST') {
+        if (!state.consoleMutations) {
+          return Response.json({ error: 'console mutations are disabled' }, { status: 403 })
+        }
+        const { commitSha } = JSON.parse(String(init.body)) as { commitSha: string }
+        state.rollbacks.push(commitSha)
+        found.valuesCommitSha = `rollback-of-${commitSha}`
+        found.status = 'progressing'
+        return Response.json(found)
+      }
     }
 
     const applicationScaleMatch = path.match(/^\/application-onboardings\/([^/]+)\/scale$/)
@@ -270,6 +384,12 @@ export function mockAPI(initial: Partial<MockState> = {}) {
         return Response.json({ error: 'application onboarding not found' }, { status: 404 })
       }
       const offboard = lifecycleMatch[2] === 'offboard'
+      if (!offboard) {
+        // Sync takes an optional options body; a dry run changes nothing.
+        const body = init.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null
+        state.syncRequests.push(body)
+        if (body?.dryRun) return Response.json(found)
+      }
       found.status = offboard ? 'offboarded' : 'progressing'
       found.targets = found.targets.map((target) => ({
         ...target,
@@ -434,6 +554,64 @@ const clusterSortKeys: Record<string, (cluster: Cluster) => string | number | nu
   version: (cluster) => cluster.kubernetesVersion || null,
   nodes: (cluster) => cluster.nodeCount,
   lastSeen: (cluster) => cluster.lastSeenAt,
+}
+
+/** A target's Argo CD state as `GET …/targets/:id/argo` reports it. */
+export function buildArgoStatus(
+  target: Pick<ApplicationDeployment, 'syncStatus' | 'healthStatus'> = buildTarget(),
+  overrides: Partial<ArgoAppStatus> = {},
+): ArgoAppStatus {
+  return {
+    sync: { status: target.syncStatus, revisions: ['1.2.3', 'commit-1'] },
+    health: { status: target.healthStatus },
+    operation: null,
+    history: [],
+    conditions: [],
+    images: [],
+    reconciledAt: timestamp,
+    ...overrides,
+  }
+}
+
+export function buildOperation(overrides: Partial<ArgoOperation> = {}): ArgoOperation {
+  return {
+    phase: 'Running',
+    message: 'waiting for completion of hook batch/Job/migrate',
+    startedAt: timestamp,
+    finishedAt: null,
+    retryCount: 0,
+    initiatedBy: { username: 'kubeops', automated: false },
+    dryRun: false,
+    prune: true,
+    revisions: ['1.2.3', 'abc1234def5678'],
+    resources: [],
+    ...overrides,
+  }
+}
+
+export function buildEvent(overrides: Partial<KubeEvent> = {}): KubeEvent {
+  return {
+    type: 'Normal',
+    reason: 'Scheduled',
+    message: 'Successfully assigned payments/payments-api-abc to node-1',
+    count: 1,
+    firstSeen: timestamp,
+    lastSeen: timestamp,
+    object: { kind: 'Pod', name: 'payments-api-abc', namespace: 'payments', uid: 'uid-pod' },
+    ...overrides,
+  }
+}
+
+export function buildRevision(overrides: Partial<ValuesRevision> = {}): ValuesRevision {
+  return {
+    sha: 'abc1234def5678',
+    message: 'Scale payments-api to 3 pods',
+    author: 'kubeops',
+    committedAt: timestamp,
+    url: 'https://github.com/GitOpsHub/payments-api/commit/abc1234def5678',
+    current: false,
+    ...overrides,
+  }
 }
 
 export function buildSyncRun(overrides: Partial<SyncRun> = {}): SyncRun {
