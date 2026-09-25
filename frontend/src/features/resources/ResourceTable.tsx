@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { isLoggableKind } from '../../api/argo'
 import type { ResourceNode } from '../../api/onboarding'
 import { StatusBadge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
@@ -10,6 +11,8 @@ type Props = {
   nodes: ResourceNode[]
   onSelect: (node: ResourceNode) => void
   onDelete: (node: ResourceNode) => void
+  /** Opens logs; offered only on kinds that have them (pods and workloads). */
+  onLogs?: (node: ResourceNode) => void
 }
 
 /**
@@ -18,7 +21,7 @@ type Props = {
  * deliberately dropped here rather than half-represented. Rows open the YAML
  * on click, Enter, or Space.
  */
-export function ResourceTable({ nodes, onSelect, onDelete }: Props) {
+export function ResourceTable({ nodes, onSelect, onDelete, onLogs }: Props) {
   const [column, setColumn] = useState<SortColumn>('kind')
   const [direction, setDirection] = useState<SortDirection>('asc')
   const [kind, setKind] = useState('')
@@ -88,18 +91,33 @@ export function ResourceTable({ nodes, onSelect, onDelete }: Props) {
       headerLabel: 'Row actions',
       align: 'end',
       cell: (node) => (
-        <Button
-          size="sm"
-          variant="ghost"
-          className="resource-delete"
-          aria-label={`Delete ${node.kind} ${node.name}`}
-          onClick={(event) => {
-            event.stopPropagation()
-            onDelete(node)
-          }}
-        >
-          Delete
-        </Button>
+        <span className="resource-row-actions">
+          {onLogs && isLoggableKind(node.kind) && (
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label={`Logs for ${node.kind} ${node.name}`}
+              onClick={(event) => {
+                event.stopPropagation()
+                onLogs(node)
+              }}
+            >
+              Logs
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="ghost"
+            className="resource-delete"
+            aria-label={`Delete ${node.kind} ${node.name}`}
+            onClick={(event) => {
+              event.stopPropagation()
+              onDelete(node)
+            }}
+          >
+            Delete
+          </Button>
+        </span>
       ),
     },
   ]

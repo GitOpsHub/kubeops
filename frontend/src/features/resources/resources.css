@@ -45,10 +45,9 @@
   background: var(--err-soft);
 }
 
-/* Code panes: live YAML and pod logs. Dark in both themes, like a terminal. */
+/* Code panes: live YAML. Dark in both themes, like a terminal. */
 
-.code-pane,
-.pod-logs-output {
+.code-pane {
   width: 100%;
   margin: 0;
   padding: var(--space-4) var(--space-5);
@@ -126,67 +125,8 @@
   justify-content: space-between;
 }
 
-/* Pod logs ------------------------------------------------------------------ */
-
-.pod-logs-modal .dialog-header {
-  align-items: center;
-}
-
-.pod-logs-state {
+.resource-row-actions {
   display: inline-flex;
-  flex: 0 0 auto;
-  gap: var(--space-2);
-  align-items: center;
-  height: 26px;
-  padding: 0 var(--space-3);
-  color: var(--tone-fg);
-  background: var(--tone-soft);
-  border-radius: var(--radius-pill);
-  font-size: var(--text-2xs);
-  font-weight: 600;
-}
-
-.pod-logs-state i {
-  width: 7px;
-  height: 7px;
-  background: var(--tone-solid);
-  border-radius: 50%;
-}
-
-.pod-logs-state--live i {
-  animation: pulse 1.6s ease-in-out infinite;
-}
-
-.pod-logs-output-wrap {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-  background: var(--code-bg);
-}
-
-.pod-logs-output {
-  height: 100%;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.pod-logs-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  display: grid;
-  place-items: center;
-  padding: var(--space-5);
-  color: var(--code-muted);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  text-align: center;
-}
-
-.pod-logs-overlay--error {
-  color: var(--code-err);
-}
-
-.pod-logs-namespace {
-  padding: 0 var(--space-5) var(--space-3);
+  gap: var(--space-1);
+  justify-content: flex-end;
 }

@@ -25,6 +25,9 @@ const ApplicationDetailPage = lazy(() =>
     default: module.ApplicationDetailPage,
   })),
 )
+const LogsPage = lazy(() =>
+  import('./features/log-viewer/LogsPage').then((module) => ({ default: module.LogsPage })),
+)
 const OnboardingPage = lazy(() =>
   import('./features/onboarding/OnboardingPage').then((module) => ({
     default: module.OnboardingPage,
@@ -44,6 +47,7 @@ function App() {
           <Route path="applications" element={<ApplicationsPage />} />
           <Route path="applications/new" element={<OnboardingPage />} />
           <Route path="applications/:id" element={<ApplicationDetailPage />} />
+          <Route path="applications/:id/logs" element={<LogsPage />} />
           <Route path="*" element={<NotFound />} />
         </Route>
       </Routes>

@@ -12,11 +12,11 @@ import { RefreshIndicator } from '../../components/ui/RefreshIndicator'
 import { SegmentedControl } from '../../components/ui/SegmentedControl'
 import { Skeleton } from '../../components/ui/Skeleton'
 import { useToast } from '../../components/ui/toast-context'
+import { LogsSheet } from '../log-viewer/LogsSheet'
 import { usePolledResource } from '../../hooks/usePolledResource'
 import { useStoredPreference } from '../../hooks/useStoredPreference'
 import { buildResourceTree } from '../../lib/resource-tree'
 import { DeleteResourceDialog } from './DeleteResourceDialog'
-import { PodLogsModal } from './PodLogsModal'
 import { ResourceGraph } from './ResourceGraph'
 import { ResourceManifestModal } from './ResourceManifestModal'
 import { ResourceTable } from './ResourceTable'
@@ -135,7 +135,12 @@ export function ResourceExplorer({ onboardingId, target }: Props) {
           label={`Resources on ${target.clusterName}`}
         />
       ) : (
-        <ResourceTable nodes={ordered} onSelect={setSelected} onDelete={setPendingDelete} />
+        <ResourceTable
+          nodes={ordered}
+          onSelect={setSelected}
+          onDelete={setPendingDelete}
+          onLogs={setLogNode}
+        />
       )}
 
       {selected && (
@@ -152,10 +157,11 @@ export function ResourceExplorer({ onboardingId, target }: Props) {
       )}
 
       {logNode && (
-        <PodLogsModal
-          node={logNode}
+        <LogsSheet
           onboardingId={onboardingId}
           targetId={target.id}
+          clusterName={target.clusterName}
+          resource={toRef(logNode)}
           onClose={() => setLogNode(null)}
         />
       )}
