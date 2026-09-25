@@ -85,6 +85,75 @@ describe('useLogStream', () => {
     expect(result.current.status).toBe('live')
   })
 
+  it('does not replay cleared lines when it resumes', async () => {
+    const { streams, requests } = mockLogsFetch()
+    const { result } = renderHook(() => useLogStream(base))
+    await act(settle)
+    await act(async () => {
+      streams[0].push(
+        { timestamp: at(1), podName: 'a', content: 'old' },
+        { timestamp: at(1), podName: 'a', content: 'older' },
+      )
+      await settle()
+    })
+    await waitFor(() => expect(result.current.lines).toHaveLength(2))
+    act(() => result.current.clear())
+    expect(result.current.lines).toHaveLength(0)
+
+    await act(async () => {
+      streams[0].close()
+      await settle()
+    })
+    await waitFor(() => expect(requests).toHaveLength(2))
+    await act(async () => {
+      streams[1].push(
+        { timestamp: at(1), podName: 'a', content: 'old' },
+        { timestamp: at(1), podName: 'a', content: 'older' },
+        { timestamp: at(2), podName: 'a', content: 'new' },
+      )
+      await settle()
+    })
+    await waitFor(() => expect(result.current.lines.map((line) => line.content)).toEqual(['new']))
+  })
+
+  it('keeps untimed lines a resumed stream repeats rather than dropping them', async () => {
+    const { streams, requests } = mockLogsFetch()
+    const { result } = renderHook(() => useLogStream(base))
+    await act(settle)
+    await act(async () => {
+      streams[0].push({ timestamp: at(1), podName: 'a', content: 'start' }, { content: 'ok' })
+      streams[0].close()
+      await settle()
+    })
+    await waitFor(() => expect(requests).toHaveLength(2))
+    await act(async () => {
+      // A heartbeat without a timestamp cannot be told apart from the last one.
+      streams[1].push({ timestamp: at(1), podName: 'a', content: 'start' }, { content: 'ok' })
+      await settle()
+    })
+    await waitFor(() =>
+      expect(result.current.lines.map((line) => line.content)).toEqual(['start', 'ok', 'ok']),
+    )
+  })
+
+  it('is idle while no resource is picked', async () => {
+    const { requests } = mockLogsFetch()
+    const { result, rerender } = renderHook((props: LogStreamParams) => useLogStream(props), {
+      initialProps: { ...base, resource: null } as LogStreamParams,
+    })
+    await act(settle)
+    expect(result.current.status).toBe('idle')
+    expect(requests).toHaveLength(0)
+
+    rerender(base)
+    await act(settle)
+    expect(result.current.status).toBe('live')
+
+    rerender({ ...base, resource: null })
+    await act(settle)
+    expect(result.current.status).toBe('idle')
+  })
+
   it('reports reconnecting between streams', async () => {
     const { streams, requests } = mockLogsFetch()
     const { result } = renderHook(() => useLogStream({ ...base, reconnectDelaysMs: [60_000] }))
