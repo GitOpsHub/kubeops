@@ -1,88 +1,111 @@
-import { useCallback, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from 'react'
 import { useNavigate } from 'react-router-dom'
-import { parse } from 'yaml'
-import { errorMessage } from '../../api/client'
+import { ApiError, errorMessage } from '../../api/client'
+import type { Cluster } from '../../api/inventory'
 import {
   createApplicationOnboarding,
   getOnboardingClusters,
   getOnboardingDefaults,
 } from '../../api/onboarding'
 import { ProviderLogo } from '../../components/BrandIcons'
+import { ChevronLeftIcon, ChevronRightIcon, DeployIcon } from '../../components/icons'
 import { Banner } from '../../components/ui/Banner'
-import { StatusBadge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
-import { EmptyState } from '../../components/ui/EmptyState'
+import { Field, Select, TextInput } from '../../components/ui/Field'
+import { KeyValueList } from '../../components/ui/KeyValueList'
 import { PageHeader } from '../../components/ui/PageHeader'
-import { SkeletonRows } from '../../components/ui/Skeleton'
+import { Stepper } from '../../components/ui/Stepper'
+import { useToast } from '../../components/ui/toast-context'
 import { usePolledResource } from '../../hooks/usePolledResource'
 import { plural } from '../../lib/format'
-import { dnsLabel, plannedResources } from './onboarding-plan'
-import '../../components/ui/DataTable.css'
+import { plannedResources } from './onboarding-plan'
+import {
+  clearDraft,
+  clusterInRegion,
+  deploymentScope,
+  emptyDraft,
+  fieldSteps,
+  firstInvalidStep,
+  hasDraftContent,
+  loadDraft,
+  maxNameLength,
+  saveDraft,
+  scopeChoices,
+  serverErrorField,
+  stepIndex,
+  validateStep,
+  wizardSteps,
+  type FieldErrors,
+  type FieldId,
+  type StepId,
+  type WizardDraft,
+} from './onboarding-wizard'
+import { PlanPreview, ResourcePlanTable } from './ResourcePlan'
+import { TargetPicker, targetsErrorId } from './TargetPicker'
+import { ValuesEditor } from './ValuesEditor'
 import './onboarding.css'
 
-const environments = ['dev', 'qa', 'prod']
-const regions = ['us-east-1', 'us-east-2']
-const maxValuesBytes = 256 * 1024
-
-function validateMapping(yamlText: string, label: string) {
-  if (new TextEncoder().encode(yamlText).length > maxValuesBytes) {
-    return `${label} must not exceed 256 KiB.`
-  }
-  try {
-    const values = parse(yamlText)
-    if (values === null || typeof values !== 'object' || Array.isArray(values)) {
-      return `${label} must contain a top-level YAML mapping.`
-    }
-  } catch {
-    return `${label} contains invalid YAML.`
-  }
-  return ''
+// Where focus goes when a field needs attention. Targets has no single
+// control, so its search box is the nearest useful stop.
+const fieldControlIds: Record<FieldId, string> = {
+  name: 'onboarding-name',
+  environment: 'onboarding-environment',
+  region: 'onboarding-region',
+  clusters: 'onboarding-targets-anchor',
+  values: 'onboarding-values',
 }
 
-type StepProps = {
-  index: number
-  id: string
-  title: string
-  description: string
-  complete: boolean
-  children: ReactNode
+const environmentNotes: Record<string, string> = {
+  dev: 'Development: fast iteration, no approval gate.',
+  qa: 'Quality assurance: mirrors production for verification.',
+  prod: 'Production: changes reach customer traffic once synced.',
 }
 
-function Step({ index, id, title, description, complete, children }: StepProps) {
-  return (
-    <section
-      className={complete ? 'onboarding-step is-complete' : 'onboarding-step'}
-      aria-labelledby={id}
-    >
-      <header className="onboarding-step-header">
-        <span className="onboarding-step-index" aria-hidden="true">
-          {complete ? '✓' : index}
-        </span>
-        <div>
-          <h2 id={id}>{title}</h2>
-          <p>{description}</p>
-        </div>
-      </header>
-      <div className="onboarding-step-body">{children}</div>
-    </section>
-  )
+function initialDraft() {
+  const stored = loadDraft()
+  if (!stored) return { draft: emptyDraft(), restored: false }
+  // Resume where the operator was, but never past a step that is not valid.
+  const invalid = firstInvalidStep(stored)
+  const step = invalid && stepIndex(invalid) < stepIndex(stored.step) ? invalid : stored.step
+  return { draft: { ...stored, step }, restored: hasDraftContent(stored) }
+}
+
+/** The backend's messages start lower-case; a field error reads as a sentence. */
+function sentence(message: string) {
+  const trimmed = message.trim()
+  const capitalised = trimmed.charAt(0).toUpperCase() + trimmed.slice(1)
+  return /[.!?]$/.test(capitalised) ? capitalised : `${capitalised}.`
+}
+
+function firstField(errors: FieldErrors) {
+  return (Object.keys(fieldSteps) as FieldId[]).find((field) => errors[field])
 }
 
 /**
- * One form, laid out as the five steps an onboarding goes through. Every step
- * stays on the page — nothing is hidden behind a Next button — so the
- * operator can read the whole release before submitting, and the step rail
- * shows what is still missing.
+ * Onboarding as five short steps. Each step validates before the next opens,
+ * the plan of generated resources follows the operator as they type, and the
+ * draft survives a reload for the rest of the tab's session.
  */
 export function OnboardingPage() {
   const navigate = useNavigate()
-  const [name, setName] = useState('')
-  const [environment, setEnvironment] = useState('dev')
-  const [region, setRegion] = useState('us-east-1')
-  const [selectedClusterIds, setSelectedClusterIds] = useState<string[]>([])
-  const [regionValues, setRegionValues] = useState<Record<string, string>>({})
+  const toast = useToast()
+  const [initial] = useState(initialDraft)
+  const [draft, setDraft] = useState<WizardDraft>(initial.draft)
+  const [restored, setRestored] = useState(initial.restored)
+  const [errors, setErrors] = useState<FieldErrors>({})
+  const [formError, setFormError] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState('')
+  const headingRef = useRef<HTMLHeadingElement>(null)
+  const pendingFocus = useRef<string | null>(null)
+  const focusedStep = useRef(initial.draft.step)
 
   const loadClusters = useCallback(async (signal: AbortSignal) => {
     const clusters = await getOnboardingClusters(signal)
@@ -91,32 +114,59 @@ export function OnboardingPage() {
   const clustersQuery = usePolledResource(loadClusters)
   const loadDefaults = useCallback((signal: AbortSignal) => getOnboardingDefaults(signal), [])
   const defaultsQuery = usePolledResource(loadDefaults)
+  const defaults = defaultsQuery.data
+  const { environments, regions } = scopeChoices(defaults)
 
   // The base values are not editable during onboarding: the chart defaults are
   // submitted as-is, so an empty string means they have not loaded.
-  const valuesYaml = defaultsQuery.data?.valuesYaml ?? ''
-  const valuesRepositoryBaseUrl = defaultsQuery.data?.valuesRepositoryBaseUrl ?? ''
-  const valuesRevision = defaultsQuery.data?.valuesRevision ?? ''
+  const valuesYaml = defaults?.valuesYaml ?? ''
 
-  const selectedSet = useMemo(() => new Set(selectedClusterIds), [selectedClusterIds])
-  const namespace = name
-  const deploymentScope = `${environment}-${region}`
-  const scopedNameLength = 63 - deploymentScope.length - 1
-  const nameValid = dnsLabel.test(name) && name.length <= scopedNameLength
-  const resourcePlan = useMemo(
-    () =>
-      nameValid
-        ? plannedResources(
-            name,
-            environment,
-            region,
-            valuesYaml,
-            valuesRepositoryBaseUrl,
-            valuesRevision,
-          )
-        : null,
-    [environment, name, nameValid, region, valuesRepositoryBaseUrl, valuesRevision, valuesYaml],
-  )
+  const { name, environment, region, step } = draft
+  const scope = deploymentScope(environment, region)
+  const current = wizardSteps[stepIndex(step)]
+  const currentIndex = stepIndex(step)
+
+  // A draft or an older default can name a scope the API no longer offers.
+  useEffect(() => {
+    if (!defaults) return
+    setDraft((currentDraft) => {
+      const next = { ...currentDraft }
+      if (!environments.includes(next.environment)) next.environment = environments[0]
+      if (!regions.includes(next.region)) next.region = regions[0]
+      return next.environment === currentDraft.environment && next.region === currentDraft.region
+        ? currentDraft
+        : next
+    })
+    // The lists are derived from `defaults`; depending on it alone avoids a loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaults])
+
+  // A restored selection can outlive a cluster that has since been removed.
+  useEffect(() => {
+    const clusters = clustersQuery.data
+    if (!clusters) return
+    const known = new Set(clusters.map((cluster) => cluster.id))
+    setDraft((currentDraft) =>
+      currentDraft.clusterIds.every((id) => known.has(id))
+        ? currentDraft
+        : { ...currentDraft, clusterIds: currentDraft.clusterIds.filter((id) => known.has(id)) },
+    )
+  }, [clustersQuery.data])
+
+  useEffect(() => saveDraft(draft), [draft])
+
+  // Moving between steps puts the keyboard on the new step's heading, or on
+  // the field that sent the operator back.
+  useEffect(() => {
+    // Compared with the last step rather than a mount flag, which StrictMode's
+    // double effect would defeat and steal focus on first load.
+    if (focusedStep.current === step) return
+    focusedStep.current = step
+    const target = pendingFocus.current
+    pendingFocus.current = null
+    const element = target ? document.getElementById(target) : headingRef.current
+    element?.focus()
+  }, [step])
 
   const sortedClusters = useMemo(
     () =>
@@ -128,76 +178,138 @@ export function OnboardingPage() {
       ),
     [clustersQuery.data],
   )
-  const selectedClusters = sortedClusters.filter((cluster) => selectedSet.has(cluster.id))
+  const clusterById = useMemo(
+    () => new Map(sortedClusters.map((cluster) => [cluster.id, cluster])),
+    [sortedClusters],
+  )
+  const selectedClusters = draft.clusterIds
+    .map((id) => clusterById.get(id))
+    .filter((cluster): cluster is Cluster => Boolean(cluster))
+  const regionClusterCount = sortedClusters.filter((cluster) =>
+    clusterInRegion(cluster, region),
+  ).length
 
-  const activeRegions = selectedClusterIds.length > 0 ? [region] : []
+  const nameAccepted = Object.keys(validateStep('application', draft)).length === 0
+  const resourcePlan = useMemo(
+    () =>
+      nameAccepted
+        ? plannedResources(
+            name,
+            environment,
+            region,
+            valuesYaml,
+            defaults?.valuesRepositoryBaseUrl ?? '',
+            defaults?.valuesRevision ?? '',
+          )
+        : null,
+    [defaults, environment, name, nameAccepted, region, valuesYaml],
+  )
 
-  function toggleCluster(id: string) {
-    setSelectedClusterIds((current) =>
-      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
-    )
+  function update(patch: Partial<WizardDraft>, fields: FieldId[] = []) {
+    setDraft((currentDraft) => ({ ...currentDraft, ...patch }))
+    if (fields.length > 0) {
+      setErrors((currentErrors) => {
+        const next = { ...currentErrors }
+        for (const field of fields) delete next[field]
+        return next
+      })
+    }
+    setFormError('')
   }
 
-  function validate() {
-    if (!nameValid) {
-      return `Application name must leave room for the ${deploymentScope} deployment suffix.`
+  function goTo(target: StepId, focusField?: FieldId) {
+    pendingFocus.current = focusField ? fieldControlIds[focusField] : null
+    if (target === step && focusField) {
+      document.getElementById(fieldControlIds[focusField])?.focus()
     }
-    if (selectedClusterIds.length === 0) return 'Select at least one target cluster.'
-    if (!valuesYaml.trim())
-      return 'Helm chart defaults could not be loaded. Reload the page and try again.'
-    for (const item of activeRegions) {
-      const override = regionValues[item]
-      if (!override || !override.trim()) continue
-      const overrideError = validateMapping(override, `${item} values`)
-      if (overrideError) return overrideError
-    }
-    return ''
+    setDraft((currentDraft) => ({ ...currentDraft, step: target }))
   }
 
-  async function submit(event: FormEvent) {
-    event.preventDefault()
-    const validationError = validate()
-    if (validationError) {
-      setError(validationError)
+  function showErrors(stepErrors: FieldErrors, target: StepId) {
+    setErrors((currentErrors) => ({ ...currentErrors, ...stepErrors }))
+    goTo(target, firstField(stepErrors))
+  }
+
+  function next() {
+    const stepErrors = validateStep(step, draft)
+    if (Object.keys(stepErrors).length > 0) {
+      showErrors(stepErrors, step)
+      return
+    }
+    goTo(wizardSteps[currentIndex + 1].id)
+  }
+
+  function back() {
+    if (currentIndex > 0) goTo(wizardSteps[currentIndex - 1].id)
+  }
+
+  function startOver() {
+    clearDraft()
+    setDraft(emptyDraft(environments[0], regions[0]))
+    setErrors({})
+    setFormError('')
+    setRestored(false)
+  }
+
+  async function onboard() {
+    const invalid = firstInvalidStep(draft)
+    if (invalid) {
+      showErrors(validateStep(invalid, draft), invalid)
+      return
+    }
+    if (!valuesYaml.trim()) {
+      setFormError('Helm chart defaults could not be loaded. Reload the page and try again.')
       return
     }
     setSubmitting(true)
     try {
+      const activeRegions = draft.clusterIds.length > 0 ? [region] : []
       const overrides: Record<string, string> = {}
       for (const item of activeRegions) {
-        const override = regionValues[item]
+        const override = draft.regionValues[item]
         if (override && override.trim()) overrides[item] = override
       }
+      // Key order is part of the contract; the backend's request log and the
+      // tests compare the body byte for byte.
       const record = await createApplicationOnboarding({
         name,
-        namespace,
+        namespace: name,
         environment,
         region,
-        clusterIds: selectedClusterIds,
+        clusterIds: draft.clusterIds,
         valuesYaml,
         regionValues: overrides,
       })
-      setError('')
+      clearDraft()
+      toast.success(`${name} onboarding started`, {
+        description: `Deploying to ${plural(draft.clusterIds.length, 'cluster')} in ${scope}.`,
+      })
       // Deployment may still be progressing; the detail route polls until it settles.
       void navigate(`/applications/${record.id}`)
     } catch (submitError) {
-      setError(errorMessage(submitError, 'Application could not be onboarded'))
+      const message = errorMessage(submitError, 'Application could not be onboarded')
+      const field =
+        submitError instanceof ApiError ? serverErrorField(submitError.status, message) : null
+      if (field) {
+        showErrors({ [field]: sentence(message) }, fieldSteps[field])
+      } else {
+        setFormError(message)
+      }
     } finally {
       setSubmitting(false)
     }
   }
 
-  const loadError = clustersQuery.error?.message || defaultsQuery.error?.message || ''
-  const bannerError = error || loadError
-  const overrideCount = activeRegions.filter((item) => regionValues[item]?.trim()).length
+  function submit(event: FormEvent) {
+    event.preventDefault()
+    if (submitting) return
+    if (step === 'review') void onboard()
+    else next()
+  }
 
-  const steps = [
-    { id: 'step-release', label: 'Release', complete: nameValid },
-    { id: 'step-resources', label: 'Resources', complete: resourcePlan !== null },
-    { id: 'step-targets', label: 'Targets', complete: selectedClusterIds.length > 0 },
-    { id: 'step-values', label: 'Values', complete: Boolean(valuesYaml) },
-    { id: 'step-review', label: 'Review', complete: false },
-  ]
+  const defaultsError = defaultsQuery.error?.message ?? ''
+  const override = draft.regionValues[region] ?? ''
+  const overrideCount = override.trim() ? 1 : 0
 
   return (
     <section className="page" aria-labelledby="onboarding-heading">
@@ -205,303 +317,353 @@ export function OnboardingPage() {
         id="onboarding-heading"
         back={{ to: '/applications', label: 'Applications' }}
         title="Onboard an application"
-        description="Define the release, check what it will create, and choose exactly where it runs."
+        description="Define the release, choose exactly where it runs, and check what it will create."
       />
 
-      {bannerError && (
+      {restored && (
+        <Banner
+          tone="info"
+          title="Draft restored"
+          onDismiss={() => setRestored(false)}
+          onRetry={startOver}
+          retryLabel="Start over"
+        >
+          Picked up the onboarding you started earlier in this tab.
+        </Banner>
+      )}
+      {defaultsError && (
         <Banner
           tone="error"
-          title={error ? 'Onboarding cannot continue' : 'Onboarding data is unavailable'}
+          title="Onboarding data is unavailable"
+          onRetry={() => void defaultsQuery.reload()}
         >
-          {bannerError}
+          {defaultsError}
+        </Banner>
+      )}
+      {formError && (
+        <Banner tone="error" title="Onboarding cannot continue">
+          {formError}
         </Banner>
       )}
 
-      <div className="onboarding-layout">
-        <nav className="onboarding-rail" aria-label="Onboarding steps">
-          <ol>
-            {steps.map((step, index) => (
-              <li key={step.id} className={step.complete ? 'is-complete' : undefined}>
-                <a href={`#${step.id}`}>
-                  <span className="onboarding-rail-index" aria-hidden="true">
-                    {step.complete ? '✓' : index + 1}
-                  </span>
-                  {step.label}
-                  {step.complete && <span className="sr-only"> (complete)</span>}
-                </a>
-              </li>
-            ))}
-          </ol>
-        </nav>
+      <div className="wizard">
+        <div className="wizard-progress">
+          <Stepper
+            steps={wizardSteps.map(({ id, label }) => ({ id, label }))}
+            current={step}
+            onStepSelect={(id) => goTo(id as StepId)}
+          />
+        </div>
 
-        <form className="onboarding-form" onSubmit={(event) => void submit(event)}>
-          <Step
-            index={1}
-            id="step-release"
-            title="Release"
-            description="The name becomes the namespace, the Argo CD application, and the values repository."
-            complete={nameValid}
+        <div
+          className={step === 'review' ? 'wizard-layout wizard-layout--review' : 'wizard-layout'}
+        >
+          <form
+            className="wizard-panel"
+            aria-labelledby="wizard-step-title"
+            noValidate
+            onSubmit={submit}
           >
-            <div className="onboarding-fields">
-              <div className="field onboarding-name">
-                <label htmlFor="application-name">Application name</label>
-                <input
-                  id="application-name"
-                  className="input mono"
-                  type="text"
-                  required
-                  value={name}
-                  pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?"
-                  maxLength={scopedNameLength}
-                  placeholder="payments-api"
-                  aria-describedby="name-hint"
-                  onChange={(event) => setName(event.target.value)}
-                />
-                <span className="field-hint" id="name-hint">
-                  Lowercase letters, digits, and hyphens; up to {scopedNameLength} characters.
-                </span>
-              </div>
-              <label className="field">
-                <span>Environment</span>
-                <select
-                  className="select"
-                  aria-label="Environment"
-                  value={environment}
-                  onChange={(event) => setEnvironment(event.target.value)}
-                >
-                  {environments.map((item) => (
-                    <option key={item} value={item}>
-                      {item}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="field">
-                <span>Region</span>
-                <select
-                  className="select"
-                  aria-label="Region"
-                  value={region}
-                  onChange={(event) => setRegion(event.target.value)}
-                >
-                  {regions.map((item) => (
-                    <option key={item} value={item}>
-                      {item}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          </Step>
-
-          <Step
-            index={2}
-            id="step-resources"
-            title="Resources"
-            description="What the chart will create for this release, named before anything is committed."
-            complete={resourcePlan !== null}
-          >
-            {resourcePlan ? (
-              <div className="onboarding-table">
-                <table className="data-table" aria-label="Generated Kubernetes resources">
-                  <thead>
-                    <tr>
-                      <th scope="col">Resource</th>
-                      <th scope="col">Name</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {resourcePlan.map((resource) => (
-                      <tr key={`${resource.kind}-${resource.name}`}>
-                        <td>{resource.kind}</td>
-                        <td className="mono">
-                          {resource.href ? (
-                            <a href={resource.href} target="_blank" rel="noreferrer">
-                              {resource.name}
-                            </a>
-                          ) : (
-                            resource.name
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <p className="onboarding-placeholder">
-                {valuesYaml
-                  ? 'Enter a valid application name to preview the generated resources.'
-                  : 'Waiting for the chart defaults…'}
+            <header className="wizard-panel-header">
+              <p className="wizard-kicker">
+                Step {currentIndex + 1} of {wizardSteps.length}
+                <span aria-hidden="true"> · {current.label}</span>
               </p>
-            )}
-          </Step>
+              <h2 id="wizard-step-title" ref={headingRef} tabIndex={-1}>
+                {current.title}
+              </h2>
+              <p>{current.description}</p>
+            </header>
 
-          <Step
-            index={3}
-            id="step-targets"
-            title="Targets"
-            description="The clusters this release deploys to through their Argo CD."
-            complete={selectedClusterIds.length > 0}
-          >
-            <div className="onboarding-table">
-              <div className="onboarding-table-caption">
-                <span>Target clusters</span>
-                <span>{selectedClusterIds.length} selected</span>
-              </div>
-              {clustersQuery.loading ? (
-                <div role="status">
-                  <span className="sr-only">Loading clusters…</span>
-                  <SkeletonRows rows={3} columns={5} />
-                </div>
-              ) : sortedClusters.length === 0 ? (
-                <EmptyState
-                  compact
-                  title="No active clusters are available"
-                  description="Clusters appear here once a cloud source has discovered them."
-                />
-              ) : (
-                <div className="table-scroll">
-                  <table className="data-table" aria-label="Target clusters">
-                    <thead>
-                      <tr>
-                        <th scope="col" className="col-select">
-                          <span className="sr-only">Select</span>
-                        </th>
-                        <th scope="col">Cluster</th>
-                        <th scope="col">Source</th>
-                        <th scope="col">Location</th>
-                        <th scope="col">Kubernetes</th>
-                        <th scope="col">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sortedClusters.map((cluster) => (
-                        <tr
-                          className={selectedSet.has(cluster.id) ? 'is-selected' : undefined}
-                          key={cluster.id}
-                          onClick={() => toggleCluster(cluster.id)}
-                        >
-                          <td className="col-select">
-                            <input
-                              type="checkbox"
-                              className="checkbox"
-                              aria-label={`Select ${cluster.name}`}
-                              checked={selectedSet.has(cluster.id)}
-                              onClick={(event) => event.stopPropagation()}
-                              onChange={() => toggleCluster(cluster.id)}
-                            />
-                          </td>
-                          <td>
-                            <strong className="onboarding-cluster-name">{cluster.name}</strong>
-                          </td>
-                          <td>
-                            <span className="onboarding-provider">
-                              <ProviderLogo provider={cluster.provider} />
-                              {cluster.sourceName}
-                            </span>
-                          </td>
-                          <td className="mono">{cluster.location || 'Unknown'}</td>
-                          <td className="mono">{cluster.kubernetesVersion || 'Unknown'}</td>
-                          <td>
-                            <StatusBadge domain="cluster" status={cluster.status} />
-                          </td>
-                        </tr>
+            <div className="wizard-panel-body" key={step}>
+              {step === 'application' && (
+                <>
+                  <Field
+                    id={fieldControlIds.name}
+                    label="Application name"
+                    error={errors.name}
+                    hint={`Lowercase letters, digits, and hyphens; up to ${maxNameLength(environment, region)} characters.`}
+                  >
+                    <TextInput
+                      className="mono"
+                      type="text"
+                      value={name}
+                      maxLength={maxNameLength(environment, region)}
+                      placeholder="payments-api"
+                      autoComplete="off"
+                      spellCheck={false}
+                      onChange={(event) => update({ name: event.target.value }, ['name'])}
+                    />
+                  </Field>
+                  <div className="derived-identity">
+                    <p className="derived-identity-title">Derived from the name</p>
+                    <KeyValueList
+                      items={[
+                        {
+                          label: 'Kubernetes namespace',
+                          value: name ? `${name}-${scope}` : '',
+                          mono: true,
+                        },
+                        {
+                          label: 'Argo CD application',
+                          value: name ? `${name}-${scope}` : '',
+                          mono: true,
+                        },
+                        {
+                          label: 'Values repository',
+                          value:
+                            name && defaults?.valuesRepositoryBaseUrl
+                              ? `${defaults.valuesRepositoryBaseUrl.replace(/\/+$/, '')}/${name}`
+                              : '',
+                          mono: true,
+                        },
+                      ]}
+                    />
+                    <p className="subtle">
+                      Suffixed with <span className="mono">{scope}</span>, which you can change in
+                      the next step.
+                    </p>
+                  </div>
+                </>
+              )}
+
+              {step === 'scope' && (
+                <>
+                  <div className="wizard-fields">
+                    <Field
+                      id={fieldControlIds.environment}
+                      label="Environment"
+                      error={errors.environment}
+                      hint={environmentNotes[environment]}
+                    >
+                      <Select
+                        value={environment}
+                        onChange={(event) =>
+                          update({ environment: event.target.value }, ['environment', 'name'])
+                        }
+                      >
+                        {environments.map((item) => (
+                          <option key={item} value={item}>
+                            {item}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                    <Field
+                      id={fieldControlIds.region}
+                      label="Region"
+                      error={errors.region}
+                      hint={`${plural(regionClusterCount, 'cluster')} available in ${region}.`}
+                    >
+                      <Select
+                        value={region}
+                        onChange={(event) =>
+                          update({ region: event.target.value }, ['region', 'environment', 'name'])
+                        }
+                      >
+                        {regions.map((item) => (
+                          <option key={item} value={item}>
+                            {item}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                  </div>
+                  <div
+                    className="scope-preview"
+                    data-tone={environment === 'prod' ? 'warn' : 'info'}
+                  >
+                    <KeyValueList
+                      items={[
+                        { label: 'Deployment scope', value: scope, mono: true },
+                        { label: 'Release', value: name ? `${name}-${scope}` : '', mono: true },
+                        {
+                          label: 'Values file',
+                          value: `${environment}/${region}/values.yaml`,
+                          mono: true,
+                        },
+                      ]}
+                    />
+                  </div>
+                </>
+              )}
+
+              {step === 'targets' && (
+                <>
+                  <span id={fieldControlIds.clusters} tabIndex={-1} className="sr-only">
+                    Target clusters
+                  </span>
+                  <TargetPicker
+                    clusters={sortedClusters}
+                    loading={clustersQuery.loading}
+                    loadError={clustersQuery.error?.message ?? ''}
+                    onRetry={() => void clustersQuery.reload()}
+                    region={region}
+                    selectedIds={draft.clusterIds}
+                    onSelectionChange={(clusterIds) => update({ clusterIds }, ['clusters'])}
+                    showAll={draft.showAllClusters}
+                    onShowAllChange={(showAllClusters) => update({ showAllClusters })}
+                    error={errors.clusters}
+                  />
+                </>
+              )}
+
+              {step === 'values' && (
+                <>
+                  <Banner tone="warn" title="Keep secrets out of values">
+                    Do not include passwords, tokens, certificates, or other secret material.
+                    Reference existing Kubernetes or external secrets from the chart values.
+                  </Banner>
+                  <ValuesEditor
+                    id={fieldControlIds.values}
+                    label={`${region} values override`}
+                    value={override}
+                    error={errors.values}
+                    placeholder={`# Keys here override the chart defaults in ${region}\nreplicaCount: 3\n`}
+                    onChange={(value) =>
+                      update({ regionValues: { ...draft.regionValues, [region]: value } }, [
+                        'values',
+                      ])
+                    }
+                  />
+                  <details className="chart-defaults">
+                    <summary>
+                      Chart defaults
+                      {defaults && (
+                        <span className="mono subtle">
+                          {' '}
+                          {defaults.chartName}@{defaults.chartRevision}
+                        </span>
+                      )}
+                    </summary>
+                    {valuesYaml ? (
+                      <pre className="chart-defaults-code">{valuesYaml}</pre>
+                    ) : (
+                      <p className="wizard-placeholder">The chart defaults have not loaded.</p>
+                    )}
+                  </details>
+                </>
+              )}
+
+              {step === 'review' && (
+                <>
+                  <ReviewSection title="Application" onEdit={() => goTo('application')}>
+                    <KeyValueList
+                      items={[
+                        { label: 'Name', value: name, mono: true },
+                        { label: 'Scope', value: scope, mono: true },
+                        {
+                          label: 'Chart',
+                          value: defaults ? `${defaults.chartName}@${defaults.chartRevision}` : '',
+                          mono: true,
+                        },
+                      ]}
+                    />
+                  </ReviewSection>
+                  <ReviewSection
+                    title={`Targets · ${selectedClusters.length}`}
+                    onEdit={() => goTo('targets')}
+                  >
+                    <ul className="review-targets">
+                      {selectedClusters.map((cluster) => (
+                        <li key={cluster.id}>
+                          <ProviderLogo provider={cluster.provider} />
+                          <strong>{cluster.name}</strong>
+                          <span className="mono subtle">{cluster.location || 'Unknown'}</span>
+                        </li>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
+                    </ul>
+                  </ReviewSection>
+                  <ReviewSection title="Values" onEdit={() => goTo('values')}>
+                    <p>
+                      Chart defaults
+                      {overrideCount > 0
+                        ? ` + ${plural(overrideCount, 'region override')} (${region})`
+                        : ' only'}
+                    </p>
+                  </ReviewSection>
+                  <ReviewSection title="Resources">
+                    {resourcePlan ? (
+                      <ResourcePlanTable resources={resourcePlan} />
+                    ) : (
+                      <p className="wizard-placeholder">
+                        {valuesYaml
+                          ? 'Enter a valid application name to preview the generated resources.'
+                          : 'The chart defaults are unavailable, so the resources cannot be planned and onboarding is disabled.'}
+                      </p>
+                    )}
+                  </ReviewSection>
+                </>
               )}
             </div>
-          </Step>
 
-          <Step
-            index={4}
-            id="step-values"
-            title="Values"
-            description="The chart defaults are used as-is; a region can override individual keys."
-            complete={Boolean(valuesYaml)}
-          >
-            {activeRegions.length === 0 ? (
-              <p className="onboarding-placeholder">
-                Select a target cluster to add region overrides.
-              </p>
-            ) : (
-              <div className="region-values">
-                <p className="field-hint" id="values-guidance">
-                  Do not include passwords, tokens, certificates, or other secret material.
-                  Reference existing Kubernetes or external secrets from the chart values.
-                </p>
-                {activeRegions.map((item) => (
-                  <details className="region-values-item" key={item}>
-                    <summary>
-                      <span className="mono">{item}/values.yaml</span>
-                      <span className="subtle">
-                        {regionValues[item]?.trim() ? 'customised' : 'base only'}
-                      </span>
-                    </summary>
-                    <textarea
-                      className="textarea"
-                      value={regionValues[item] ?? ''}
-                      spellCheck={false}
-                      aria-label={`${item} values override`}
-                      aria-describedby="values-guidance"
-                      placeholder={`# Keys here override the chart defaults in ${item}\nreplicaCount: 3\n`}
-                      onChange={(event) =>
-                        setRegionValues((current) => ({ ...current, [item]: event.target.value }))
-                      }
-                    />
-                  </details>
-                ))}
-              </div>
-            )}
-          </Step>
+            <footer className="wizard-panel-footer">
+              {currentIndex > 0 ? (
+                <Button icon={<ChevronLeftIcon />} onClick={back} disabled={submitting}>
+                  Back
+                </Button>
+              ) : (
+                <span />
+              )}
+              {step === 'review' ? (
+                <Button
+                  variant="primary"
+                  type="submit"
+                  icon={<DeployIcon />}
+                  loading={submitting}
+                  disabled={clustersQuery.loading || !valuesYaml}
+                >
+                  {submitting ? 'Onboarding…' : 'Onboard'}
+                </Button>
+              ) : (
+                <Button
+                  variant="primary"
+                  type="submit"
+                  aria-describedby={
+                    step === 'targets' && errors.clusters ? targetsErrorId : undefined
+                  }
+                >
+                  Next
+                  <ChevronRightIcon aria-hidden="true" />
+                </Button>
+              )}
+            </footer>
+          </form>
 
-          <Step
-            index={5}
-            id="step-review"
-            title="Review"
-            description="Onboarding commits values to GitHub and creates the Argo CD application."
-            complete={false}
-          >
-            <dl className="fact-grid onboarding-review">
-              <div>
-                <dt>Application</dt>
-                <dd className="mono">{name || '—'}</dd>
-              </div>
-              <div>
-                <dt>Scope</dt>
-                <dd className="mono">{deploymentScope}</dd>
-              </div>
-              <div>
-                <dt>Targets</dt>
-                <dd>
-                  {selectedClusters.length > 0
-                    ? selectedClusters.map((cluster) => cluster.name).join(', ')
-                    : 'None selected'}
-                </dd>
-              </div>
-              <div>
-                <dt>Values</dt>
-                <dd>
-                  Chart defaults
-                  {overrideCount > 0 ? ` + ${plural(overrideCount, 'region override')}` : ''}
-                </dd>
-              </div>
-            </dl>
-            <div className="onboarding-submit">
-              <Button
-                variant="primary"
-                type="submit"
-                loading={submitting}
-                disabled={clustersQuery.loading || !valuesYaml}
-              >
-                {submitting ? 'Onboarding…' : 'Onboard'}
-              </Button>
-            </div>
-          </Step>
-        </form>
+          {step !== 'review' && (
+            <PlanPreview
+              resources={resourcePlan}
+              scope={scope}
+              targetCount={draft.clusterIds.length}
+              waitingForDefaults={!valuesYaml}
+            />
+          )}
+        </div>
       </div>
+    </section>
+  )
+}
+
+function ReviewSection({
+  title,
+  onEdit,
+  children,
+}: {
+  title: string
+  onEdit?: () => void
+  children: ReactNode
+}) {
+  return (
+    <section className="review-section" aria-label={title}>
+      <header className="review-section-header">
+        <h3>{title}</h3>
+        {onEdit && (
+          <button type="button" className="link-button" onClick={onEdit}>
+            Edit<span className="sr-only"> {title.split(' ·')[0].toLowerCase()}</span>
+          </button>
+        )}
+      </header>
+      {children}
     </section>
   )
 }

@@ -204,6 +204,9 @@ export function mockAPI(initial: Partial<MockState> = {}) {
         valuesYaml: 'replicaCount: 2\nimage:\n  repository: nginx\n',
         valuesRepositoryBaseUrl: 'https://github.com/GitOpsHub',
         valuesRevision: 'main',
+        environments: ['dev', 'qa', 'prod'],
+        regions: ['us-east-1', 'us-east-2'],
+        capabilities: { consoleMutations: true },
       })
     }
 

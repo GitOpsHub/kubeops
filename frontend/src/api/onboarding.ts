@@ -69,6 +69,11 @@ export type OnboardingDefaults = {
   valuesYaml: string
   valuesRepositoryBaseUrl: string
   valuesRevision: string
+  // The backend's validation lists, first entry the default. Optional because
+  // an older API omits them; callers fall back to the historical lists.
+  environments?: string[]
+  regions?: string[]
+  capabilities?: { consoleMutations: boolean }
 }
 
 export type ApplicationOnboardingPage = {
