@@ -1,13 +1,24 @@
 import { Link } from 'react-router-dom'
+import type { CloudSource } from '../../api/inventory'
 import { ArgoHealthState, ArgoSyncState } from '../../components/ArgoStateIcons'
+import { ExternalLinkIcon } from '../../components/icons'
 import { StatusBadge } from '../../components/ui/Badge'
 import { plural } from '../../lib/format'
 import { deltaTone, deltaToneColour, rollupState } from '../../lib/status'
 import { namespaceLabel, type ApplicationGroup } from './application-groups'
 import { EnvironmentTags, PlatformIds } from './PlatformIds'
 
-/** Argo-style cards: the default read, led by the health and sync glyphs. */
-export function ApplicationTiles({ groups }: { groups: ApplicationGroup[] }) {
+type Props = {
+  groups: ApplicationGroup[]
+  sources: Map<string, CloudSource>
+}
+
+/**
+ * Argo-style cards: the default read, led by the health and sync glyphs. The
+ * whole card opens the application (the name link is stretched over it); the
+ * Argo CD link sits above that layer.
+ */
+export function ApplicationTiles({ groups, sources }: Props) {
   return (
     <div className="application-tiles">
       {groups.map((group) => {
@@ -58,15 +69,21 @@ export function ApplicationTiles({ groups }: { groups: ApplicationGroup[] }) {
               <div className="application-tile-fact--wide">
                 <dt>Platforms</dt>
                 <dd>
-                  <PlatformIds ids={group.platformIds} />
+                  <PlatformIds ids={group.platformIds} sources={sources} show="name" />
                 </dd>
               </div>
             </dl>
             <footer className="application-tile-foot">
               <span>{`${plural(group.records.length, 'release')} · ${plural(group.targets.length, 'target')}`}</span>
               {argoUrl && (
-                <a href={argoUrl} target="_blank" rel="noreferrer">
-                  Argo CD ↗
+                <a
+                  className="application-tile-argo"
+                  href={argoUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Argo CD
+                  <ExternalLinkIcon aria-hidden="true" />
                 </a>
               )}
             </footer>

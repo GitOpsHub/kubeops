@@ -1,67 +1,88 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import { errorMessage } from '../../api/client'
 import {
   getSources,
   getSyncRuns,
+  maxSyncRuns,
   queueSourceSync,
   type CloudSource,
-  type SyncRun,
 } from '../../api/inventory'
 import { ProviderLogo } from '../../components/BrandIcons'
+import { SyncIcon } from '../../components/icons'
 import { Banner } from '../../components/ui/Banner'
 import { StatusBadge, Tag } from '../../components/ui/Badge'
-import { StatusDot } from '../../components/ui/StatusDot'
-import { useToast } from '../../components/ui/toast-context'
 import { Button } from '../../components/ui/Button'
-import { Card } from '../../components/ui/Card'
 import { EmptyState } from '../../components/ui/EmptyState'
+import { LoadingState } from '../../components/ui/LoadingState'
 import { PageHeader } from '../../components/ui/PageHeader'
 import { RefreshIndicator } from '../../components/ui/RefreshIndicator'
-import { SkeletonRows } from '../../components/ui/Skeleton'
+import { useToast } from '../../components/ui/toast-context'
+import { useNow } from '../../hooks/useNow'
 import { usePolledResource } from '../../hooks/usePolledResource'
+import { useUrlState } from '../../hooks/useUrlState'
 import type { AppShellContext } from '../../lib/app-shell'
-import { isOlderThan, plural, relativeTime } from '../../lib/format'
-import { providerLabels, providerNames, staleAfterMs } from '../../lib/providers'
+import { plural, relativeTime } from '../../lib/format'
+import { providerLabels, providerNames } from '../../lib/providers'
+import { RunHistory } from './RunHistory'
+import { SyncRunsTable } from './SyncRunsTable'
+import { formatDuration, runDurationMs, runsBySource, sourceStanding } from './run-format'
 import './sources.css'
 
 const pollIntervalMs = 15_000
-
-/** A succeeded sync that is too old to trust reads as stale, not healthy. */
-function displayedStatus(source: CloudSource) {
-  if (!source.enabled) return 'disabled'
-  if (source.lastSyncStatus === 'succeeded' && isOlderThan(source.lastSyncAt, staleAfterMs)) {
-    return 'stale'
-  }
-  return source.lastSyncStatus || 'unknown'
-}
+const historySlots = 20
+const runsPageSize = 50
 
 export function SourcesPage() {
   const { refreshSyncStatus } = useOutletContext<AppShellContext>()
   const [syncing, setSyncing] = useState('')
   const toast = useToast()
+  const now = useNow()
+  // `?source=` is how the overview's attention links point at one source.
+  const [url, setUrl] = useUrlState({ source: '' })
+  const sourceFilter = url.source
+  const [limit, setLimit] = useState(runsPageSize)
+  const [limitFor, setLimitFor] = useState(sourceFilter)
+  if (limitFor !== sourceFilter) {
+    setLimitFor(sourceFilter)
+    setLimit(runsPageSize)
+  }
 
-  const load = useCallback(async (signal: AbortSignal) => {
-    const [sources, runs] = await Promise.all([getSources(signal), getSyncRuns(signal)])
-    return { sources, runs }
+  // The strips read one wide window of runs across every source; the table
+  // asks for exactly the slice it shows, so a filter or "Load more" never
+  // refetches the sources.
+  const loadSources = useCallback(async (signal: AbortSignal) => {
+    const [sources, history] = await Promise.all([
+      getSources(signal),
+      getSyncRuns({ limit: maxSyncRuns }, signal),
+    ])
+    return { sources, history }
   }, [])
-  const inventory = usePolledResource(load, { intervalMs: pollIntervalMs })
-  const sources = inventory.data?.sources ?? []
-  const runs = useMemo(() => inventory.data?.runs ?? [], [inventory.data])
+  const inventory = usePolledResource(loadSources, { intervalMs: pollIntervalMs })
+  const loadRuns = useCallback(
+    (signal: AbortSignal) => getSyncRuns({ limit, sourceId: sourceFilter }, signal),
+    [limit, sourceFilter],
+  )
+  const runs = usePolledResource(loadRuns, { intervalMs: pollIntervalMs })
 
-  // Runs arrive newest first, so the first one seen per source is its latest.
-  const latestRunBySource = useMemo(() => {
-    const latest = new Map<string, SyncRun>()
-    for (const run of runs) if (!latest.has(run.sourceId)) latest.set(run.sourceId, run)
-    return latest
-  }, [runs])
+  const sources = useMemo(() => inventory.data?.sources ?? [], [inventory.data])
+  const history = useMemo(
+    () => runsBySource(inventory.data?.history ?? [], historySlots),
+    [inventory.data],
+  )
+  const runItems = runs.data ?? []
+
+  useEffect(() => {
+    if (!sourceFilter || inventory.loading) return
+    document.getElementById(`source-${sourceFilter}`)?.scrollIntoView?.({ block: 'nearest' })
+  }, [sourceFilter, inventory.loading])
 
   async function syncSource(source: CloudSource) {
     setSyncing(source.id)
     try {
       await queueSourceSync(source.id)
       toast.success(`Sync queued for ${source.name}.`)
-      await Promise.all([inventory.reload(), refreshSyncStatus()])
+      await Promise.all([inventory.reload(), runs.reload(), refreshSyncStatus()])
     } catch (error) {
       toast.error('Sync could not be started', {
         description: errorMessage(error, 'The request was rejected.'),
@@ -70,6 +91,13 @@ export function SourcesPage() {
       setSyncing('')
     }
   }
+
+  function showRuns(sourceId: string) {
+    setUrl({ source: sourceId })
+    document.getElementById('sync-runs')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+  }
+
+  const enabledCount = sources.filter((source) => source.enabled).length
 
   return (
     <section className="page" aria-labelledby="sources-heading">
@@ -80,7 +108,7 @@ export function SourcesPage() {
         meta={
           <RefreshIndicator
             lastUpdated={inventory.lastUpdated}
-            refreshing={inventory.refreshing}
+            refreshing={inventory.refreshing || runs.refreshing}
             failed={Boolean(inventory.error)}
           />
         }
@@ -96,13 +124,12 @@ export function SourcesPage() {
         </Banner>
       )}
 
-      <div className="panel">
-        {inventory.loading ? (
-          <div role="status">
-            <span className="sr-only">Loading cloud sources…</span>
-            <SkeletonRows rows={4} columns={4} />
-          </div>
-        ) : sources.length === 0 ? (
+      {inventory.loading ? (
+        <div className="panel">
+          <LoadingState label="Loading cloud sources…" shape="cards" rows={3} />
+        </div>
+      ) : sources.length === 0 ? (
+        <div className="panel">
           <EmptyState
             title={
               inventory.error ? 'Cloud sources are unavailable' : 'No cloud sources configured'
@@ -114,96 +141,125 @@ export function SourcesPage() {
               </>
             }
           />
-        ) : (
-          <ul className="source-list">
+        </div>
+      ) : (
+        <>
+          <p className="source-summary">
+            {plural(sources.length, 'source')} · {enabledCount} enabled
+          </p>
+          <ul className="source-grid">
             {sources.map((source) => {
-              const run = latestRunBySource.get(source.id)
-              const error = source.lastSyncError || (run?.status === 'failed' ? run.error : '')
+              const sourceRuns = history.get(source.id) ?? []
+              const run = sourceRuns[0]
+              const error =
+                source.lastSyncError || (run?.status === 'failed' ? (run.error ?? '') : '')
+              const duration = run?.completedAt ? formatDuration(runDurationMs(run, now)) : ''
               return (
-                <li className="source-row" key={source.id} aria-label={source.name}>
-                  <span className="source-logo" aria-hidden="true">
-                    <ProviderLogo provider={source.provider} />
-                  </span>
-                  <div className="source-identity">
-                    <strong>{source.name}</strong>
-                    <span className="source-meta">
-                      {providerNames[source.provider]} ({providerLabels[source.provider]}) ·{' '}
-                      <span className="mono">{source.scopeId}</span>
+                <li
+                  className={`source-card${sourceFilter === source.id ? ' is-selected' : ''}${
+                    source.enabled ? '' : ' is-disabled'
+                  }`}
+                  key={source.id}
+                  id={`source-${source.id}`}
+                  aria-label={source.name}
+                >
+                  <div className="source-card-head">
+                    <span className="source-logo" aria-hidden="true">
+                      <ProviderLogo provider={source.provider} />
                     </span>
-                    <span className="source-regions">
-                      {source.regions.map((region) => (
-                        <Tag key={region} mono>
-                          {region === '*' || region === '-' ? 'all regions' : region}
-                        </Tag>
-                      ))}
-                    </span>
+                    <div className="source-identity">
+                      <strong className="truncate" title={source.name}>
+                        {source.name}
+                      </strong>
+                      <span className="source-meta" title={source.scopeId}>
+                        {providerNames[source.provider]} ({providerLabels[source.provider]}) ·{' '}
+                        <span className="mono">{source.scopeId}</span>
+                      </span>
+                    </div>
+                    <StatusBadge domain="run" status={sourceStanding(source, now)} />
                   </div>
-                  <div className="source-count">
-                    <strong>{source.clusterCount}</strong>
-                    <span>{source.clusterCount === 1 ? 'cluster' : 'clusters'}</span>
+
+                  <div className="source-regions">
+                    {source.regions.map((region) => (
+                      <Tag key={region} mono>
+                        {region === '*' || region === '-' ? 'all regions' : region}
+                      </Tag>
+                    ))}
                   </div>
-                  <div className="source-sync">
-                    <StatusBadge domain="run" status={displayedStatus(source)} />
-                    <span>
+
+                  <div className="source-stats">
+                    <div className="source-count">
+                      <strong>{source.clusterCount}</strong>
+                      <span>{source.clusterCount === 1 ? 'cluster' : 'clusters'}</span>
+                    </div>
+                    <p className="source-sync">
                       {source.lastSyncAt
                         ? `Synced ${relativeTime(source.lastSyncAt)}`
                         : 'Never synced'}
                       {run &&
                         ` · last run ${run.trigger}, ${plural(run.discoveredCount, 'cluster')}`}
-                    </span>
+                      {duration && ` in ${duration}`}
+                    </p>
                   </div>
-                  <Button
-                    size="sm"
-                    onClick={() => void syncSource(source)}
-                    disabled={!source.enabled || syncing === source.id}
-                  >
-                    {syncing === source.id ? 'Syncing…' : 'Sync now'}
-                  </Button>
+
+                  <div className="source-history">
+                    <div className="source-history-caption" aria-hidden="true">
+                      <span>Last {historySlots} runs</span>
+                      <span>now</span>
+                    </div>
+                    <RunHistory
+                      runs={sourceRuns}
+                      slots={historySlots}
+                      label={`Recent runs for ${source.name}`}
+                    />
+                  </div>
+
                   {error && (
                     <p className="source-error" role="note">
                       {error}
                     </p>
                   )}
+
+                  <div className="source-card-foot">
+                    <button
+                      type="button"
+                      className="link-button"
+                      aria-pressed={sourceFilter === source.id}
+                      onClick={() => showRuns(sourceFilter === source.id ? '' : source.id)}
+                    >
+                      View runs
+                    </button>
+                    <Button
+                      size="sm"
+                      icon={<SyncIcon aria-hidden="true" />}
+                      onClick={() => void syncSource(source)}
+                      disabled={!source.enabled || syncing === source.id}
+                    >
+                      {syncing === source.id ? 'Syncing…' : 'Sync now'}
+                    </Button>
+                  </div>
                 </li>
               )
             })}
           </ul>
-        )}
-      </div>
+        </>
+      )}
 
-      <Card
-        title="Recent sync runs"
-        description="Discovery runs across every source, newest first."
-        flush
-      >
-        {inventory.loading ? (
-          <SkeletonRows rows={3} columns={4} />
-        ) : runs.length === 0 ? (
-          <EmptyState
-            compact
-            title="No sync activity yet"
-            description="Runs appear here as sources sync."
-          />
-        ) : (
-          <ul className="run-list">
-            {runs.map((run) => (
-              <li key={run.id}>
-                <StatusDot domain="run" status={run.status} className="sync-dot" />
-                <span className="run-copy">
-                  <strong>{run.sourceName}</strong>
-                  <small>
-                    {run.trigger} · {run.discoveredCount} discovered · {run.changedCount} changed ·{' '}
-                    {run.removedCount} removed
-                    {run.error ? ` · ${run.error}` : ''}
-                  </small>
-                </span>
-                <StatusBadge domain="run" status={run.status} />
-                <time dateTime={run.queuedAt}>{relativeTime(run.queuedAt)}</time>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
+      <SyncRunsTable
+        runs={runItems}
+        loading={runs.loading}
+        error={runs.error}
+        onRetry={() => void runs.reload()}
+        sources={sources}
+        sourceFilter={sourceFilter}
+        onSourceFilterChange={(sourceId) => setUrl({ source: sourceId })}
+        onLoadMore={
+          runItems.length >= limit && limit < maxSyncRuns
+            ? () => setLimit((current) => Math.min(maxSyncRuns, current + runsPageSize))
+            : null
+        }
+        loadingMore={runs.refreshing}
+      />
     </section>
   )
 }

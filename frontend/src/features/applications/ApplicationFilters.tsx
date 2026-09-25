@@ -2,6 +2,7 @@ import { onboardingStatuses } from '../../api/onboarding'
 import { SortAscendingIcon, SortDescendingIcon } from '../../components/icons'
 import { Button } from '../../components/ui/Button'
 import { SearchInput } from '../../components/ui/SearchInput'
+import { StatusDot } from '../../components/ui/StatusDot'
 import { statusMeta } from '../../lib/status'
 import { sortLabels, type SortKey } from './application-groups'
 import type { ApplicationsQuery } from './useApplicationsQuery'
@@ -53,7 +54,7 @@ export function ApplicationFilters({ query, showSort }: Props) {
             <option value="">All statuses</option>
             {onboardingStatuses.map((item) => (
               <option value={item} key={item}>
-                {item}
+                {statusMeta('lifecycle', item).label}
               </option>
             ))}
           </select>
@@ -89,78 +90,89 @@ export function ApplicationFilters({ query, showSort }: Props) {
         )}
       </div>
 
-      {(statusCounts.length > 0 || query.hasFilters) && (
-        <div className="application-filter-summary">
-          {/* "What is broken" should be one click, not a trip through a select. */}
-          {statusCounts.length > 0 && (
-            <div className="status-chips" role="group" aria-label="Filter by status">
-              {statusCounts.map((entry) => (
-                <button
-                  type="button"
-                  key={entry.status}
-                  className={`status-chip status-chip--${entry.status}${
-                    status === entry.status ? ' is-active' : ''
-                  }`}
-                  aria-pressed={status === entry.status}
-                  data-tone={statusMeta('lifecycle', entry.status).tone}
-                  onClick={() =>
-                    updateParams({ status: status === entry.status ? '' : entry.status })
-                  }
-                >
-                  <strong>{entry.count}</strong> {entry.status}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {query.hasFilters && (
-            <div className="chip-row">
-              {search && (
-                <span className="chip">
-                  Name <strong>{search}</strong>
-                  <button
-                    type="button"
-                    className="chip-remove"
-                    aria-label={`Remove name filter ${search}`}
-                    onClick={query.clearSearch}
-                  >
-                    ×
-                  </button>
-                </span>
-              )}
-              {environment && (
-                <span className="chip">
-                  Environment <strong>{environment}</strong>
-                  <button
-                    type="button"
-                    className="chip-remove"
-                    aria-label={`Remove environment filter ${environment}`}
-                    onClick={() => updateParams({ environment: '' })}
-                  >
-                    ×
-                  </button>
-                </span>
-              )}
-              {status && (
-                <span className="chip">
-                  Status <strong>{status}</strong>
-                  <button
-                    type="button"
-                    className="chip-remove"
-                    aria-label={`Remove status filter ${status}`}
-                    onClick={() => updateParams({ status: '' })}
-                  >
-                    ×
-                  </button>
-                </span>
-              )}
-              <button type="button" className="link-button" onClick={query.clearAllFilters}>
-                Clear filters
+      <div className="application-filter-summary">
+        {/* "What is broken" should be one click, not a trip through a select.
+            The strip and the Status select write the same URL value. */}
+        <div className="status-strip" role="group" aria-label="Filter by status">
+          <button
+            type="button"
+            className={`status-strip-item${status ? '' : ' is-active'}`}
+            aria-pressed={!status}
+            onClick={() => updateParams({ status: '' })}
+          >
+            <span className="status-strip-label">All</span> <strong>{query.scopedTotal}</strong>
+          </button>
+          {statusCounts.map((entry) => {
+            const meta = statusMeta('lifecycle', entry.status)
+            const active = status === entry.status
+            return (
+              <button
+                type="button"
+                key={entry.status}
+                className={`status-strip-item status-chip--${entry.status}${
+                  active ? ' is-active' : ''
+                }${entry.count === 0 ? ' is-empty' : ''}`}
+                aria-pressed={active}
+                data-tone={meta.tone}
+                onClick={() => updateParams({ status: active ? '' : entry.status })}
+              >
+                <StatusDot tone={meta.tone} size="sm" plain />
+                <span className="status-strip-label">{meta.label}</span>{' '}
+                <strong>{entry.count}</strong>
               </button>
-            </div>
+            )
+          })}
+          {query.scopedTotal > 0 && (
+            <span className="status-strip-bar" aria-hidden="true">
+              {statusCounts
+                .filter((entry) => entry.count > 0)
+                .map((entry) => (
+                  <span
+                    key={entry.status}
+                    data-tone={statusMeta('lifecycle', entry.status).tone}
+                    style={{ flexGrow: entry.count }}
+                  />
+                ))}
+            </span>
           )}
         </div>
-      )}
+
+        {(search || environment) && (
+          <div className="chip-row">
+            {search && (
+              <span className="chip">
+                Name <strong>{search}</strong>
+                <button
+                  type="button"
+                  className="chip-remove"
+                  aria-label={`Remove name filter ${search}`}
+                  onClick={query.clearSearch}
+                >
+                  ×
+                </button>
+              </span>
+            )}
+            {environment && (
+              <span className="chip">
+                Environment <strong>{environment}</strong>
+                <button
+                  type="button"
+                  className="chip-remove"
+                  aria-label={`Remove environment filter ${environment}`}
+                  onClick={() => updateParams({ environment: '' })}
+                >
+                  ×
+                </button>
+              </span>
+            )}
+          </div>
+        )}
+        {query.hasFilters && (
+          <button type="button" className="link-button" onClick={query.clearAllFilters}>
+            Clear filters
+          </button>
+        )}
+      </div>
     </div>
   )
 }

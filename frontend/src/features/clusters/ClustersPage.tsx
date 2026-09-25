@@ -1,54 +1,99 @@
-import { useCallback, useMemo, useState } from 'react'
-import { getClusters, getSources, type Cluster, type Provider } from '../../api/inventory'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { getClusters, getSources, type Cluster, type ClusterSort } from '../../api/inventory'
 import { KubernetesLogo, ProviderLogo } from '../../components/BrandIcons'
+import { CloudIcon, ClusterIcon, WarningIcon } from '../../components/icons'
 import { Banner } from '../../components/ui/Banner'
 import { StatusBadge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { DataTable, type Column } from '../../components/ui/DataTable'
 import { EmptyState } from '../../components/ui/EmptyState'
+import { Switch } from '../../components/ui/Field'
+import { FilterMenu, type FilterMenuOption } from '../../components/ui/FilterMenu'
+import { LoadingState } from '../../components/ui/LoadingState'
 import { PageHeader } from '../../components/ui/PageHeader'
 import { Pagination } from '../../components/ui/Pagination'
 import { RefreshIndicator } from '../../components/ui/RefreshIndicator'
 import { SearchInput } from '../../components/ui/SearchInput'
 import { SegmentedControl } from '../../components/ui/SegmentedControl'
-import { SkeletonRows } from '../../components/ui/Skeleton'
 import { StatCard } from '../../components/ui/StatCard'
-import { useDebouncedValue } from '../../hooks/useDebouncedValue'
+import { Timestamp } from '../../components/ui/Timestamp'
 import { usePolledResource } from '../../hooks/usePolledResource'
-import { isOlderThan, plural, relativeTime } from '../../lib/format'
+import { useUrlState } from '../../hooks/useUrlState'
+import { isOlderThan, plural } from '../../lib/format'
 import { emptyProviderCounts, providerLabels, providers, staleAfterMs } from '../../lib/providers'
+import { statusMeta } from '../../lib/status'
 import { ClusterDetailDrawer } from './ClusterDetailDrawer'
+import {
+  clusterPageSizes,
+  clusterStatusGroups,
+  clusterUrlDefaults,
+  inventoryStatus,
+  nextSort,
+  parsePage,
+  parsePageSize,
+  parseProvider,
+  parseSort,
+  type ProviderFilter,
+} from './cluster-filters'
 import './clusters.css'
 
-const pageSizes = [25, 50, 100]
 const pollIntervalMs = 30_000
 const searchDebounceMs = 250
 
-type ProviderFilter = Provider | 'all'
+const statusOptions: FilterMenuOption[] = clusterStatusGroups.flatMap(({ group, values }) =>
+  values.map((value) => ({ value, group, label: statusMeta('cluster', value).label })),
+)
 
 export function ClustersPage() {
-  const [provider, setProvider] = useState<ProviderFilter>('all')
-  const [globalSearch, setGlobalSearch] = useState('')
-  const [providerSearch, setProviderSearch] = useState('')
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(25)
+  const [url, setUrl] = useUrlState(clusterUrlDefaults)
+  const provider = parseProvider(url.provider)
+  const providerParam = provider === 'all' ? '' : provider
+  const search = url.search
+  const sort = parseSort(url.sort)
+  const order = url.order === 'desc' ? 'desc' : 'asc'
+  const page = parsePage(url.page)
+  const pageSize = parsePageSize(url.pageSize)
+  const includeRemoved = url.removed === 'true'
   const [selectedCluster, setSelectedCluster] = useState<Cluster | null>(null)
 
-  // Two searches, deliberately: the global box always spans every provider,
-  // while the scoped box searches only inside the provider just picked.
-  const searchInput = provider === 'all' ? globalSearch : providerSearch
-  const search = useDebouncedValue(searchInput, searchDebounceMs)
-  const providerParam = provider === 'all' ? '' : provider
+  // What the search box shows runs ahead of the URL by the debounce. When the
+  // URL moves on its own (a cleared filter, a new provider, back/forward), the
+  // box follows it.
+  const [draft, setDraft] = useState(search)
+  const [syncedSearch, setSyncedSearch] = useState(search)
+  if (syncedSearch !== search) {
+    setSyncedSearch(search)
+    setDraft(search)
+  }
+
+  useEffect(() => {
+    if (draft === search) return
+    const timer = window.setTimeout(() => setUrl({ search: draft, page: 1 }), searchDebounceMs)
+    return () => window.clearTimeout(timer)
+  }, [draft, search, setUrl])
 
   const load = useCallback(
     async (signal: AbortSignal) => {
       const [clusterPage, sources] = await Promise.all([
-        getClusters({ provider: providerParam, search, page, pageSize }, signal),
+        getClusters(
+          {
+            provider: providerParam,
+            search,
+            source: url.source,
+            status: url.status,
+            includeRemoved,
+            sort,
+            order,
+            page,
+            pageSize,
+          },
+          signal,
+        ),
         getSources(signal),
       ])
       return { clusterPage, sources }
     },
-    [page, pageSize, providerParam, search],
+    [providerParam, search, url.source, url.status, includeRemoved, sort, order, page, pageSize],
   )
   const inventory = usePolledResource(load, { intervalMs: pollIntervalMs })
   const sources = useMemo(() => inventory.data?.sources ?? [], [inventory.data])
@@ -71,30 +116,52 @@ export function ClustersPage() {
       (item.lastSyncStatus === 'failed' || isOlderThan(item.lastSyncAt, staleAfterMs)),
   ).length
 
-  function updateFilter(action: () => void) {
-    action()
-    setPage(1)
-  }
+  const refinements = Boolean(draft || url.source || url.status || includeRemoved)
+  const hasFilters = refinements || provider !== 'all'
 
   function selectProvider(next: ProviderFilter) {
-    updateFilter(() => {
-      setProvider(next)
-      setProviderSearch('')
-      if (next === 'all') setGlobalSearch('')
-    })
+    // A source belongs to one provider, so a source filter does not survive
+    // the switch to another.
+    const keepSource = sources.find((item) => item.id === url.source)?.provider === next
+    setDraft('')
+    setUrl({ provider: next, search: '', source: keepSource ? url.source : '', page: 1 })
+  }
+
+  function searchEverywhere(value: string) {
+    setDraft(value)
+    // The global box always spans every provider, so typing into it while a
+    // provider is picked drops that provider at once rather than after the
+    // debounce.
+    if (provider !== 'all') setUrl({ provider: 'all', search: value, source: '', page: 1 })
   }
 
   function clearSearch() {
-    updateFilter(() => {
-      setGlobalSearch('')
-      setProviderSearch('')
-    })
+    setDraft('')
+    setUrl({ search: '', page: 1 })
   }
+
+  function clearFilters() {
+    setDraft('')
+    setUrl({ provider: 'all', search: '', source: '', status: '', removed: false, page: 1 })
+  }
+
+  function toggleSort(column: string) {
+    setUrl({ ...nextSort(sort, order, column as ClusterSort), page: 1 })
+  }
+
+  const sourceOptions: FilterMenuOption[] = sources
+    .filter((item) => provider === 'all' || item.provider === provider)
+    .map((item) => ({
+      value: item.id,
+      label: item.name,
+      icon: <ProviderLogo provider={item.provider} />,
+    }))
 
   const columns: Column<Cluster>[] = [
     {
-      id: 'cluster',
+      id: 'name',
       header: 'Cluster',
+      sortable: true,
       className: 'col-cluster',
       cell: (cluster) => (
         // Endpoint access rides with the source name: it qualifies how you
@@ -125,6 +192,7 @@ export function ClustersPage() {
     {
       id: 'provider',
       header: 'Provider',
+      sortable: true,
       cell: (cluster) => (
         <span className="provider-cell">
           <ProviderLogo provider={cluster.provider} className="provider-cell-logo" />
@@ -135,38 +203,41 @@ export function ClustersPage() {
     {
       id: 'location',
       header: 'Location',
+      cell: (cluster) => <span className="mono cell-muted nowrap">{cluster.location || '—'}</span>,
+    },
+    {
+      id: 'version',
+      header: 'Version',
+      sortable: true,
       cell: (cluster) => (
-        <span className="cell-stack">
-          <span className="mono">{cluster.location}</span>
-          <small className="mono" title={cluster.kubernetesVersion || undefined}>
-            {cluster.kubernetesVersion || '—'}
-          </small>
+        <span className="mono" title={cluster.kubernetesVersion || undefined}>
+          {cluster.kubernetesVersion || '—'}
         </span>
       ),
     },
     {
       id: 'nodes',
       header: 'Nodes',
+      sortable: true,
       align: 'end',
       className: 'cell-numeric',
       cell: (cluster) => cluster.nodeCount ?? '—',
     },
     {
-      id: 'health',
+      id: 'status',
       header: 'Health',
-      cell: (cluster) => (
-        <StatusBadge domain="cluster" status={cluster.removedAt ? 'removed' : 'active'} />
-      ),
+      sortable: true,
+      cell: (cluster) => <StatusBadge domain="cluster" status={inventoryStatus(cluster)} />,
     },
     {
-      id: 'seen',
+      id: 'lastSeen',
       header: 'Last seen',
+      sortable: true,
       cell: (cluster) => (
-        <span
+        <Timestamp
+          value={cluster.lastSeenAt}
           className={isOlderThan(cluster.lastSeenAt, staleAfterMs) ? 'seen-stale' : 'cell-muted'}
-        >
-          {relativeTime(cluster.lastSeenAt)}
-        </span>
+        />
       ),
     },
   ]
@@ -194,12 +265,28 @@ export function ClustersPage() {
     })),
   ]
 
+  const viewHint = [
+    provider === 'all' ? 'all providers' : providerLabels[provider],
+    refinements && 'filtered',
+  ]
+    .filter(Boolean)
+    .join(', ')
+
   return (
     <section className="page" aria-labelledby="clusters-heading">
       <PageHeader
         id="clusters-heading"
         title="Clusters"
         description="Every cluster your connected cloud sources have discovered."
+        actions={
+          <SearchInput
+            label="Search all clusters across providers"
+            placeholder="Search all clusters"
+            value={provider === 'all' ? draft : ''}
+            onChange={searchEverywhere}
+            className="cluster-global-search"
+          />
+        }
         meta={
           <RefreshIndicator
             lastUpdated={inventory.lastUpdated}
@@ -212,17 +299,15 @@ export function ClustersPage() {
       <div className="cluster-stats">
         <StatCard
           label="Fleet size"
+          icon={<ClusterIcon />}
           value={fleetTotal}
           hint={plural(activeSources, 'active source')}
           aria-label={`${fleetTotal} clusters across ${activeSources} sources`}
         />
-        <StatCard
-          label="In this view"
-          value={total}
-          hint={provider === 'all' ? 'all providers' : providerLabels[provider]}
-        />
+        <StatCard label="In this view" icon={<CloudIcon />} value={total} hint={viewHint} />
         <StatCard
           label="Sources behind"
+          icon={<WarningIcon />}
           value={staleSources}
           tone={staleSources > 0 ? 'warn' : undefined}
           hint={staleSources > 0 ? 'failed or not synced recently' : 'all sources current'}
@@ -241,7 +326,7 @@ export function ClustersPage() {
       )}
 
       <div className="panel">
-        <div className="panel-toolbar">
+        <div className="panel-toolbar cluster-toolbar">
           <SegmentedControl
             label="Filter by cloud provider"
             options={providerOptions}
@@ -249,32 +334,46 @@ export function ClustersPage() {
             onChange={selectProvider}
             className="provider-filter"
           />
-          <div className="panel-toolbar-search">
-            {/* The global box keeps its position in the tree whichever provider
-                is picked, so typing into it survives the switch back to All. */}
-            {provider !== 'all' && (
-              <SearchInput
-                label={`Search within ${providerLabels[provider]}`}
-                placeholder={`Search ${providerLabels[provider]} clusters`}
-                value={providerSearch}
-                autoFocus
-                onChange={(value) => updateFilter(() => setProviderSearch(value))}
-              />
-            )}
+          {provider !== 'all' && (
             <SearchInput
-              label="Search all clusters across providers"
-              placeholder={provider === 'all' ? 'Search clusters' : 'Search every provider'}
-              value={globalSearch}
-              onChange={(value) =>
-                updateFilter(() => {
-                  setGlobalSearch(value)
-                  setProvider('all')
-                  setProviderSearch('')
-                })
-              }
-              className={provider === 'all' ? undefined : 'cluster-global-search'}
+              label={`Search within ${providerLabels[provider]}`}
+              placeholder={`Search ${providerLabels[provider]} clusters`}
+              value={draft}
+              autoFocus
+              onChange={setDraft}
+              className="cluster-scoped-search"
             />
-          </div>
+          )}
+        </div>
+
+        <div className="cluster-filter-bar" role="group" aria-label="Cluster filters">
+          <FilterMenu
+            label="Source"
+            allLabel="All sources"
+            value={url.source}
+            options={sourceOptions}
+            fallbackLabel={(id) => sources.find((item) => item.id === id)?.name ?? id}
+            onChange={(value) => setUrl({ source: value, page: 1 })}
+          />
+          <FilterMenu
+            label="Status"
+            allLabel="Any status"
+            value={url.status}
+            options={statusOptions}
+            fallbackLabel={(value) => statusMeta('cluster', value).label}
+            onChange={(value) => setUrl({ status: value, page: 1 })}
+          />
+          <Switch
+            label="Show removed"
+            checked={includeRemoved}
+            onChange={(event) => setUrl({ removed: event.target.checked, page: 1 })}
+            className="cluster-removed-switch"
+          />
+          {hasFilters && (
+            <button type="button" className="link-button cluster-reset" onClick={clearFilters}>
+              Reset filters
+            </button>
+          )}
         </div>
 
         <div className="panel-subheader">
@@ -282,13 +381,13 @@ export function ClustersPage() {
             {provider === 'all' ? 'All providers' : providerLabels[provider]}
             <span>{plural(total, 'result')}</span>
           </h2>
-          {searchInput && (
+          {draft && (
             <span className="chip">
-              Name <strong>{searchInput}</strong>
+              Name <strong>{draft}</strong>
               <button
                 type="button"
                 className="chip-remove"
-                aria-label={`Remove name filter ${searchInput}`}
+                aria-label={`Remove name filter ${draft}`}
                 onClick={clearSearch}
               >
                 ×
@@ -299,28 +398,25 @@ export function ClustersPage() {
 
         <div aria-busy={inventory.loading || inventory.refreshing}>
           {inventory.loading ? (
-            <div role="status">
-              <span className="sr-only">Loading cluster inventory…</span>
-              <SkeletonRows rows={6} columns={6} />
-            </div>
+            <LoadingState label="Loading cluster inventory…" rows={6} columns={7} />
           ) : clusters.length === 0 ? (
             <EmptyState
               icon={<KubernetesLogo />}
               title={
-                searchInput || provider !== 'all'
+                hasFilters
                   ? 'Nothing matches those filters'
                   : inventory.error
                     ? 'Cluster inventory is unavailable'
                     : 'No clusters discovered yet'
               }
               description={
-                searchInput || provider !== 'all'
+                hasFilters
                   ? 'Try a different search, or clear the filters to see every cluster.'
                   : 'Sync an enabled cloud source to pull your clusters in.'
               }
               action={
-                searchInput || provider !== 'all' ? (
-                  <Button size="sm" onClick={() => selectProvider('all')}>
+                hasFilters ? (
+                  <Button size="sm" onClick={clearFilters}>
                     Clear filters
                   </Button>
                 ) : undefined
@@ -332,7 +428,11 @@ export function ClustersPage() {
               columns={columns}
               rows={clusters}
               rowKey={(cluster) => cluster.id}
+              sort={sort ? { column: sort, direction: order } : undefined}
+              onSort={toggleSort}
               onRowClick={setSelectedCluster}
+              // The name button is each row's keyboard way in; a focusable row
+              // as well would make every row two tab stops.
               focusableRows={false}
               rowClassName={(cluster) => (cluster.removedAt ? 'is-removed' : '')}
             />
@@ -343,9 +443,9 @@ export function ClustersPage() {
           page={page}
           pageSize={pageSize}
           total={total}
-          pageSizeOptions={pageSizes}
-          onPageChange={setPage}
-          onPageSizeChange={(size) => updateFilter(() => setPageSize(size))}
+          pageSizeOptions={clusterPageSizes}
+          onPageChange={(next) => setUrl({ page: next })}
+          onPageSizeChange={(size) => setUrl({ pageSize: size, page: 1 })}
           noun={['cluster', 'clusters']}
           pageSizeLabel="Clusters per page"
           label="Clusters pagination"

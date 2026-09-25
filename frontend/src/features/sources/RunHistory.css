@@ -1,0 +1,50 @@
+.run-history {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 3px;
+  align-items: end;
+  height: 22px;
+}
+
+.run-history .tooltip-anchor {
+  display: flex;
+  align-items: flex-end;
+  height: 100%;
+}
+
+.run-tick {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 3px;
+  background: var(--tone-solid);
+  border-radius: var(--radius-xs);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+/* A failure stands taller than a success: the eye finds it first. */
+.run-tick[data-tone='ok'] {
+  height: 60%;
+  opacity: 0.75;
+}
+
+.run-tick--empty {
+  height: 30%;
+  background: var(--border-subtle);
+}
+
+.tooltip-anchor:hover > .run-tick {
+  transform: scaleY(1.12);
+  transform-origin: bottom;
+}
+
+.run-tick--pulse {
+  animation: run-tick-pulse 1.4s var(--ease-in-out) infinite;
+}
+
+@keyframes run-tick-pulse {
+  50% {
+    opacity: 0.4;
+  }
+}

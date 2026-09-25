@@ -32,38 +32,71 @@
   justify-content: space-between;
 }
 
-.status-chips {
+.status-strip {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2);
+  gap: var(--space-1);
+  align-items: center;
 }
 
-.status-chip {
+.status-strip-item {
   display: inline-flex;
   gap: 6px;
   align-items: center;
-  height: 28px;
+  height: 30px;
   padding: 0 var(--space-3);
   color: var(--text-muted);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
   font-size: var(--text-xs);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
 }
 
-.status-chip strong {
-  color: var(--tone-fg);
+.status-strip-item strong {
+  color: var(--text);
+  font-weight: var(--weight-semibold);
   font-variant-numeric: tabular-nums;
 }
 
-.status-chip:hover {
-  border-color: var(--border-strong);
+.status-strip-item:hover {
+  background: var(--surface-hover);
 }
 
-.status-chip.is-active {
+.status-strip-item.is-empty {
+  color: var(--text-subtle);
+}
+
+.status-strip-item.is-empty strong {
+  color: var(--text-subtle);
+  font-weight: var(--weight-regular);
+}
+
+.status-strip-item.is-active {
   color: var(--text);
-  background: var(--tone-soft);
-  border-color: var(--tone-border);
+  background: var(--tone-soft, var(--accent-soft));
+  border-color: var(--tone-border, var(--accent-border));
+}
+
+.status-strip-item.is-active strong {
+  color: var(--tone-fg, var(--accent));
+}
+
+/* The mix at a glance, beside the counts it proportions. */
+.status-strip-bar {
+  display: flex;
+  gap: 2px;
+  width: 140px;
+  height: 6px;
+  margin-left: var(--space-3);
+}
+
+.status-strip-bar > span {
+  min-width: 4px;
+  background: var(--tone-solid);
+  border-radius: var(--radius-pill);
 }
 
 .application-loading {
@@ -122,6 +155,7 @@
 }
 
 .application-tile {
+  position: relative;
   display: grid;
   gap: var(--space-3);
   align-content: start;
@@ -129,16 +163,66 @@
   padding: var(--space-4);
   background: var(--surface);
   border: 1px solid var(--border);
-  border-left: 3px solid var(--tone-solid);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-xs);
   transition:
-    border-color var(--duration-fast),
-    box-shadow var(--duration-fast);
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+/* The reconciliation verdict as a hairline along the top edge. */
+.application-tile::before {
+  position: absolute;
+  top: -1px;
+  right: var(--space-4);
+  left: var(--space-4);
+  height: 2px;
+  background: var(--tone-solid);
+  border-radius: 0 0 var(--radius-pill) var(--radius-pill);
+  content: '';
+}
+
+.application-tile[data-tone='idle']::before {
+  background: var(--border-strong);
 }
 
 .application-tile:hover {
+  border-color: var(--border-strong);
   box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.application-tile:focus-within {
+  border-color: var(--accent-border);
+}
+
+/* The name link covers the card so the whole tile opens the application. */
+.application-tile-name::after {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-lg);
+  content: '';
+}
+
+.application-tile-argo {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.application-tile-argo svg {
+  width: 12px;
+  height: 12px;
+}
+
+.platform-logo {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  margin-right: 4px;
 }
 
 .application-tile-head {
@@ -218,11 +302,11 @@
 
 /* Table ------------------------------------------------------------------- */
 
-.applications-table {
+.applications-table-frame .data-table {
   min-width: 920px;
 }
 
-.applications-table .cell-stack {
+.applications-table-frame .cell-stack {
   max-width: 260px;
 }
 
@@ -256,14 +340,14 @@
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.8;
-  transition: transform var(--duration-fast);
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 
 .row-expander[aria-expanded='true'] svg {
   transform: rotate(90deg);
 }
 
-.applications-table > tbody > tr.is-expanded > td {
+.applications-table-frame .data-table > tbody > tr.is-expanded > td {
   border-bottom-color: transparent;
 }
 
@@ -328,5 +412,9 @@
 
   .application-tiles-frame {
     padding: var(--space-3);
+  }
+
+  .status-strip-bar {
+    display: none;
   }
 }
