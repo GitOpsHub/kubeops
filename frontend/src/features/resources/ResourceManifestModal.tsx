@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import { errorMessage, isAbortError } from '../../api/client'
 import { getResourceManifest, type ResourceNode } from '../../api/onboarding'
+import { resourceSyncLabel } from '../../lib/resource-graph'
 import { KubernetesResourceIcon } from '../../components/KubernetesResourceIcon'
 import { StatusBadge, Tag } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
-import { DeleteIcon } from '../../components/icons'
+import { ChevronRightIcon, DeleteIcon } from '../../components/icons'
 import { Dialog, DialogClose } from '../../components/ui/Dialog'
 import { DialogFooter, DialogHeader } from '../../components/ui/DialogParts'
 import { Skeleton } from '../../components/ui/Skeleton'
 import { formatResourceManifest } from '../../lib/resource-manifest'
+import { ManifestCode } from './ManifestCode'
 import { toRef } from './resource-ref'
 
 type Props = {
@@ -29,6 +32,13 @@ export function ResourceManifestModal({ node, onboardingId, targetId, onClose, o
   const [manifest, setManifest] = useState('')
   const [manifestError, setManifestError] = useState('')
   const [loading, setLoading] = useState(true)
+  const location = useLocation()
+  // The application page's Events tab reads these, so the link lands on this
+  // object's events without the operator re-finding it. Other parameters,
+  // such as the selected target, are kept.
+  const eventsSearch = new URLSearchParams(location.search)
+  eventsSearch.set('tab', 'events')
+  eventsSearch.set('uid', node.uid)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -73,7 +83,17 @@ export function ResourceManifestModal({ node, onboardingId, targetId, onClose, o
         {node.healthStatus && node.healthStatus !== 'Unknown' && (
           <StatusBadge domain="health" status={node.healthStatus} />
         )}
-        {node.syncStatus && <Tag>{node.syncStatus}</Tag>}
+        {node.syncStatus && (
+          <StatusBadge domain="sync" status={node.syncStatus} label={resourceSyncLabel(node)} />
+        )}
+        <Link
+          className="link-button resource-modal-events"
+          to={{ pathname: location.pathname, search: `?${eventsSearch}` }}
+          onClick={onClose}
+        >
+          View events
+          <ChevronRightIcon aria-hidden="true" />
+        </Link>
       </div>
 
       <div className="resource-modal-body">
@@ -89,9 +109,7 @@ export function ResourceManifestModal({ node, onboardingId, targetId, onClose, o
             {manifestError}
           </div>
         ) : (
-          <pre className="code-pane" aria-label={`YAML for ${node.name}`}>
-            {manifest}
-          </pre>
+          <ManifestCode code={manifest} label={`YAML for ${node.name}`} />
         )}
       </div>
 

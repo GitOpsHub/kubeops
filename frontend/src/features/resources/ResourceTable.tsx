@@ -1,11 +1,17 @@
 import { useState } from 'react'
 import { isLoggableKind } from '../../api/argo'
 import type { ResourceNode } from '../../api/onboarding'
+import { KubernetesResourceIcon } from '../../components/KubernetesResourceIcon'
 import { StatusBadge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { DataTable, type Column } from '../../components/ui/DataTable'
 import { age } from '../../lib/format'
-import { sortResources, type SortColumn, type SortDirection } from '../../lib/resource-graph'
+import {
+  resourceSyncLabel,
+  sortResources,
+  type SortColumn,
+  type SortDirection,
+} from '../../lib/resource-graph'
 
 type Props = {
   nodes: ResourceNode[]
@@ -44,13 +50,22 @@ export function ResourceTable({ nodes, onSelect, onDelete, onLogs }: Props) {
       id: 'kind',
       header: 'Kind',
       sortable: true,
-      cell: (node) => <span className="resource-kind">{node.kind}</span>,
+      cell: (node) => (
+        <span className="resource-kind">
+          <KubernetesResourceIcon kind={node.kind} className="resource-kind-icon" />
+          {node.kind}
+        </span>
+      ),
     },
     {
       id: 'name',
       header: 'Name',
       sortable: true,
-      cell: (node) => <span className="mono resource-name">{node.name}</span>,
+      cell: (node) => (
+        <span className="mono resource-name" title={node.name}>
+          {node.name}
+        </span>
+      ),
     },
     {
       id: 'namespace',
@@ -74,8 +89,13 @@ export function ResourceTable({ nodes, onSelect, onDelete, onLogs }: Props) {
       id: 'syncStatus',
       header: 'Sync',
       sortable: true,
-      className: 'cell-muted',
-      cell: (node) => node.syncStatus || '—',
+      // Pods and other owned objects are not tracked for sync; a dash says so.
+      cell: (node) =>
+        node.syncStatus ? (
+          <StatusBadge domain="sync" status={node.syncStatus} label={resourceSyncLabel(node)} />
+        ) : (
+          <span className="subtle">—</span>
+        ),
     },
     {
       id: 'createdAt',
@@ -92,6 +112,17 @@ export function ResourceTable({ nodes, onSelect, onDelete, onLogs }: Props) {
       align: 'end',
       cell: (node) => (
         <span className="resource-row-actions">
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-label={`Info for ${node.kind} ${node.name}`}
+            onClick={(event) => {
+              event.stopPropagation()
+              onSelect(node)
+            }}
+          >
+            Info
+          </Button>
           {onLogs && isLoggableKind(node.kind) && (
             <Button
               size="sm"
@@ -141,6 +172,10 @@ export function ResourceTable({ nodes, onSelect, onDelete, onLogs }: Props) {
             Clear filter
           </button>
         )}
+        <span className="resource-count">
+          {kind ? `${sorted.length} of ${nodes.length}` : nodes.length}{' '}
+          {nodes.length === 1 ? 'resource' : 'resources'}
+        </span>
       </div>
       <DataTable
         label="Kubernetes resources"
