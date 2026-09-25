@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { normalise, statusMeta, type StatusDomain, type Tone } from '../../lib/status'
+import { statusMeta, type StatusDomain, type Tone } from '../../lib/status'
 import './Badge.css'
 
 type StatusProps = {
@@ -24,7 +24,9 @@ type StatusProps = {
 export function StatusBadge({ status, domain, tone, label }: StatusProps) {
   const meta = statusMeta(domain, status)
   const resolved = tone ?? meta.tone
-  const caseOnly = !label && normalise(meta.label) === normalise(status)
+  // A plain lowercase compare, not normalise(): normalise strips spaces, which
+  // would treat "OutOfSync" → "Out of Sync" as a case-only change.
+  const caseOnly = !label && meta.label.toLowerCase() === status.trim().toLowerCase()
   const text = label ?? (caseOnly ? status : meta.label)
   const classes = [
     'status-badge',
