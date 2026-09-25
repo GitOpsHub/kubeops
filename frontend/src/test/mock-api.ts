@@ -126,7 +126,9 @@ export function mockAPI(initial: Partial<MockState> = {}) {
     const resourceRoute = path.match(
       /^\/application-onboardings\/([^/]+)\/targets\/([^/]+)\/resources(\/manifest)?$/,
     )
-    if (path.endsWith('/resources/logs')) {
+    // Log viewer: the stream (at its current path and the old alias) and the
+    // container list it picks from. Two lines, then the stream closes.
+    if (/\/targets\/[^/]+\/(resources\/)?logs$/.test(path)) {
       return new Response(
         [
           JSON.stringify({
@@ -142,6 +144,15 @@ export function mockAPI(initial: Partial<MockState> = {}) {
         ].join('\n') + '\n',
         { headers: { 'Content-Type': 'application/x-ndjson' } },
       )
+    }
+    if (path.endsWith('/resources/containers')) {
+      const kind = (query.get('kind') ?? '').toLowerCase()
+      const loggable = ['pod', 'deployment', 'statefulset', 'daemonset', 'replicaset', 'job']
+      return Response.json({
+        items: loggable.includes(kind)
+          ? [{ name: 'app', image: 'registry.example.test/payments-api:2.4.1', init: false }]
+          : [],
+      })
     }
     if (resourceRoute) {
       const [, , , manifestSuffix] = resourceRoute
