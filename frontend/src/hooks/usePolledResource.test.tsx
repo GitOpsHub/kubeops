@@ -95,6 +95,41 @@ describe('usePolledResource', () => {
     expect(result.current.data).toBe('ok')
   })
 
+  it('reschedules on a new interval without refetching or resetting the backoff', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    let fail = false
+    const load = vi.fn(async () => {
+      if (fail) throw new Error('unreachable')
+      return 'ok'
+    })
+    const { result, rerender } = renderHook(
+      ({ intervalMs }) => usePolledResource(load, { intervalMs }),
+      { initialProps: { intervalMs: 10_000 } },
+    )
+    await flush()
+    expect(load).toHaveBeenCalledTimes(1)
+
+    // Switching cadence keeps the data and issues no request of its own.
+    rerender({ intervalMs: 1_000 })
+    expect(load).toHaveBeenCalledTimes(1)
+    expect(result.current.data).toBe('ok')
+    await act(async () => vi.advanceTimersByTime(1_000))
+    expect(load).toHaveBeenCalledTimes(2)
+
+    // Two failures leave one tick to skip; a cadence change must not forget it.
+    fail = true
+    await act(async () => vi.advanceTimersByTime(1_000))
+    await act(async () => vi.advanceTimersByTime(1_000))
+    expect(load).toHaveBeenCalledTimes(4)
+    rerender({ intervalMs: 2_000 })
+    expect(load).toHaveBeenCalledTimes(4)
+    await act(async () => vi.advanceTimersByTime(2_000))
+    expect(load).toHaveBeenCalledTimes(4)
+    await act(async () => vi.advanceTimersByTime(2_000))
+    expect(load).toHaveBeenCalledTimes(5)
+    expect(result.current.data).toBe('ok')
+  })
+
   it('pauses while the tab is hidden and catches up when it returns', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     const load = vi.fn(async () => 'data')

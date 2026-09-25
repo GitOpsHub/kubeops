@@ -14,9 +14,12 @@ import { isAbortError } from '../api/client'
  *   so an unreachable API is not hammered by every open tab.
  *
  * `load` must be referentially stable (wrap it in `useCallback`); a new `load`
- * is treated as a new query and triggers an immediate fetch. Polling counts
- * interval ticks rather than timestamps so it stays deterministic under fake
- * timers.
+ * is treated as a new query and triggers an immediate fetch. A new
+ * `intervalMs` is not: it only reschedules the timer, keeping the data, the
+ * in-flight request, and any backoff, so a view can poll faster while
+ * something is in flight without refetching each time it switches. Polling
+ * counts interval ticks rather than timestamps so it stays deterministic under
+ * fake timers.
  */
 
 export type PolledResource<T> = {
@@ -57,6 +60,13 @@ export function usePolledResource<T>(
   })
   const [pending, setPending] = useState(0)
   const runRef = useRef<(() => Promise<void>) | null>(null)
+  const tickRef = useRef<(() => void) | null>(null)
+  // Read by the visibility catch-up, which lives with the query rather than
+  // the timer and so must see the interval without depending on it.
+  const intervalRef = useRef(intervalMs)
+  useEffect(() => {
+    intervalRef.current = intervalMs
+  }, [intervalMs])
 
   useEffect(() => {
     if (!enabled) return
@@ -98,7 +108,7 @@ export function usePolledResource<T>(
 
     const hidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden'
 
-    const tick = () => {
+    tickRef.current = () => {
       if (hidden() || inFlight > 0) return
       if (ticksToSkip > 0) {
         ticksToSkip -= 1
@@ -110,22 +120,30 @@ export function usePolledResource<T>(
     // Catch up at once when the tab returns, rather than waiting out the
     // remainder of an interval that was paused.
     const handleVisibility = () => {
-      if (hidden() || inFlight > 0 || !intervalMs) return
-      if (Date.now() - lastSuccess >= intervalMs) void run()
+      const every = intervalRef.current
+      if (hidden() || inFlight > 0 || !every) return
+      if (Date.now() - lastSuccess >= every) void run()
     }
-
-    const interval = intervalMs ? window.setInterval(tick, intervalMs) : undefined
     document.addEventListener('visibilitychange', handleVisibility)
 
     return () => {
       disposed = true
       for (const controller of controllers) controller.abort()
-      if (interval !== undefined) window.clearInterval(interval)
       document.removeEventListener('visibilitychange', handleVisibility)
       runRef.current = null
+      tickRef.current = null
       // Requests aborted above never reach their own decrement.
       setPending(0)
     }
+  }, [enabled, load])
+
+  // The timer is separate from the query so a new cadence restarts only the
+  // clock. It still restarts with a new query, as it always has, so the first
+  // tick of a new query is a full interval after its initial fetch.
+  useEffect(() => {
+    if (!enabled || !intervalMs) return
+    const interval = window.setInterval(() => tickRef.current?.(), intervalMs)
+    return () => window.clearInterval(interval)
   }, [enabled, intervalMs, load])
 
   const reload = useCallback(() => runRef.current?.() ?? Promise.resolve(), [])
