@@ -75,22 +75,31 @@ export function usePolledResource<T>(
     let failures = 0
     let ticksToSkip = 0
     let lastSuccess = 0
+    let latest = 0
     const controllers = new Set<AbortController>()
 
+    // Only the newest request may commit. Timer and visibility runs never
+    // overlap one in flight, but a reload does, and it must win: a caller
+    // reloads because what it is about to read has changed (a sync it just
+    // started), so an older response landing afterwards would show state from
+    // before that change. Aborting the older request saves the round trip; the
+    // id check also covers a loader that ignores its signal.
     const run = async () => {
+      const id = ++latest
+      for (const controller of controllers) controller.abort()
       const controller = new AbortController()
       controllers.add(controller)
       inFlight += 1
       setPending((count) => count + 1)
       try {
         const data = await load(controller.signal)
-        if (disposed) return
+        if (disposed || id !== latest) return
         failures = 0
         ticksToSkip = 0
         lastSuccess = Date.now()
         setState({ data, error: null, lastUpdated: lastSuccess })
       } catch (error) {
-        if (disposed || isAbortError(error)) return
+        if (disposed || id !== latest || isAbortError(error)) return
         failures += 1
         ticksToSkip = Math.min(maxBackoffTicks, 2 ** (failures - 1) - 1)
         setState((current) => ({
