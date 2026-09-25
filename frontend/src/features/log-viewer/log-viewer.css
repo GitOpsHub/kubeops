@@ -50,6 +50,13 @@
   margin-left: auto;
 }
 
+.log-toolbar-divider {
+  width: 1px;
+  height: 18px;
+  margin-inline: var(--space-1);
+  background: var(--border);
+}
+
 .log-resource {
   display: inline-flex;
   gap: var(--space-2);
@@ -292,6 +299,7 @@
 .log-row {
   --ln-width: 6ch;
   --ts-width: 13ch;
+  /* LogViewer overrides this from the longest pod label on screen. */
   --pod-width: 18ch;
   --row-tone: transparent;
 
@@ -350,6 +358,7 @@
 }
 
 .log-ln {
+  align-self: start;
   color: var(--code-muted);
   text-align: right;
   opacity: 0.7;
@@ -358,13 +367,17 @@
 }
 
 .log-ts {
+  align-self: start;
   color: var(--code-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
+/* Gutter columns pin to the first line of a wrapped message, the way an
+   editor's line numbers do, instead of floating to its middle. */
 .log-pod {
   display: inline-flex;
+  align-self: start;
   height: 20px;
   gap: 6px;
   align-items: center;
@@ -552,7 +565,6 @@
   }
 
   .log-row {
-    --pod-width: 14ch;
     --ts-width: 12ch;
     --ln-width: 4ch;
   }

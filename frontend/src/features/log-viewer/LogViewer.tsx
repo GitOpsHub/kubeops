@@ -45,7 +45,10 @@ import {
   formatLogTime,
   levelCounts,
   logFileName,
+  maxPodLabelLength,
   podHue,
+  podNamePrefix,
+  shortPodName,
   virtualizeThreshold,
   type MatchRange,
 } from './log-format'
@@ -156,7 +159,7 @@ type RowProps = {
   index: number
   showTimestamps: boolean
   showPods: boolean
-  /** Stripped from pod names: every pod of a workload starts with it. */
+  /** Stripped from pod names: every pod on screen starts with it. */
   podPrefix: string
   ranges?: MatchRange[]
   /** Start offset of the active match when it is on this row, else -1. */
@@ -173,10 +176,7 @@ function LogRow({
   activeStart,
 }: RowProps) {
   const pod = line.podName ?? ''
-  const shortPod =
-    podPrefix && pod.startsWith(podPrefix) && pod.length > podPrefix.length
-      ? pod.slice(podPrefix.length)
-      : pod
+  const shortPod = shortPodName(pod, podPrefix)
   return (
     <>
       <span className="log-ln" aria-hidden="true">
@@ -294,6 +294,18 @@ export function LogViewer({
     [lines, levels],
   )
   const counts = useMemo(() => levelCounts(lines), [lines])
+  const pods = useMemo(
+    () => (showPods ? [...new Set(lines.map((line) => line.podName ?? ''))] : []),
+    [lines, showPods],
+  )
+  const podPrefix = podNamePrefix(pods, multiPod ? `${name}-` : '')
+  // Sized to the longest label, so two pods of a StatefulSet do not sit in a
+  // column built for ReplicaSet hashes; +2ch leaves room for the swatch.
+  const podWidth =
+    Math.min(
+      maxPodLabelLength,
+      Math.max(4, ...pods.map((pod) => shortPodName(pod, podPrefix).length)),
+    ) + 2
   const matcher = useMemo(
     () => buildMatcher(query, { caseSensitive, regex }),
     [query, caseSensitive, regex],
@@ -440,7 +452,7 @@ export function LogViewer({
         index={index}
         showTimestamps={showTimestamps}
         showPods={showPods}
-        podPrefix={multiPod ? `${name}-` : ''}
+        podPrefix={podPrefix}
         ranges={rangesByRow.get(index)}
         activeStart={active && active.row === index ? active.start : -1}
       />
@@ -571,6 +583,11 @@ export function LogViewer({
                 ))}
               </select>
             </label>
+          </div>
+
+          {/* Previous sits with the stream controls rather than the pickers: as
+              the last picker it was the one item a wrapping row stranded. */}
+          <div className="log-toolbar-actions">
             <ToolToggle
               pressed={previous}
               onChange={setPrevious}
@@ -579,9 +596,7 @@ export function LogViewer({
             >
               Previous
             </ToolToggle>
-          </div>
-
-          <div className="log-toolbar-actions">
+            <span className="log-toolbar-divider" aria-hidden="true" />
             <ToolToggle
               pressed={paused}
               onChange={setPaused}
@@ -755,6 +770,7 @@ export function LogViewer({
             role="log"
             aria-live="off"
             aria-label={`Live logs for ${name}`}
+            style={showPods ? ({ '--pod-width': `${podWidth}ch` } as object) : undefined}
             tabIndex={0}
             onScroll={onScroll}
             onKeyDown={onLogKeyDown}
