@@ -288,6 +288,53 @@ pre,
   }
 }
 
+/* Touch targets --------------------------------------------------------- */
+
+/* Desktop density is 30px controls; a thumb needs more. On phones every
+   control clears 32px, and buttons and fields 36px. The `html` prefix outranks
+   each component's own sizing without depending on stylesheet order. */
+@media (max-width: 640px) {
+  html .btn,
+  html .btn--sm,
+  html .select,
+  html .input,
+  html .table-footer .select,
+  html .toggle-group-item,
+  html .status-strip-item {
+    min-height: 36px;
+  }
+
+  html .status-strip-item {
+    height: auto;
+  }
+
+  html .command-trigger,
+  html .sync-menu-trigger {
+    width: 36px;
+  }
+
+  html .switch,
+  html .application-tile-argo,
+  html .link-button,
+  html .page-back,
+  html .column-sort,
+  html .breadcrumbs a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;
+  }
+
+  html .row-expander {
+    width: 32px;
+    height: 32px;
+  }
+
+  /* Stays a block box so a long name still ends in an ellipsis. */
+  html .application-name {
+    padding-block: 6px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

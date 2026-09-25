@@ -15,20 +15,34 @@
   font-weight: 500;
   white-space: nowrap;
   pointer-events: none;
-  opacity: 0;
-  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+/* Not drawn at all until shown: a merely transparent tooltip still counts as
+   overflow, and one near the right edge scrolled the whole page sideways. */
+.tooltip-anchor:not(:hover, :focus-within) > .tooltip {
+  display: none;
 }
 
 .tooltip-anchor:hover > .tooltip,
 .tooltip-anchor:focus-within > .tooltip {
-  opacity: 1;
-  transition-delay: 250ms;
+  animation: tooltip-in var(--dur-fast) var(--ease-out) 250ms both;
+}
+
+@keyframes tooltip-in {
+  from {
+    opacity: 0;
+  }
 }
 
 .tooltip-anchor--top > .tooltip {
   bottom: calc(100% + 6px);
   left: 50%;
   transform: translateX(-50%);
+}
+
+.tooltip-anchor--top-end > .tooltip {
+  right: 0;
+  bottom: calc(100% + 6px);
 }
 
 .tooltip-anchor--bottom > .tooltip {
