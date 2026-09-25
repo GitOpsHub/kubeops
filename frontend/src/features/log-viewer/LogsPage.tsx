@@ -215,6 +215,16 @@ export function LogsPage() {
         targetId={targetId}
         resource={resource}
         initialContainer={params.get('container') ?? ''}
+        onContainerChange={(container) =>
+          setParams(
+            (current) => {
+              const next = new URLSearchParams(current)
+              next.set('container', container)
+              return next
+            },
+            { replace: true },
+          )
+        }
         pickers={pickers}
       />
     )

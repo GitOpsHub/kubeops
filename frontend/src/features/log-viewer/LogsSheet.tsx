@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { LogResourceRef } from '../../api/argo'
 import { KubernetesResourceIcon } from '../../components/KubernetesResourceIcon'
@@ -19,6 +20,9 @@ type Props = {
 
 /** The log viewer beside the resource it was opened from. */
 export function LogsSheet({ onboardingId, targetId, clusterName, resource, onClose }: Props) {
+  // Only a container the reader picked is carried; otherwise the full page
+  // chooses the same default the sheet did.
+  const [container, setContainer] = useState('')
   return (
     <Sheet
       open
@@ -32,7 +36,7 @@ export function LogsSheet({ onboardingId, targetId, clusterName, resource, onClo
       actions={
         <Link
           className={buttonClass('ghost', 'sm')}
-          to={logsPageHref(onboardingId, targetId, resource)}
+          to={logsPageHref(onboardingId, targetId, resource, container || undefined)}
         >
           <ExternalLinkIcon aria-hidden="true" />
           Open full screen
@@ -43,6 +47,7 @@ export function LogsSheet({ onboardingId, targetId, clusterName, resource, onClo
         onboardingId={onboardingId}
         targetId={targetId}
         resource={resource}
+        onContainerChange={setContainer}
         className="logs-sheet-viewer"
       />
     </Sheet>
