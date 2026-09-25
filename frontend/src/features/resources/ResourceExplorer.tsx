@@ -31,6 +31,8 @@ type View = 'graph' | 'list'
 type Props = {
   onboardingId: string
   target: ApplicationDeployment
+  /** A sync is running on this target: the graph's edges flow until it ends. */
+  operationRunning?: boolean
 }
 
 /**
@@ -38,7 +40,7 @@ type Props = {
  * selected resource, deletion, and the view toggle. The two views are purely
  * presentational so they cannot drift on behaviour.
  */
-export function ResourceExplorer({ onboardingId, target }: Props) {
+export function ResourceExplorer({ onboardingId, target, operationRunning = false }: Props) {
   const [view, setView] = useStoredPreference<View>(viewStorageKey, 'graph')
   const [selected, setSelected] = useState<ResourceNode | null>(null)
   const [pendingDelete, setPendingDelete] = useState<ResourceNode | null>(null)
@@ -133,6 +135,7 @@ export function ResourceExplorer({ onboardingId, target }: Props) {
           onDelete={setPendingDelete}
           onLogs={setLogNode}
           label={`Resources on ${target.clusterName}`}
+          operationRunning={operationRunning}
         />
       ) : (
         <ResourceTable

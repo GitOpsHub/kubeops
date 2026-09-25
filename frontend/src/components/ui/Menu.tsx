@@ -99,6 +99,37 @@ export function MenuRadioItem({
   )
 }
 
+/**
+ * One of several independent choices; announced as `menuitemcheckbox`. The
+ * menu stays open on select, so a multi-select can be ticked in one visit.
+ */
+export function MenuCheckboxItem({
+  checked,
+  onCheckedChange,
+  icon,
+  children,
+}: {
+  checked: boolean
+  onCheckedChange: (checked: boolean) => void
+  icon?: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <RadixMenu.CheckboxItem
+      className="menu-item menu-item--radio"
+      checked={checked}
+      onCheckedChange={onCheckedChange}
+      onSelect={(event) => event.preventDefault()}
+    >
+      {icon && <span className="menu-item-icon">{icon}</span>}
+      <span className="menu-item-label">{children}</span>
+      <RadixMenu.ItemIndicator className="menu-item-indicator">
+        <CheckIcon />
+      </RadixMenu.ItemIndicator>
+    </RadixMenu.CheckboxItem>
+  )
+}
+
 export function MenuLabel({ children }: { children: ReactNode }) {
   return <RadixMenu.Label className="menu-label">{children}</RadixMenu.Label>
 }
