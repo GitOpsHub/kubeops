@@ -51,10 +51,9 @@ describe('logs page', () => {
     expect(screen.getByRole('combobox', { name: 'Resource' })).toHaveValue(
       'Pod/payments/payments-api-abc',
     )
-    expect(screen.getByRole('link', { name: 'payments-api' })).toHaveAttribute(
-      'href',
-      '/applications/onboarding-1',
-    )
+    expect(
+      within(screen.getByRole('main')).getByRole('link', { name: 'payments-api' }),
+    ).toHaveAttribute('href', '/applications/onboarding-1')
     const [request] = logRequests(fetchMock)
     expect(request.pathname).toBe('/api/application-onboardings/onboarding-1/targets/target-2/logs')
     expect(request.searchParams.get('kind')).toBe('Pod')
