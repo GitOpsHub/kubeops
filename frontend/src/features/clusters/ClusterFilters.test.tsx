@@ -97,6 +97,22 @@ describe('cluster filters', () => {
     expect(within(row).getByText('degraded')).toBeInTheDocument()
   })
 
+  it('opens a command-palette link with the name in the global search', async () => {
+    const { fetchMock } = mockAPI({ clusters: fleet })
+    renderApp('/clusters?search=charlie')
+
+    expect(await screen.findByRole('button', { name: /^charlie/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^alpha/ })).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('searchbox', { name: 'Search all clusters across providers' }),
+    ).toHaveValue('charlie')
+    expect(screen.getByRole('button', { name: 'All, 6 clusters' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(clusterRequests(fetchMock).every((url) => !url.searchParams.has('provider'))).toBe(true)
+  })
+
   it('filters by source from a menu, not a select', async () => {
     const { fetchMock } = mockAPI({ clusters: fleet })
     const user = userEvent.setup()
