@@ -42,6 +42,9 @@ export {
   FileText as ManifestIcon,
   Funnel as FilterIcon,
   GitCommitHorizontal as CommitIcon,
+  // A generic Git-to-cluster reconcile mark for Argo CD links and sections;
+  // the Argo project logo is trademarked, so it is deliberately not drawn.
+  GitCompareArrows as ArgoIcon,
   Heart as HealthIcon,
   Inbox as EmptyIcon,
   Info as InfoIcon,

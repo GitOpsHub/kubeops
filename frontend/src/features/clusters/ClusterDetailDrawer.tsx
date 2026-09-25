@@ -10,7 +10,7 @@ import {
 } from '../../api/inventory'
 import { errorMessage, isAbortError } from '../../api/client'
 import { KubernetesLogo, ProviderLogo } from '../../components/BrandIcons'
-import { ExternalLinkIcon, SyncIcon } from '../../components/icons'
+import { ArgoIcon, ExternalLinkIcon } from '../../components/icons'
 import { StatusBadge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { buttonClass } from '../../components/ui/button-class'
@@ -427,7 +427,7 @@ export function ClusterDetailDrawer({
             {argoAccess ? (
               <div className="argo-access">
                 <span className="argo-access-copy">
-                  <SyncIcon className="argo-access-logo" aria-hidden="true" />
+                  <ArgoIcon className="argo-access-logo" aria-hidden="true" />
                   Open this cluster in Argo CD through KubeOps.
                 </span>
                 <a

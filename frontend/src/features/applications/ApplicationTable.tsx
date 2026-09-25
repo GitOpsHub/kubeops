@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { CloudSource } from '../../api/inventory'
+import { ArgoIcon } from '../../components/icons'
 import { StateDelta, StateDeltaLegend } from '../../components/StateDelta'
 import { StatusBadge } from '../../components/ui/Badge'
 import { DataTable, type Column } from '../../components/ui/DataTable'
@@ -238,11 +239,14 @@ function DeploymentTargets({ group }: { group: ApplicationGroup }) {
               <td>
                 {row.target?.argoApplicationUrl ? (
                   <a
+                    className="argo-link"
                     href={row.target.argoApplicationUrl}
                     target="_blank"
                     rel="noreferrer"
                     title={row.target.argoApplication}
+                    aria-label={`Open ${row.target.clusterName} in Argo CD`}
                   >
+                    <ArgoIcon aria-hidden="true" />
                     Open
                   </a>
                 ) : (

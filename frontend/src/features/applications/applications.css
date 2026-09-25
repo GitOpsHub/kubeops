@@ -213,9 +213,16 @@
   align-items: center;
 }
 
-.application-tile-argo svg {
+.application-tile-argo svg,
+.argo-link svg {
   width: 12px;
   height: 12px;
+}
+
+.argo-link {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
 }
 
 .platform-logo {
