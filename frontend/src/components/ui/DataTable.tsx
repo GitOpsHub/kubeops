@@ -1,4 +1,4 @@
-import type { KeyboardEvent, ReactNode } from 'react'
+import { Fragment, type KeyboardEvent, type ReactNode } from 'react'
 import { sortState, type SortDirection } from './table-sort'
 import './DataTable.css'
 
@@ -36,6 +36,13 @@ type Props<T> = {
   rowClassName?: (row: T) => string
   /** Accessible name for an activatable row. */
   rowLabel?: (row: T) => string
+  /**
+   * Detail drawn in a full-width row under its parent, e.g. a nested table.
+   * Return null for a collapsed row; the caller owns which rows are open.
+   */
+  renderExpanded?: (row: T) => ReactNode
+  /** Id of the expanded row, for the toggle's `aria-controls`. */
+  expandedRowId?: (row: T) => string
   className?: string
 }
 
@@ -68,6 +75,8 @@ export function DataTable<T>({
   focusableRows = true,
   rowClassName,
   rowLabel,
+  renderExpanded,
+  expandedRowId,
   className = '',
 }: Props<T>) {
   const rowFocus = Boolean(onRowClick) && focusableRows
@@ -115,31 +124,41 @@ export function DataTable<T>({
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <tr
-              key={rowKey(row)}
-              className={
-                `${onRowClick ? 'is-clickable ' : ''}${rowClassName?.(row) ?? ''}`.trim() ||
-                undefined
-              }
-              tabIndex={rowFocus ? 0 : undefined}
-              aria-label={rowFocus ? rowLabel?.(row) : undefined}
-              onClick={onRowClick ? () => onRowClick(row) : undefined}
-              onKeyDown={rowFocus ? (event) => handleKeyDown(event, row) : undefined}
-            >
-              {columns.map((column) => (
-                <td
-                  key={column.id}
+          {rows.map((row) => {
+            const key = rowKey(row)
+            const expanded = renderExpanded?.(row)
+            return (
+              <Fragment key={key}>
+                <tr
                   className={
-                    `${column.className ?? ''}${column.align === 'end' ? ' is-end' : ''}`.trim() ||
+                    `${onRowClick ? 'is-clickable ' : ''}${rowClassName?.(row) ?? ''}`.trim() ||
                     undefined
                   }
+                  tabIndex={rowFocus ? 0 : undefined}
+                  aria-label={rowFocus ? rowLabel?.(row) : undefined}
+                  onClick={onRowClick ? () => onRowClick(row) : undefined}
+                  onKeyDown={rowFocus ? (event) => handleKeyDown(event, row) : undefined}
                 >
-                  {column.cell(row)}
-                </td>
-              ))}
-            </tr>
-          ))}
+                  {columns.map((column) => (
+                    <td
+                      key={column.id}
+                      className={
+                        `${column.className ?? ''}${column.align === 'end' ? ' is-end' : ''}`.trim() ||
+                        undefined
+                      }
+                    >
+                      {column.cell(row)}
+                    </td>
+                  ))}
+                </tr>
+                {expanded != null && expanded !== false && (
+                  <tr className="expanded-row" id={expandedRowId?.(row)}>
+                    <td colSpan={columns.length}>{expanded}</td>
+                  </tr>
+                )}
+              </Fragment>
+            )
+          })}
         </tbody>
       </table>
     </div>

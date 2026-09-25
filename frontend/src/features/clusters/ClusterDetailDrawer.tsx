@@ -9,18 +9,21 @@ import {
   scaleNodePool,
 } from '../../api/inventory'
 import { errorMessage, isAbortError } from '../../api/client'
-import { KubernetesLogo } from '../../components/BrandIcons'
-import { ExternalLinkIcon } from '../../components/icons'
+import { KubernetesLogo, ProviderLogo } from '../../components/BrandIcons'
+import { ExternalLinkIcon, SyncIcon } from '../../components/icons'
 import { StatusBadge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { buttonClass } from '../../components/ui/button-class'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
+import { CopyButton } from '../../components/ui/CopyButton'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { ErrorState } from '../../components/ui/ErrorState'
+import { KeyValueList } from '../../components/ui/KeyValueList'
 import { Sheet } from '../../components/ui/Sheet'
 import { Skeleton } from '../../components/ui/Skeleton'
+import { Timestamp } from '../../components/ui/Timestamp'
 import { useToast } from '../../components/ui/toast-context'
-import { providerLabels } from '../../lib/providers'
+import { providerLabels, providerNames } from '../../lib/providers'
 import './cluster-drawer.css'
 
 type PendingScale = {
@@ -94,6 +97,37 @@ function networkFacts(details: ClusterDetails): NetworkFact[] {
     ])
   }
   return common.concat([{ label: 'API server', value: details.networking.local?.apiServer }])
+}
+
+/**
+ * Where the configured size sits between the pool's bounds. Without a reported
+ * maximum the scale stretches past the larger of min and desired, so the bar
+ * still reads as "room to grow" rather than "full".
+ */
+function CapacityBar({ pool }: { pool: NodePool }) {
+  const min = pool.minCount ?? 0
+  const ceiling = pool.maxCount ?? Math.max(min, pool.desiredCount, 1) * 1.5
+  const scale = Math.max(ceiling, pool.desiredCount, 1)
+  const percent = (value: number) => `${Math.min(100, (value / scale) * 100)}%`
+  return (
+    <div className="capacity">
+      <div
+        className="capacity-track"
+        role="img"
+        aria-label={`${pool.desiredCount} configured nodes, bounds ${min} to ${
+          pool.maxCount ?? 'the provider limit'
+        }`}
+      >
+        <span className="capacity-fill" style={{ width: percent(pool.desiredCount) }} />
+        {min > 0 && <span className="capacity-min" style={{ left: percent(min) }} />}
+      </div>
+      <div className="capacity-scale" aria-hidden="true">
+        <span>min {min}</span>
+        <strong>{pool.desiredCount} configured</strong>
+        <span>max {pool.maxCount ?? '—'}</span>
+      </div>
+    </div>
+  )
 }
 
 function settled(status: string) {
@@ -224,46 +258,34 @@ export function ClusterDetailDrawer({
         onOpenChange={(next) => !next && onClose()}
         size="lg"
         className="cluster-detail-modal"
-        icon={<KubernetesLogo className="cluster-sheet-logo" />}
-        kicker={providerLabels[cluster.provider]}
+        icon={
+          <span className="cluster-sheet-logo">
+            <KubernetesLogo className="cluster-sheet-logo-mark" />
+            <ProviderLogo provider={cluster.provider} className="cluster-sheet-logo-badge" />
+          </span>
+        }
+        kicker={`${providerLabels[cluster.provider]} · ${cluster.location}`}
         title={cluster.name}
-        description={`${cluster.sourceName} · ${cluster.location}`}
+        description={cluster.sourceName}
+        actions={
+          <StatusBadge domain="cluster" status={cluster.removedAt ? 'removed' : cluster.status} />
+        }
         closeLabel="Close cluster details"
       >
         <div className="dialog-body cluster-sheet-body">
           <section className="sheet-section" aria-labelledby="cluster-state-heading">
             <h3 id="cluster-state-heading">Cluster state</h3>
-            <dl className="fact-grid">
-              <div>
-                <dt>Status</dt>
-                <dd>
-                  <StatusBadge
-                    domain="cluster"
-                    status={cluster.removedAt ? 'removed' : cluster.status}
-                  />
-                </dd>
-              </div>
-              <div>
-                <dt>Kubernetes</dt>
-                <dd className="mono">{cluster.kubernetesVersion || 'Unknown'}</dd>
-              </div>
-              <div>
-                <dt>Endpoint</dt>
-                <dd>{cluster.endpointAccess}</dd>
-              </div>
-              <div>
-                <dt>Nodes</dt>
-                <dd>{cluster.nodeCount ?? 'Not reported'}</dd>
-              </div>
-              <div>
-                <dt>First seen</dt>
-                <dd>{new Date(cluster.firstSeenAt).toLocaleString()}</dd>
-              </div>
-              <div>
-                <dt>Last seen</dt>
-                <dd>{new Date(cluster.lastSeenAt).toLocaleString()}</dd>
-              </div>
-            </dl>
+            <KeyValueList
+              className="cluster-facts"
+              items={[
+                { label: 'Kubernetes', value: cluster.kubernetesVersion || 'Unknown', mono: true },
+                { label: 'Nodes', value: cluster.nodeCount ?? 'Not reported' },
+                { label: 'Endpoint', value: cluster.endpointAccess },
+                { label: 'Provider', value: providerNames[cluster.provider] },
+                { label: 'First seen', value: <Timestamp value={cluster.firstSeenAt} /> },
+                { label: 'Last seen', value: <Timestamp value={cluster.lastSeenAt} /> },
+              ]}
+            />
           </section>
 
           <section className="sheet-section" aria-labelledby="node-pools-heading">
@@ -301,25 +323,19 @@ export function ClusterDetailDrawer({
                         </div>
                         <StatusBadge domain="cluster" status={pool.status} />
                       </div>
+                      <CapacityBar pool={pool} />
                       <dl className="node-pool-facts">
-                        <div>
-                          <dt>Configured</dt>
-                          <dd>{pool.desiredCount}</dd>
-                        </div>
-                        <div>
-                          <dt>Bounds</dt>
-                          <dd>
-                            {pool.minCount ?? 0}–{pool.maxCount ?? 'provider limit'}
-                          </dd>
-                        </div>
                         <div>
                           <dt>Autoscaling</dt>
                           <dd>{pool.autoscaling}</dd>
                         </div>
+                        <div className="node-pool-zones">
+                          <dt>Zones</dt>
+                          <dd className="mono">
+                            {pool.zones.length > 0 ? pool.zones.join(' · ') : 'Not reported'}
+                          </dd>
+                        </div>
                       </dl>
-                      {pool.zones.length > 0 && (
-                        <p className="node-pool-note mono">{pool.zones.join(' · ')}</p>
-                      )}
                       <div className="node-pool-scale">
                         <label className="field">
                           <span>Desired nodes</span>
@@ -381,20 +397,22 @@ export function ClusterDetailDrawer({
             </div>
             {details && reportedConnectivityFacts.length > 0 ? (
               <>
-                <dl className="fact-grid">
-                  {reportedConnectivityFacts.map((fact) => (
-                    <div key={fact.label}>
-                      <dt>{fact.label}</dt>
-                      <dd className="mono">{displayed(fact.value)}</dd>
-                    </div>
-                  ))}
-                </dl>
+                <KeyValueList
+                  className="cluster-network-facts"
+                  items={reportedConnectivityFacts.map((fact) => ({
+                    label: fact.label,
+                    value: displayed(fact.value),
+                    mono: true,
+                  }))}
+                />
                 {unreportedConnectivityCount > 0 && (
                   <p className="node-pool-note">
                     {unreportedConnectivityCount} additional fields were not reported.
                   </p>
                 )}
               </>
+            ) : loading ? (
+              <Skeleton height={64} radius="var(--radius-md)" />
             ) : (
               <EmptyState
                 compact
@@ -408,7 +426,10 @@ export function ClusterDetailDrawer({
             <h3 id="argo-heading">Argo CD</h3>
             {argoAccess ? (
               <div className="argo-access">
-                <p>Open this cluster in Argo CD through KubeOps.</p>
+                <span className="argo-access-copy">
+                  <SyncIcon className="argo-access-logo" aria-hidden="true" />
+                  Open this cluster in Argo CD through KubeOps.
+                </span>
                 <a
                   className={buttonClass('secondary', 'sm')}
                   href={argoAccess.url}
@@ -431,7 +452,10 @@ export function ClusterDetailDrawer({
 
           <div className="resource-id">
             <span>Provider resource ID</span>
-            <code>{cluster.providerResourceId}</code>
+            <span className="resource-id-value">
+              <code>{cluster.providerResourceId}</code>
+              <CopyButton value={cluster.providerResourceId} label="provider resource ID" />
+            </span>
           </div>
         </div>
       </Sheet>

@@ -50,11 +50,28 @@ export type SyncRun = {
   completedAt: string | null
 }
 
+export type ClusterSort = 'name' | 'provider' | 'status' | 'version' | 'nodes' | 'lastSeen'
+export type SortOrder = 'asc' | 'desc'
+
+export const clusterSorts: ClusterSort[] = [
+  'name',
+  'provider',
+  'status',
+  'version',
+  'nodes',
+  'lastSeen',
+]
+
 export type ClusterFilters = {
   provider?: Provider | ''
   source?: string
   search?: string
+  /** A provider status, matched exactly (the API lower-cases it). */
+  status?: string
   includeRemoved?: boolean
+  /** Omitted keeps the API's default ordering. */
+  sort?: ClusterSort | ''
+  order?: SortOrder
   page?: number
   pageSize?: number
 }
@@ -149,7 +166,12 @@ export function getClusters(filters: ClusterFilters, signal?: AbortSignal) {
   if (filters.provider) query.set('provider', filters.provider)
   if (filters.source) query.set('source', filters.source)
   if (filters.search) query.set('search', filters.search)
+  if (filters.status) query.set('status', filters.status)
   if (filters.includeRemoved) query.set('includeRemoved', 'true')
+  if (filters.sort) {
+    query.set('sort', filters.sort)
+    query.set('order', filters.order ?? 'asc')
+  }
   query.set('page', String(filters.page || 1))
   query.set('pageSize', String(filters.pageSize || 25))
   return request<ClusterPage>(`/clusters?${query}`, { signal })
@@ -160,8 +182,31 @@ export async function getSources(signal?: AbortSignal) {
   return response.items
 }
 
-export async function getSyncRuns(signal?: AbortSignal) {
-  const response = await request<{ items: SyncRun[] }>('/sync-runs?limit=12', { signal })
+export type SyncRunQuery = {
+  /** 1–200; the API rejects anything else. */
+  limit?: number
+  sourceId?: string
+}
+
+/** The API's own cap on `limit`. */
+export const maxSyncRuns = 200
+
+/**
+ * Recent sync runs, newest first. Called with only a signal it keeps the
+ * short list the shell's sync heartbeat has always read.
+ */
+export async function getSyncRuns(signal?: AbortSignal): Promise<SyncRun[]>
+export async function getSyncRuns(options: SyncRunQuery, signal?: AbortSignal): Promise<SyncRun[]>
+export async function getSyncRuns(
+  optionsOrSignal?: SyncRunQuery | AbortSignal,
+  maybeSignal?: AbortSignal,
+) {
+  const isSignal = optionsOrSignal instanceof AbortSignal
+  const options: SyncRunQuery = isSignal ? {} : (optionsOrSignal ?? {})
+  const signal = isSignal ? optionsOrSignal : maybeSignal
+  const query = new URLSearchParams({ limit: String(options.limit ?? 12) })
+  if (options.sourceId) query.set('sourceId', options.sourceId)
+  const response = await request<{ items: SyncRun[] }>(`/sync-runs?${query}`, { signal })
   return response.items
 }
 

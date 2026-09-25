@@ -339,11 +339,31 @@ export function mockAPI(initial: Partial<MockState> = {}) {
       const pageSize = Number(query.get('pageSize') ?? '25')
       const provider = query.get('provider')
       const search = (query.get('search') ?? '').toLowerCase()
+      // Source, status, removed, and sort mirror the API's filter and
+      // whitelisted ORDER BY (NULLs last, id as the tiebreak).
+      const source = query.get('source')
+      const status = query.get('status')
+      const includeRemoved = query.get('includeRemoved') === 'true'
+      const sort = query.get('sort') as keyof typeof clusterSortKeys | null
+      const descending = query.get('order') === 'desc'
       const matched = state.clusters.filter(
         (item) =>
           (!provider || item.provider === provider) &&
-          (!search || item.name.toLowerCase().includes(search)),
+          (!search || item.name.toLowerCase().includes(search)) &&
+          (!source || item.sourceId === source) &&
+          (!status || item.status === status) &&
+          (includeRemoved || !item.removedAt),
       )
+      if (sort && clusterSortKeys[sort]) {
+        const value = clusterSortKeys[sort]
+        matched.sort((left, right) => {
+          const a = value(left)
+          const b = value(right)
+          if (a === null || b === null) return a === b ? 0 : a === null ? 1 : -1
+          const order = a < b ? -1 : a > b ? 1 : left.id.localeCompare(right.id)
+          return descending ? -order : order
+        })
+      }
       return Response.json({
         items: matched
           .slice((page - 1) * pageSize, page * pageSize)
@@ -361,7 +381,13 @@ export function mockAPI(initial: Partial<MockState> = {}) {
     }
 
     if (path === '/sync-runs') {
-      return Response.json({ items: state.syncRuns })
+      const sourceId = query.get('sourceId')
+      const limit = Number(query.get('limit') ?? '50')
+      return Response.json({
+        items: state.syncRuns
+          .filter((run) => !sourceId || run.sourceId === sourceId)
+          .slice(0, limit),
+      })
     }
 
     const sourceSyncMatch = path.match(/^\/cloud-sources\/([^/]+)\/sync$/)
@@ -385,6 +411,15 @@ export function mockAPI(initial: Partial<MockState> = {}) {
   })
 
   return { fetchMock, state }
+}
+
+const clusterSortKeys: Record<string, (cluster: Cluster) => string | number | null> = {
+  name: (cluster) => cluster.name,
+  provider: (cluster) => cluster.provider,
+  status: (cluster) => cluster.status,
+  version: (cluster) => cluster.kubernetesVersion || null,
+  nodes: (cluster) => cluster.nodeCount,
+  lastSeen: (cluster) => cluster.lastSeenAt,
 }
 
 export function buildSyncRun(overrides: Partial<SyncRun> = {}): SyncRun {

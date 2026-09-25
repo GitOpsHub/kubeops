@@ -15,7 +15,43 @@
 }
 
 .cluster-global-search {
-  opacity: 0.85;
+  width: min(340px, 100%);
+}
+
+/* The scoped search qualifies the provider pick beside it, so it sits inline
+   and quieter than the page-level search in the header. */
+.cluster-toolbar {
+  align-items: center;
+}
+
+.cluster-scoped-search {
+  flex: 0 1 260px;
+}
+
+.cluster-scoped-search .input {
+  min-height: 32px;
+  background: var(--surface-sunken);
+  font-size: var(--text-xs);
+}
+
+.cluster-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-sunken);
+  border-bottom: 1px solid var(--border);
+}
+
+.cluster-removed-switch {
+  margin-left: var(--space-1);
+  font-size: var(--text-xs);
+}
+
+.cluster-reset {
+  margin-left: auto;
+  font-size: var(--text-xs);
 }
 
 .cluster-name {
@@ -83,7 +119,7 @@
 }
 
 .seen-stale {
-  color: var(--warn);
+  color: var(--warn-fg);
 }
 
 .data-table tr.is-removed > td {
@@ -93,5 +129,15 @@
 @media (max-width: 640px) {
   .cluster-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cluster-global-search,
+  .cluster-scoped-search {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .cluster-reset {
+    margin-left: 0;
   }
 }
