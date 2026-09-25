@@ -1,0 +1,496 @@
+/* Shared chart chrome: hairline grid, muted axis text, legends in text ink.
+   Marks carry the series colour; text never does. */
+
+.chart-grid {
+  stroke: var(--chart-grid);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.chart-axis-label {
+  fill: var(--chart-axis);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-crosshair {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+/* Legend ------------------------------------------------------------- */
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  list-style: none;
+}
+
+.chart-legend--stacked {
+  display: grid;
+  gap: 0;
+}
+
+.chart-legend--compact {
+  gap: var(--space-1) var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.chart-legend-item {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  min-height: 28px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  text-decoration: none;
+}
+
+a.chart-legend-item {
+  border-radius: var(--radius-sm);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+a.chart-legend-item:hover {
+  color: var(--text);
+}
+
+.chart-legend--stacked .chart-legend-item {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto 3.5em;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 var(--space-2);
+}
+
+.chart-legend--stacked .chart-legend-item:not(:has(.chart-legend-icon)) {
+  grid-template-columns: auto minmax(0, 1fr) auto 3.5em;
+}
+
+.chart-legend--stacked li + li {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.chart-legend--stacked li.is-active .chart-legend-item,
+.chart-legend--stacked a.chart-legend-item:hover {
+  background: var(--surface-hover);
+}
+
+.chart-legend-label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-weight: var(--weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-legend--compact .chart-legend-label {
+  color: var(--text-muted);
+  font-weight: var(--weight-regular);
+}
+
+.chart-legend-value {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-semibold);
+  text-align: end;
+}
+
+.chart-legend-share {
+  color: var(--text-subtle);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+
+.chart-legend-icon {
+  display: inline-flex;
+}
+
+.chart-legend-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.chart-swatch {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.chart-key {
+  flex: none;
+  width: 12px;
+  height: 2px;
+  border-radius: 1px;
+}
+
+/* Tooltip ------------------------------------------------------------ */
+
+.chart-tooltip {
+  position: absolute;
+  top: 0;
+  z-index: 2;
+  display: grid;
+  gap: 2px;
+  min-width: 120px;
+  padding: var(--space-2) var(--space-3);
+  color: var(--text);
+  font-size: var(--text-2xs);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  /* The pointer must pass through, or leaving the plot for the tooltip
+     would hide the tooltip. */
+  pointer-events: none;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.chart-tooltip--above {
+  top: auto;
+  bottom: calc(100% + var(--space-2));
+}
+
+.chart-tooltip-title {
+  margin-bottom: 2px;
+  color: var(--text-muted);
+  font-weight: var(--weight-medium);
+}
+
+.chart-tooltip-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  color: var(--text-muted);
+}
+
+.chart-tooltip strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-semibold);
+}
+
+/* Sparkline ---------------------------------------------------------- */
+
+.sparkline {
+  display: block;
+  width: 100%;
+}
+
+.sparkline svg {
+  display: block;
+  overflow: visible;
+}
+
+.sparkline-line {
+  fill: none;
+  stroke: var(--series);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.sparkline-area {
+  fill: var(--series);
+  opacity: 0.1;
+}
+
+/* Donut -------------------------------------------------------------- */
+
+.donut {
+  container-type: inline-size;
+}
+
+.donut-layout {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+}
+
+.donut-plot {
+  position: relative;
+  flex: none;
+}
+
+.donut-plot svg {
+  display: block;
+}
+
+.donut-track {
+  fill: none;
+  stroke: var(--surface-sunken);
+}
+
+.donut-segment {
+  fill: none;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.donut[data-active] .donut-segment:not(.is-active) {
+  opacity: 0.35;
+}
+
+.donut-center {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.donut-center strong {
+  color: var(--text);
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.donut-center span {
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+}
+
+/* Stacked bar -------------------------------------------------------- */
+
+.stacked-bar {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.stacked-bar-plot {
+  position: relative;
+}
+
+.stacked-bar-track {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+  overflow: hidden;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-pill);
+}
+
+.stacked-bar--sm .stacked-bar-track {
+  height: 6px;
+}
+
+/* Only a non-empty stack drops the track; the gaps then show the surface. */
+.stacked-bar-track:has(.stacked-bar-segment) {
+  background: transparent;
+}
+
+.stacked-bar-segment {
+  flex-basis: 0;
+  min-width: 2px;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.stacked-bar-track:has(.is-active) .stacked-bar-segment:not(.is-active) {
+  opacity: 0.45;
+}
+
+/* Bar list ----------------------------------------------------------- */
+
+.bar-list {
+  display: grid;
+  gap: var(--space-1);
+  list-style: none;
+}
+
+.bar-list-row {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: minmax(0, 1fr) minmax(64px, 1.4fr) 4ch;
+  align-items: center;
+  min-height: 32px;
+  color: var(--text);
+  font-size: var(--text-xs);
+  text-decoration: none;
+}
+
+.bar-list-row:has(.bar-list-icon) {
+  grid-template-columns: 18px minmax(0, 1fr) minmax(64px, 1.4fr) 4ch;
+}
+
+a.bar-list-row:hover .bar-list-label {
+  text-decoration: underline;
+}
+
+.bar-list-icon svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+}
+
+.bar-list-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-list-track {
+  height: 8px;
+  overflow: hidden;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-pill);
+}
+
+.bar-list-fill {
+  display: block;
+  height: 100%;
+  background: var(--series);
+  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+}
+
+.bar-list-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-semibold);
+  text-align: end;
+}
+
+/* Time series -------------------------------------------------------- */
+
+.time-series {
+  min-width: 0;
+}
+
+.time-series-frame {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.time-series-svg {
+  display: block;
+  /* The width attribute is only the drawing size; CSS keeps it from ever
+     widening the frame it is measured from. */
+  width: 100%;
+  overflow: visible;
+}
+
+.time-series-bar {
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.time-series-bars:has(.is-active) .time-series-bar:not(.is-active) {
+  opacity: 0.55;
+}
+
+.time-series-line {
+  fill: none;
+  stroke: var(--series);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.time-series-area {
+  fill: var(--series);
+  opacity: 0.1;
+}
+
+.time-series-dot {
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+
+.time-series-hits rect {
+  fill: transparent;
+  outline: none;
+}
+
+.time-series-hits rect:focus-visible {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.time-series-empty {
+  display: grid;
+  place-content: center;
+  color: var(--text-subtle);
+  font-size: var(--text-xs);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-md);
+}
+
+/* Entrance: first mount only (see useEntrance). Transform and opacity only. */
+
+.chart-reveal {
+  transform-box: fill-box;
+  transform-origin: left center;
+  animation: chart-reveal var(--dur-flash) var(--ease-out) both;
+}
+
+.time-series-bars.is-entering .time-series-bar {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  animation: chart-grow-y var(--dur-flash) var(--ease-out) both;
+}
+
+.donut-ring.is-entering {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: chart-spin-in var(--dur-flash) var(--ease-out) both;
+}
+
+.stacked-bar-track.is-entering,
+.bar-list.is-entering .bar-list-fill {
+  transform-origin: left center;
+  animation: chart-reveal var(--dur-flash) var(--ease-out) both;
+}
+
+@keyframes chart-reveal {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+@keyframes chart-grow-y {
+  from {
+    transform: scaleY(0);
+  }
+}
+
+@keyframes chart-spin-in {
+  from {
+    opacity: 0;
+    transform: rotate(-40deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chart-reveal,
+  .time-series-bars.is-entering .time-series-bar,
+  .donut-ring.is-entering,
+  .stacked-bar-track.is-entering,
+  .bar-list.is-entering .bar-list-fill {
+    animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .chart-swatch,
+  .chart-key,
+  .stacked-bar-segment {
+    forced-color-adjust: none;
+  }
+}
+
+@container (max-width: 320px) {
+  .donut-layout {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+  }
+
+  .donut .chart-legend {
+    width: 100%;
+  }
+}

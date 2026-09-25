@@ -115,7 +115,7 @@ describe('app shell', () => {
     const fetchMock = vi.mocked(globalThis.fetch)
     const original = fetchMock.getMockImplementation()!
     fetchMock.mockImplementation(async (request, init) => {
-      if (String(request).includes('/cloud-sources')) return Response.json({ items: [null] })
+      if (String(request).includes('/overview')) return Response.json({ clusters: null })
       return original(request, init)
     })
     renderApp()
