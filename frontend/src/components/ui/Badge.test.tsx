@@ -6,7 +6,9 @@ describe('StatusBadge', () => {
   it.each([
     // Case-only differences keep the API's word; CSS capitalises it.
     ['cluster', 'active', 'active', true],
-    ['sync', 'Synced', 'Synced', true],
+    // Already canonical: no CSS casing, so "Out of Sync" never becomes "Out Of Sync".
+    ['sync', 'Synced', 'Synced', false],
+    ['sync', 'Out of Sync', 'Out of Sync', false],
     // A canonical label that adds words is rendered as the label.
     ['sync', 'OutOfSync', 'Out of Sync', false],
   ] as const)('%s %s renders "%s"', (domain, status, text, cased) => {
