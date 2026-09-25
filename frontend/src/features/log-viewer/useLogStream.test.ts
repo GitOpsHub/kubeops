@@ -127,6 +127,52 @@ describe('useLogStream', () => {
     expect(requests).toHaveLength(1)
   })
 
+  it('resumes after the server reports the stream broke off', async () => {
+    const { streams, requests } = mockLogsFetch()
+    const { result } = renderHook(() => useLogStream(base))
+    await act(settle)
+    await act(async () => {
+      streams[0].push(
+        { timestamp: at(1), podName: 'a', content: 'before' },
+        { error: 'the log stream from Argo CD was interrupted', retryable: true },
+      )
+      await settle()
+    })
+    await waitFor(() => expect(requests).toHaveLength(2))
+    expect(requests[1].searchParams.get('sinceTime')).toBe(at(1))
+    expect(result.current.error).toBeNull()
+    expect(result.current.status).toBe('live')
+  })
+
+  it('skips unparseable lines and resumes after a truncated final line', async () => {
+    const { streams, requests } = mockLogsFetch()
+    const { result } = renderHook(() => useLogStream(base))
+    await act(settle)
+    await act(async () => {
+      streams[0].push({ timestamp: at(1), podName: 'a', content: 'one' })
+      streams[0].pushRaw('<html>proxy error</html>\n')
+      streams[0].push({ timestamp: at(2), podName: 'a', content: 'two' })
+      // The connection drops mid-line.
+      streams[0].pushRaw(`{"timestamp":"${at(3)}","podName":"a","content":"thr`)
+      streams[0].close()
+      await settle()
+    })
+    await waitFor(() => expect(requests).toHaveLength(2))
+    expect(requests[1].searchParams.get('sinceTime')).toBe(at(2))
+    expect(result.current.error).toBeNull()
+
+    await act(async () => {
+      streams[1].push(
+        { timestamp: at(2), podName: 'a', content: 'two' },
+        { timestamp: at(3), podName: 'a', content: 'three' },
+      )
+      await settle()
+    })
+    await waitFor(() =>
+      expect(result.current.lines.map((line) => line.content)).toEqual(['one', 'two', 'three']),
+    )
+  })
+
   it('keeps the HTTP status of a refused request', async () => {
     mockLogsFetch({ status: 403 })
     const { result } = renderHook(() => useLogStream(base))

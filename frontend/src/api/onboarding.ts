@@ -272,6 +272,8 @@ export type PodLogEntry = {
   podName?: string
   content?: string
   error?: string
+  /** On an error line: the stream was cut short and resuming may continue it. */
+  retryable?: boolean
 }
 
 /** Follows the backend's newline-delimited Pod log stream until it ends or the

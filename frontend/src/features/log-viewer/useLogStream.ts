@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { streamTargetLogs, type LogResourceRef, type PodLogEntry } from '../../api/argo'
+import {
+  LogStreamInterruptedError,
+  streamTargetLogs,
+  type LogResourceRef,
+  type PodLogEntry,
+} from '../../api/argo'
 import { ApiError, errorMessage, isAbortError } from '../../api/client'
 import { defaultLogCapacity, RingBuffer } from './log-buffer'
 import { parseLogLine, type LogLevel } from './log-parse'
@@ -243,9 +248,12 @@ export function useLogStream({
         resumeOrEnd(startedAt, fresh)
       } catch (streamError) {
         if (controller.signal.aborted || isAbortError(streamError)) return
-        // A dropped connection is worth resuming; a refusal from the API or
-        // an error line from Argo CD is not going to change on retry.
-        if (streamError instanceof TypeError && follow) {
+        // A dropped connection or a stream the server says broke off is
+        // worth resuming; a refusal from the API or an error line from Argo CD
+        // is not going to change on retry.
+        const interrupted =
+          streamError instanceof TypeError || streamError instanceof LogStreamInterruptedError
+        if (interrupted && follow) {
           resumeOrEnd(startedAt, fresh)
           return
         }

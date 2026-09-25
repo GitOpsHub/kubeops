@@ -131,7 +131,12 @@ type podLogEntry struct {
 	PodName   string `json:"podName,omitempty"`
 	Content   string `json:"content,omitempty"`
 	Error     string `json:"error,omitempty"`
+	// Retryable marks an error after which the viewer may resume the stream.
+	Retryable bool `json:"retryable,omitempty"`
 }
+
+// maxLogLine bounds one line of Argo CD's log stream.
+const maxLogLine = 1 << 20
 
 // applicationLogs converts Argo CD's grpc-gateway stream envelopes into stable
 // newline-delimited entries for the browser. Each encoded line is flushed
@@ -160,7 +165,7 @@ func (api *API) applicationLogs(w http.ResponseWriter, r *http.Request) {
 	encoder := json.NewEncoder(w)
 	flusher, _ := w.(http.Flusher)
 	scanner := bufio.NewScanner(stream)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	scanner.Buffer(make([]byte, 64*1024), maxLogLine)
 	for scanner.Scan() {
 		var frame struct {
 			Result *struct {
@@ -197,9 +202,21 @@ func (api *API) applicationLogs(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
-	if err := scanner.Err(); err != nil && !aborted(r) {
-		slog.Warn("read log stream", "onboarding", r.PathValue("id"),
-			"target", r.PathValue("targetId"), "error", err)
+	err = scanner.Err()
+	if err == nil || aborted(r) {
+		return
+	}
+	slog.Warn("read log stream", "onboarding", r.PathValue("id"),
+		"target", r.PathValue("targetId"), "error", err)
+	// Ending silently would read as the stream finishing. An interrupted
+	// upstream can be resumed; an oversized line cannot, because resuming
+	// would meet the same line again.
+	entry := podLogEntry{Error: "the log stream from Argo CD was interrupted", Retryable: true}
+	if errors.Is(err, bufio.ErrTooLong) {
+		entry = podLogEntry{Error: "a log line exceeded 1 MiB, so the stream stopped"}
+	}
+	if encoder.Encode(entry) == nil && flusher != nil {
+		flusher.Flush()
 	}
 }
 

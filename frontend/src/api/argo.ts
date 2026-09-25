@@ -72,9 +72,21 @@ export function logStreamQuery(options: Omit<LogStreamOptions, 'signal' | 'onEnt
 }
 
 /**
+ * The server reported that Argo CD's log stream broke off (an upstream reset)
+ * rather than refused: resuming from the newest line seen may continue it.
+ */
+export class LogStreamInterruptedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'LogStreamInterruptedError'
+  }
+}
+
+/**
  * Follows the backend's NDJSON log stream until it ends or the caller aborts.
  * Partial network chunks are buffered so one entry is never parsed before its
- * newline arrives; a final `{error}` line rejects with that message. Resolves
+ * newline arrives; a final `{error}` line rejects with that message, as a
+ * `LogStreamInterruptedError` when the server marks it retryable. Resolves
  * when the server closes the stream, which for a following stream usually
  * means the function hit its maximum duration — callers decide whether to
  * resume.
@@ -95,8 +107,19 @@ export async function streamTargetLogs(options: LogStreamOptions) {
   let buffered = ''
   const consume = (line: string) => {
     if (!line.trim()) return
-    const entry = JSON.parse(line) as PodLogEntry
-    if (entry.error) throw new Error(entry.error)
+    let entry: PodLogEntry | null
+    try {
+      entry = JSON.parse(line) as PodLogEntry | null
+    } catch {
+      // Usually the last line of a connection cut mid-write. Skipping it is
+      // safe: the stream then just ends, and resuming from the newest
+      // timestamp replays the line whole.
+      return
+    }
+    if (!entry || typeof entry !== 'object') return
+    if (entry.error) {
+      throw entry.retryable ? new LogStreamInterruptedError(entry.error) : new Error(entry.error)
+    }
     onEntry(entry)
   }
 
