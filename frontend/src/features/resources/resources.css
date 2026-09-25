@@ -149,6 +149,11 @@
   justify-content: flex-end;
 }
 
+.resource-row-actions .btn,
+.resource-row-gap {
+  min-width: 60px;
+}
+
 .resource-modal-events {
   display: inline-flex;
   gap: 2px;

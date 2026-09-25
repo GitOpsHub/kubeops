@@ -412,6 +412,17 @@ export function ownerFirstOrder(nodes: PositionedNode[]): PositionedNode[] {
   return [...ordered, ...nodes.filter((node) => !placed.has(node))]
 }
 
+/**
+ * Shortens a name from the middle. Generated names differ at the end — a
+ * ReplicaSet hash, a Pod's random suffix — so an end ellipsis would hide the
+ * one part that tells siblings apart.
+ */
+export function middleTruncate(name: string, max: number) {
+  if (name.length <= max) return name
+  const tail = Math.ceil((max - 1) * 0.6)
+  return `${name.slice(0, max - 1 - tail)}…${name.slice(-tail)}`
+}
+
 /* Filtering for the graph ---------------------------------------------- */
 
 /** The health buckets offered as filters, in severity-neutral reading order. */

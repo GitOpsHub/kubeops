@@ -123,7 +123,7 @@ export function ResourceTable({ nodes, onSelect, onDelete, onLogs }: Props) {
           >
             Info
           </Button>
-          {onLogs && isLoggableKind(node.kind) && (
+          {onLogs && isLoggableKind(node.kind) ? (
             <Button
               size="sm"
               variant="ghost"
@@ -135,6 +135,9 @@ export function ResourceTable({ nodes, onSelect, onDelete, onLogs }: Props) {
             >
               Logs
             </Button>
+          ) : (
+            // Holds the Logs slot open so Delete lines up down the column.
+            <span className="resource-row-gap" aria-hidden="true" />
           )}
           <Button
             size="sm"

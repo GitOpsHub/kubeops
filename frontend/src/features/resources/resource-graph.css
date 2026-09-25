@@ -601,6 +601,10 @@
     padding-inline: var(--space-3);
   }
 
+  .graph-filters {
+    flex: 1 1 100%;
+  }
+
   .graph-search {
     flex: 1 1 100%;
   }

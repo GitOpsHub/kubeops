@@ -10,6 +10,7 @@ import {
   hasActiveFilters,
   layoutResourceGraph,
   matchesResourceSearch,
+  middleTruncate,
   ownerFirstOrder,
   resourceCategory,
   resourceHealthLabel,
@@ -41,6 +42,10 @@ type Props = {
   /** A sync is running: edges carry a flowing dash until it finishes. */
   operationRunning?: boolean
 }
+
+/* What fits beside the icon and status marks at the card's fixed width in the
+   mono face; the CSS ellipsis stays as a backstop. */
+const cardNameChars = 22
 
 function CloudLoadBalancerMark() {
   return (
@@ -91,7 +96,7 @@ function CardContent({ node }: { node: PositionedNode }) {
           </span>
         </span>
         <span className="graph-card-name" title={node.name}>
-          {node.name}
+          {middleTruncate(node.name, cardNameChars)}
         </span>
         {message && (
           <span className="graph-card-message" title={message}>
