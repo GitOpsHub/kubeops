@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { getSources } from '../../api/inventory'
 import {
   getAllApplicationOnboardings,
   onboardingStatuses,
@@ -17,7 +18,9 @@ import {
   type SortKey,
 } from './application-groups'
 
-const pollIntervalMs = 10_000
+// Nothing on this list moves faster than an Argo sync; the detail page is
+// where a single release is watched closely.
+const pollIntervalMs = 20_000
 const searchDebounceMs = 250
 export const pageSizeOptions = [25, 50, 100]
 const defaultPageSize = 50
@@ -69,6 +72,14 @@ export function useApplicationsQuery() {
   const query = usePolledResource(load, { intervalMs: pollIntervalMs })
   const items = useMemo(() => query.data ?? [], [query.data])
 
+  // Sources turn the platform IDs on each target into names and logos. They
+  // change rarely, so one load is enough, and a failure leaves the raw IDs.
+  const sourcesQuery = usePolledResource(getSources)
+  const sources = useMemo(
+    () => new Map((sourcesQuery.data ?? []).map((source) => [source.id, source])),
+    [sourcesQuery.data],
+  )
+
   // Typing filters a list already in memory, but it still re-renders every
   // row; the pause keeps a 100-row table responsive and the URL out of the way.
   useEffect(() => {
@@ -96,13 +107,18 @@ export function useApplicationsQuery() {
     [groups, search, environment],
   )
 
+  // Every live status keeps its place in the summary, even at zero, so the
+  // strip does not reflow as releases move; offboarded appears only once
+  // asked for, since the list excludes it by default.
   const statusCounts = useMemo(() => {
     const counts = new Map<OnboardingStatus, number>()
     for (const group of scopedGroups) counts.set(group.status, (counts.get(group.status) ?? 0) + 1)
     return onboardingStatuses
       .map((item) => ({ status: item, count: counts.get(item) ?? 0 }))
-      .filter((entry) => entry.count > 0)
-  }, [scopedGroups])
+      .filter(
+        (entry) => entry.status !== 'offboarded' || entry.count > 0 || status === entry.status,
+      )
+  }, [scopedGroups, status])
 
   const filteredGroups = useMemo(() => {
     const matched = status ? scopedGroups.filter((group) => group.status === status) : scopedGroups
@@ -148,6 +164,8 @@ export function useApplicationsQuery() {
     clearAllFilters,
     environmentOptions,
     statusCounts,
+    scopedTotal: scopedGroups.length,
+    sources,
     filteredGroups,
     visibleGroups,
     hasFilters: Boolean(search || status || environment),

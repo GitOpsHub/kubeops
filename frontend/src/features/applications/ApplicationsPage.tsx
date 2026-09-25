@@ -137,11 +137,12 @@ export function ApplicationsPage() {
           />
         ) : view === 'tiles' ? (
           <div className="application-tiles-frame">
-            <ApplicationTiles groups={visibleGroups} />
+            <ApplicationTiles groups={visibleGroups} sources={apps.sources} />
           </div>
         ) : (
           <ApplicationTable
             groups={visibleGroups}
+            sources={apps.sources}
             sortKey={filters.sortKey}
             sortDirection={filters.sortDirection}
             onSort={apps.toggleSort}
