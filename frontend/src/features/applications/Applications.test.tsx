@@ -1016,7 +1016,11 @@ describe('application detail', () => {
     renderApp('/applications/onboarding-1')
     const user = userEvent.setup()
 
+    // Deploy opens the sync options rather than syncing on one click; the
+    // defaults still send the same bodiless request as before.
     await user.click(await screen.findByRole('button', { name: 'Deploy' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Sync payments-api' })
+    await user.click(within(dialog).getByRole('button', { name: 'Start sync' }))
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
