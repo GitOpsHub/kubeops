@@ -14,7 +14,7 @@ import { usePolledResource } from '../../hooks/usePolledResource'
 import { EventsFeed } from '../argo/EventsFeed'
 import { OperationBar } from '../argo/OperationBar'
 import { OperationPanel } from '../argo/OperationPanel'
-import { operationOutcome } from '../argo/operation-phases'
+import { isInFlightPhase, operationOutcome } from '../argo/operation-phases'
 import { RevisionHistory } from '../argo/RevisionHistory'
 import { SyncDialog } from '../argo/SyncDialog'
 import { useTargetStatuses } from '../argo/useTargetStatus'
@@ -294,9 +294,12 @@ export function ApplicationDetailPage() {
             content: perTarget((target) => (
               // Resources live on one cluster, so targets are inspected one at
               // a time rather than merged.
-              // TODO(merge): pass operationRunning={isInFlightPhase(selectedStatus?.operation?.phase)}
-              // once ResourceExplorer gains the prop (graph branch), to animate edges mid-sync.
-              <ResourceExplorer key={target.id} onboardingId={record.id} target={target} />
+              <ResourceExplorer
+                key={target.id}
+                onboardingId={record.id}
+                target={target}
+                operationRunning={isInFlightPhase(selectedStatus?.operation?.phase)}
+              />
             )),
           },
           {

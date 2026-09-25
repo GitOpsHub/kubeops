@@ -56,9 +56,15 @@ describe('resource manifest modal', () => {
     expect(wrap).toHaveAttribute('aria-pressed', 'true')
 
     await user.click(within(modal).getByRole('link', { name: 'View events' }))
-    expect(screen.getByLabelText('Current URL')).toHaveTextContent(
-      '/applications/onboarding-1?target=target-1&tab=events&uid=uid-dep',
-    )
+    const landed = new URL(screen.getByLabelText('Current URL').textContent ?? '', 'http://x')
+    expect(landed.pathname).toBe('/applications/onboarding-1')
+    expect(Object.fromEntries(landed.searchParams)).toMatchObject({
+      tab: 'events',
+      target: 'target-1',
+      uid: 'uid-dep',
+      kind: 'Deployment',
+      name: 'payments-api',
+    })
     expect(onClose).toHaveBeenCalled()
   })
 })

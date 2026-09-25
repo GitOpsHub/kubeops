@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link } from 'react-router-dom'
+import { resourceEventsHref } from '../application-detail/detail-links'
 import { errorMessage, isAbortError } from '../../api/client'
 import { getResourceManifest, type ResourceNode } from '../../api/onboarding'
 import { resourceSyncLabel } from '../../lib/resource-graph'
@@ -32,13 +33,14 @@ export function ResourceManifestModal({ node, onboardingId, targetId, onClose, o
   const [manifest, setManifest] = useState('')
   const [manifestError, setManifestError] = useState('')
   const [loading, setLoading] = useState(true)
-  const location = useLocation()
   // The application page's Events tab reads these, so the link lands on this
-  // object's events without the operator re-finding it. Other parameters,
-  // such as the selected target, are kept.
-  const eventsSearch = new URLSearchParams(location.search)
-  eventsSearch.set('tab', 'events')
-  eventsSearch.set('uid', node.uid)
+  // object's events, on this target, without the operator re-finding it.
+  const eventsHref = resourceEventsHref(onboardingId, targetId, {
+    uid: node.uid,
+    kind: node.kind,
+    name: node.name,
+    namespace: node.namespace,
+  })
 
   useEffect(() => {
     const controller = new AbortController()
@@ -86,11 +88,7 @@ export function ResourceManifestModal({ node, onboardingId, targetId, onClose, o
         {node.syncStatus && (
           <StatusBadge domain="sync" status={node.syncStatus} label={resourceSyncLabel(node)} />
         )}
-        <Link
-          className="link-button resource-modal-events"
-          to={{ pathname: location.pathname, search: `?${eventsSearch}` }}
-          onClick={onClose}
-        >
+        <Link className="link-button resource-modal-events" to={eventsHref} onClick={onClose}>
           View events
           <ChevronRightIcon aria-hidden="true" />
         </Link>
