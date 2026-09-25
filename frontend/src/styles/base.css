@@ -360,10 +360,16 @@ pre,
   .chip,
   .tag,
   .status-badge,
-  .toggle-group-item[aria-pressed='true'],
   .banner,
   .toast {
     border: 1px solid CanvasText;
+  }
+
+  /* Every pill already has an outline here, so the chosen one needs more
+     than a border to stand apart. */
+  .toggle-group-item[aria-pressed='true'],
+  .target-switch-item[aria-pressed='true'] {
+    border: 2px solid Highlight;
   }
 
   .status-dot,
@@ -377,8 +383,10 @@ pre,
     outline-offset: -2px;
   }
 
+  /* Backgrounds are repainted as Canvas unless the mark opts out. */
   .tab[aria-selected='true']::after,
   .nav-link.is-active::before {
+    forced-color-adjust: none;
     background: Highlight;
   }
 }
