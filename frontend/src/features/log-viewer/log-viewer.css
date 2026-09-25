@@ -45,9 +45,21 @@
 
 .log-toolbar-actions {
   display: inline-flex;
+  flex-wrap: wrap;
   gap: 2px;
   align-items: center;
   margin-left: auto;
+}
+
+.log-field-pair,
+.log-tool-group {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+}
+
+.log-field-pair {
+  gap: var(--space-2);
 }
 
 .log-toolbar-divider {
@@ -553,9 +565,14 @@
     flex: 1 1 100%;
   }
 
-  .log-field {
+  .log-field,
+  .log-field-pair {
     flex: 1 1 140px;
     min-width: 0;
+  }
+
+  .log-field-pair .log-field {
+    flex: 1;
   }
 
   .log-field .select {
