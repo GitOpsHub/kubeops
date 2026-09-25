@@ -52,6 +52,10 @@ export function EventsFeed({ onboardingId, target, scope, onClearScope }: Props)
   const warnings = events.filter(isWarning).length
   const filtered = warningsOnly || kind !== '' || search.trim() !== ''
   const scoped = Boolean(scope && (scope.uid || scope.name))
+  // A link may carry only the uid (the resource Info panel's does), so the
+  // object is named from what came back when the link did not name it.
+  const named = scope?.name ? scope : events[0]?.object
+  const scopeLabel = [named?.kind, named?.name].filter(Boolean).join(' ') || 'one resource'
 
   let body
   if (query.loading) {
@@ -148,10 +152,7 @@ export function EventsFeed({ onboardingId, target, scope, onClearScope }: Props)
       {scoped && (
         <div className="events-scope" role="note">
           <span>
-            Showing events for{' '}
-            <strong className="mono">
-              {[scope?.kind, scope?.name].filter(Boolean).join(' ') || 'one resource'}
-            </strong>
+            Showing events for <strong className="mono">{scopeLabel}</strong>
           </span>
           {onClearScope && (
             <Button size="sm" variant="ghost" onClick={onClearScope}>

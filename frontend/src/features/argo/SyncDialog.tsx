@@ -8,7 +8,6 @@ import { Button } from '../../components/ui/Button'
 import { Dialog } from '../../components/ui/Dialog'
 import { DialogBody, DialogFooter, DialogHeader } from '../../components/ui/DialogParts'
 import { Checkbox } from '../../components/ui/Field'
-import { statusMeta } from '../../lib/status'
 import { describeSync } from './sync-summary'
 import './argo.css'
 
@@ -115,16 +114,8 @@ export function SyncDialog({
                     description={
                       <span className="sync-target-state">
                         <span className="mono">{target.region}</span>
-                        <StatusBadge
-                          domain="sync"
-                          status={sync}
-                          label={statusMeta('sync', sync).label}
-                        />
-                        <StatusBadge
-                          domain="health"
-                          status={health}
-                          label={statusMeta('health', health).label}
-                        />
+                        <StatusBadge domain="sync" status={sync} />
+                        <StatusBadge domain="health" status={health} />
                       </span>
                     }
                   />
