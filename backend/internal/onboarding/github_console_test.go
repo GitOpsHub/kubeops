@@ -124,7 +124,9 @@ func TestGitHubClientRestoreValues(t *testing.T) {
 		{name: "unchanged", old: "replicaCount: 2\n", current: "replicaCount: 2\n", wantErr: ErrValuesUnchanged},
 		{name: "file absent at revision", current: "replicaCount: 5\n", wantErr: ErrRevisionNotFound},
 		{name: "concurrent edit refused", old: "a: 1\n", current: "a: 2\n",
-			putStatus: http.StatusConflict, wantPut: true, otherErr: true},
+			putStatus: http.StatusConflict, wantPut: true, wantErr: ErrValuesConflict},
+		{name: "commit failure", old: "a: 1\n", current: "a: 2\n",
+			putStatus: http.StatusInternalServerError, wantPut: true, otherErr: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var put struct {
@@ -164,7 +166,7 @@ func TestGitHubClientRestoreValues(t *testing.T) {
 				}
 				return
 			case test.otherErr:
-				if err == nil || errors.Is(err, ErrValuesUnchanged) {
+				if err == nil || errors.Is(err, ErrValuesUnchanged) || errors.Is(err, ErrValuesConflict) {
 					t.Fatalf("expected a GitHub error, got %v", err)
 				}
 				return

@@ -163,17 +163,36 @@ func (api *API) rollbackApplicationOnboarding(w http.ResponseWriter, r *http.Req
 	item, err := api.onboarder.Rollback(r.Context(), id, request.CommitSHA)
 	var validationError onboarding.ValidationError
 	var externalError onboarding.ExternalError
+	var followUpError onboarding.RollbackFollowUpError
 	switch {
 	case err == nil:
 		api.recordOperation(r, id, "", "rollback",
 			map[string]any{"commitSha": request.CommitSHA, "valuesCommitSha": item.ValuesCommitSHA},
 			operationSucceeded)
 		writeJSON(w, http.StatusOK, item)
+	case errors.As(err, &followUpError):
+		// The values commit exists whatever failed after it, so the audit
+		// trail records the rollback and the response names the commit. This
+		// runs before the aborted check: a caller hanging up mid-sync must not
+		// erase a commit that already landed.
+		slog.Error("finish application rollback", "onboarding", id, "sha", request.CommitSHA, "error", err)
+		api.recordOperation(r, id, "", "rollback",
+			map[string]any{"commitSha": request.CommitSHA, "valuesCommitSha": followUpError.CommitSHA},
+			operationSucceeded)
+		status := http.StatusInternalServerError
+		if followUpError.Step == onboarding.RollbackStepSync {
+			status = http.StatusBadGateway
+		}
+		writeJSON(w, status, map[string]string{
+			"error": followUpError.Message(), "valuesCommitSha": followUpError.CommitSHA,
+		})
 	case aborted(r):
 	case errors.Is(err, pgx.ErrNoRows):
 		writeError(w, http.StatusNotFound, "application onboarding not found")
 	case errors.As(err, &validationError):
 		writeError(w, http.StatusUnprocessableEntity, validationError.Message)
+	case errors.Is(err, onboarding.ErrValuesConflict):
+		writeError(w, http.StatusConflict, "the values file changed while rolling back; refresh and try again")
 	case errors.As(err, &externalError):
 		slog.Error("roll back application through GitHub", "onboarding", id, "sha", request.CommitSHA, "error", externalError)
 		api.recordOperation(r, id, "", "rollback", map[string]any{"commitSha": request.CommitSHA}, operationFailed)

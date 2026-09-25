@@ -105,6 +105,8 @@ export type MockState = {
   syncRequests: (Record<string, unknown> | null)[]
   terminatedTargets: string[]
   rollbacks: string[]
+  /** When set, a rollback answers with this status and body instead of succeeding. */
+  rollbackFailure: { status: number; body: Record<string, unknown> } | null
 }
 
 export function buildResource(overrides: Partial<ResourceNode> = {}): ResourceNode {
@@ -153,6 +155,7 @@ export function mockAPI(initial: Partial<MockState> = {}) {
     syncRequests: [],
     terminatedTargets: [],
     rollbacks: [],
+    rollbackFailure: initial.rollbackFailure ?? null,
   }
 
   const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (request, init) => {
@@ -361,6 +364,11 @@ export function mockAPI(initial: Partial<MockState> = {}) {
         }
         const { commitSha } = JSON.parse(String(init.body)) as { commitSha: string }
         state.rollbacks.push(commitSha)
+        if (state.rollbackFailure) {
+          return Response.json(state.rollbackFailure.body, {
+            status: state.rollbackFailure.status,
+          })
+        }
         found.valuesCommitSha = `rollback-of-${commitSha}`
         found.status = 'progressing'
         return Response.json(found)

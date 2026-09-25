@@ -20,6 +20,9 @@ var (
 	// ErrValuesUnchanged reports a rollback to content identical to what the
 	// branch already holds, which GitHub would record as an empty commit.
 	ErrValuesUnchanged = errors.New("values are unchanged")
+	// ErrValuesConflict reports that the values file changed on the branch
+	// between reading it and committing the rollback.
+	ErrValuesConflict = errors.New("values file changed during the rollback")
 )
 
 // ValuesCommit is one commit that touched a release values file.
@@ -179,7 +182,7 @@ func (c *GitHubClient) RestoreValues(
 			SHA string `json:"sha"`
 		} `json:"commit"`
 	}
-	if _, err := c.request(ctx, token, http.MethodPut,
+	status, err := c.request(ctx, token, http.MethodPut,
 		"/repos/"+url.PathEscape(c.organization)+"/"+url.PathEscape(name)+
 			"/contents/"+escapedContentPath(filePath),
 		map[string]any{
@@ -189,7 +192,11 @@ func (c *GitHubClient) RestoreValues(
 			// The current blob SHA makes GitHub refuse the write if the file
 			// changed since it was read, instead of silently overwriting it.
 			"sha": current.SHA,
-		}, &commit); err != nil {
+		}, &commit)
+	if status == http.StatusConflict {
+		return ValuesUpdate{}, ErrValuesConflict
+	}
+	if err != nil {
 		return ValuesUpdate{}, fmt.Errorf("commit rolled back values: %w", err)
 	}
 	return ValuesUpdate{CommitSHA: commit.Commit.SHA, ValuesYAML: string(target)}, nil

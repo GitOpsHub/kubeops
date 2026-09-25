@@ -43,6 +43,10 @@ type fakeRepository struct {
 	lookedUpNamespace string
 	// createErr overrides the result of CreateApplicationOnboarding.
 	createErr error
+	// valuesErr and restartErr fail UpdateApplicationOnboardingValues and
+	// RestartApplicationDeploymentAttempts, the steps after a values commit.
+	valuesErr  error
+	restartErr error
 	// kubespinArgo maps cluster name to the Argo CD details GetKubespinArgoDetails
 	// returns; a cluster name absent here returns pgx.ErrNoRows, as it does when
 	// kubespin has no ready entry for that cluster.
@@ -155,6 +159,9 @@ func (f *fakeRepository) UpdateApplicationOnboardingValues(
 ) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.valuesErr != nil {
+		return f.valuesErr
+	}
 	f.valuesDigest = valuesDigest
 	f.valuesCommitSHA = valuesCommitSHA
 	f.record.ValuesDigest = valuesDigest
@@ -193,6 +200,9 @@ func (f *fakeRepository) RestartApplicationDeploymentAttempts(
 ) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.restartErr != nil {
+		return f.restartErr
+	}
 	f.restarted = append(f.restarted, onboardingID)
 	for index := range f.active {
 		f.active[index].AttemptStartedAt = time.Now()

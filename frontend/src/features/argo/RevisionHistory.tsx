@@ -188,6 +188,7 @@ export function RevisionHistory({ record, statuses, consoleMutations, onRolledBa
             onRolledBack(next)
             void query.reload()
           }}
+          onCommitted={() => void query.reload()}
         />
       )}
     </div>

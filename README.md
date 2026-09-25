@@ -384,7 +384,12 @@ Rollback is a GitOps revert: KubeOps commits the release-scoped
 `{environment}/{region}/values.yaml` as it was at the chosen commit and then
 syncs, exactly as scaling does. Argo CD's own rollback cannot be used because
 the generated Applications sync automatically with self-heal. The chart
-revision and the shared root `values.yaml` are not rolled back.
+revision and the shared root `values.yaml` are not rolled back. If the values
+file changes on the branch mid-rollback, GitHub refuses the commit and the
+API answers `409`. If the commit lands but recording it or starting the sync
+fails, the error response names the commit in `valuesCommitSha`, the audit
+trail still records the rollback, and Argo CD's automated sync deploys it
+anyway.
 
 `ONBOARDING_CONSOLE_MUTATIONS` (default `true`) enables the console's
 rollback and terminate-operation actions. The API has no authentication, and

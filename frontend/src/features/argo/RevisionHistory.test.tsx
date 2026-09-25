@@ -207,6 +207,43 @@ describe('RevisionHistory', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('says a rollback was committed when only the follow-up sync failed', async () => {
+    const message =
+      "Rolled back values in commit ddd4444, but KubeOps could not start the sync. Argo CD's automated sync will still apply it."
+    const { fetchMock, state } = setup({
+      applications: [buildApplication({ environment: 'dev', targets: [buildTarget()] })],
+      rollbackFailure: {
+        status: 502,
+        body: { error: message, valuesCommitSha: 'ddd4444aaaa0000' },
+      },
+    })
+    renderApp('/applications/onboarding-1?tab=history')
+    const user = userEvent.setup()
+
+    await screen.findByRole('list', { name: 'Values revisions' })
+    const listCalls = () =>
+      fetchMock.mock.calls.filter(([url]) => /\/revisions\?/.test(String(url))).length
+    const listedBefore = listCalls()
+    await user.click(
+      within(revision('Onboard payments-api')).getByRole('button', {
+        name: 'Roll back to aaa1111',
+      }),
+    )
+    const dialog = await screen.findByRole('dialog', { name: 'Roll back payments-api to aaa1111?' })
+    await user.click(within(dialog).getByRole('button', { name: 'Roll back' }))
+
+    expect(await screen.findByText(message)).toBeInTheDocument()
+    expect(screen.queryByText(/could not be committed/)).not.toBeInTheDocument()
+    expect(state.rollbacks).toEqual(['aaa1111aaaa0000'])
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: 'Roll back payments-api to aaa1111?' }),
+      ).not.toBeInTheDocument(),
+    )
+    // The new commit is in Git, so the history is read again.
+    await waitFor(() => expect(listCalls()).toBeGreaterThan(listedBefore))
+  })
+
   it('keeps history but hides rollback when console mutations are off', async () => {
     setup({ consoleMutations: false })
     renderApp('/applications/onboarding-1?tab=history')

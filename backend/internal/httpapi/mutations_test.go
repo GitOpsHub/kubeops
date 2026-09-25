@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,9 +19,20 @@ func serveMutation(
 	mutations bool,
 	method, path, contentType, body string,
 ) *httptest.ResponseRecorder {
+	return serveMutationWithStore(&fakeRepository{}, onboarder, mutations, method, path, contentType, body)
+}
+
+// serveMutationWithStore is serveMutation with a repository the caller can
+// inspect afterwards, e.g. for the audit rows a mutation wrote.
+func serveMutationWithStore(
+	repository *fakeRepository,
+	onboarder *fakeApplicationOnboarder,
+	mutations bool,
+	method, path, contentType, body string,
+) *httptest.ResponseRecorder {
 	handler := NewHandlerWithOnboarding(config.Config{
 		Onboarding: config.OnboardingConfig{ConsoleMutations: mutations},
-	}, &fakeRepository{}, &fakeClusterManager{}, onboarder)
+	}, repository, &fakeClusterManager{}, onboarder)
 	request := httptest.NewRequest(method, path, strings.NewReader(body))
 	if contentType != "" {
 		request.Header.Set("Content-Type", contentType)
@@ -126,6 +138,7 @@ func TestTerminateOperationRoute(t *testing.T) {
 
 func TestRollbackRoute(t *testing.T) {
 	const body = `{"commitSha":"abc1234"}`
+	const rollbackCommit = "fed9876aaaabbbbccccddddeeeeffff000011112"
 	for _, test := range []struct {
 		name        string
 		mutations   bool
@@ -134,9 +147,13 @@ func TestRollbackRoute(t *testing.T) {
 		err         error
 		wantStatus  int
 		wantMessage string
+		// wantAudit is the result of the one audit row the request must
+		// write, or empty when it must write none.
+		wantAudit       string
+		wantAuditCommit string
 	}{
 		{name: "rolled back", mutations: true, contentType: "application/json", body: body,
-			wantStatus: http.StatusOK},
+			wantStatus: http.StatusOK, wantAudit: operationSucceeded, wantAuditCommit: rollbackCommit},
 		{name: "disabled", contentType: "application/json", body: body, wantStatus: http.StatusForbidden},
 		{name: "no body", mutations: true, wantStatus: http.StatusBadRequest},
 		{name: "bad sha", mutations: true, contentType: "application/json", body: `{"commitSha":"main"}`,
@@ -149,16 +166,37 @@ func TestRollbackRoute(t *testing.T) {
 			err:        onboarding.ValidationError{Message: "values at abc1234 already match the current values"},
 			wantStatus: http.StatusUnprocessableEntity, wantMessage: "already match"},
 		{name: "GitHub failure", mutations: true, contentType: "application/json", body: body,
-			err:        onboarding.ExternalError{Err: errors.New("GitHub API returned status 409: token=secret")},
-			wantStatus: http.StatusBadGateway, wantMessage: "GitHub could not roll back application values"},
+			err:        onboarding.ExternalError{Err: errors.New("GitHub API returned status 500: token=secret")},
+			wantStatus: http.StatusBadGateway, wantMessage: "GitHub could not roll back application values",
+			wantAudit: operationFailed},
+		{name: "values changed during the rollback", mutations: true, contentType: "application/json", body: body,
+			err:         fmt.Errorf("commit: %w", onboarding.ErrValuesConflict),
+			wantStatus:  http.StatusConflict,
+			wantMessage: `"the values file changed while rolling back; refresh and try again"`},
+		{name: "committed but not synced", mutations: true, contentType: "application/json", body: body,
+			err: onboarding.RollbackFollowUpError{
+				CommitSHA: rollbackCommit, Step: onboarding.RollbackStepSync, Err: errors.New("token=secret"),
+			},
+			wantStatus: http.StatusBadGateway,
+			wantMessage: `"error":"Rolled back values in commit fed9876, but KubeOps could not start the sync. ` +
+				`Argo CD's automated sync will still apply it.","valuesCommitSha":"` + rollbackCommit + `"`,
+			wantAudit: operationSucceeded, wantAuditCommit: rollbackCommit},
+		{name: "committed but not recorded", mutations: true, contentType: "application/json", body: body,
+			err: onboarding.RollbackFollowUpError{
+				CommitSHA: rollbackCommit, Step: onboarding.RollbackStepRecord, Err: errors.New("token=secret"),
+			},
+			wantStatus:  http.StatusInternalServerError,
+			wantMessage: "Rolled back values in commit fed9876, but KubeOps could not record it.",
+			wantAudit:   operationSucceeded, wantAuditCommit: rollbackCommit},
 		{name: "missing onboarding", mutations: true, contentType: "application/json", body: body,
 			err: pgx.ErrNoRows, wantStatus: http.StatusNotFound},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			onboarder := &fakeApplicationOnboarder{
-				record: model.ApplicationOnboarding{ID: "onboarding-1"}, err: test.err,
+				record: model.ApplicationOnboarding{ID: "onboarding-1", ValuesCommitSHA: rollbackCommit}, err: test.err,
 			}
-			response := serveMutation(onboarder, test.mutations, http.MethodPost,
+			repository := &fakeRepository{}
+			response := serveMutationWithStore(repository, onboarder, test.mutations, http.MethodPost,
 				"/api/application-onboardings/onboarding-1/rollback", test.contentType, test.body)
 			if response.Code != test.wantStatus || !strings.Contains(response.Body.String(), test.wantMessage) {
 				t.Fatalf("expected %d %q, got %d: %s",
@@ -173,6 +211,21 @@ func TestRollbackRoute(t *testing.T) {
 			}
 			if !test.mutations && onboarder.rollbackID != "" {
 				t.Fatal("a disabled rollback reached the service")
+			}
+			if test.wantAudit == "" {
+				if len(repository.operations) != 0 {
+					t.Fatalf("expected no audit row, got %#v", repository.operations)
+				}
+				return
+			}
+			if len(repository.operations) != 1 {
+				t.Fatalf("expected one audit row, got %#v", repository.operations)
+			}
+			operation := repository.operations[0]
+			if operation.Kind != "rollback" || operation.Result != test.wantAudit ||
+				operation.Params["commitSha"] != "abc1234" ||
+				(test.wantAuditCommit != "" && operation.Params["valuesCommitSha"] != test.wantAuditCommit) {
+				t.Fatalf("unexpected audit row: %#v", operation)
 			}
 		})
 	}
