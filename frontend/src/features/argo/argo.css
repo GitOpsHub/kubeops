@@ -23,10 +23,11 @@
   border: 0;
 }
 
-.sync-fieldset legend {
-  float: left;
-  margin-bottom: var(--space-2);
-  padding: 0;
+.sync-fieldset-head {
+  display: flex;
+  gap: var(--space-3);
+  align-items: baseline;
+  justify-content: space-between;
   color: var(--text-subtle);
   font-size: var(--text-xs);
   font-weight: var(--weight-semibold);
@@ -34,14 +35,9 @@
   text-transform: uppercase;
 }
 
-.sync-fieldset legend + * {
-  clear: left;
-}
-
-.sync-fieldset-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: calc(var(--space-6) * -1);
+.sync-fieldset-head .link-button {
+  letter-spacing: normal;
+  text-transform: none;
 }
 
 .sync-targets {

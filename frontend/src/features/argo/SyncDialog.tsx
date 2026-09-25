@@ -80,9 +80,10 @@ export function SyncDialog({
       />
       <DialogBody className="sync-dialog-body">
         <fieldset className="sync-fieldset">
-          <legend>Clusters</legend>
-          {record.targets.length > 1 && (
-            <div className="sync-fieldset-actions">
+          <legend className="sr-only">Clusters</legend>
+          <div className="sync-fieldset-head">
+            <span aria-hidden="true">Clusters</span>
+            {record.targets.length > 1 && (
               <button
                 type="button"
                 className="link-button"
@@ -92,8 +93,8 @@ export function SyncDialog({
               >
                 {everyTarget ? 'Clear all' : 'Select all'}
               </button>
-            </div>
-          )}
+            )}
+          </div>
           <ul className="sync-targets">
             {record.targets.map((target) => {
               const status = statuses[target.id]
@@ -134,7 +135,10 @@ export function SyncDialog({
         </fieldset>
 
         <fieldset className="sync-fieldset">
-          <legend>Options</legend>
+          <legend className="sr-only">Options</legend>
+          <div className="sync-fieldset-head">
+            <span aria-hidden="true">Options</span>
+          </div>
           <Checkbox
             checked={options.prune}
             onChange={(event) => set('prune')(event.target.checked)}
