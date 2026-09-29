@@ -86,8 +86,24 @@
   color: var(--err);
   background: var(--err-soft);
   border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+}
+
+.source-error summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.source-error summary::marker {
+  color: color-mix(in srgb, var(--err) 70%, transparent);
+}
+
+.source-error p {
+  margin-top: var(--space-2);
+  color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
+  line-height: 1.55;
 }
 
 .run-list li {
@@ -128,6 +144,14 @@
   color: var(--text-subtle);
   font-size: var(--text-2xs);
   text-align: right;
+}
+
+/* The dot already carries a run's status; on a phone the badge only squeezes
+   the source name and message. */
+@media (max-width: 560px) {
+  .run-list .status-badge {
+    display: none;
+  }
 }
 
 @media (max-width: 860px) {

@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -14,7 +13,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 
@@ -133,25 +131,12 @@ func (c *HTTPArgoClient) authorization() string {
 }
 
 func NewHTTPArgoClient(target config.ArgoTarget, timeoutConfig config.OnboardingConfig) (*HTTPArgoClient, error) {
-	parsed, err := url.Parse(target.ServerURL)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return nil, fmt.Errorf("invalid Argo CD server URL for %s: %q", target.SourceID, target.ServerURL)
+	if _, err := target.Endpoint(); err != nil {
+		return nil, err
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
-	if target.CAFile != "" {
-		certificate, err := os.ReadFile(target.CAFile)
-		if err != nil {
-			return nil, fmt.Errorf("read Argo CD CA file: %w", err)
-		}
-		pool, err := x509.SystemCertPool()
-		if err != nil {
-			return nil, fmt.Errorf("load system certificate pool: %w", err)
-		}
-		if !pool.AppendCertsFromPEM(certificate) {
-			return nil, errors.New("Argo CD CA file does not contain a valid PEM certificate")
-		}
-		transport.TLSClientConfig.RootCAs = pool
+	transport, err := target.Transport()
+	if err != nil {
+		return nil, err
 	}
 	return &HTTPArgoClient{
 		serverURL: target.ServerURL,
@@ -752,27 +737,37 @@ func (c *HTTPArgoClient) DeleteResource(
 ) error {
 	endpoint := c.serverURL + "/api/v1/applications/" + url.PathEscape(name) +
 		"/resource?" + resourceQuery(argoNamespace, ref).Encode()
-	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
+	status, err := c.deleteStatus(ctx, endpoint)
 	if err != nil {
 		return err
+	}
+	if status == http.StatusNotFound || status == http.StatusForbidden {
+		return ErrResourceNotFound
+	}
+	if status < 200 || status >= 300 {
+		return argoAPIError{status: status}
+	}
+	return nil
+}
+
+// deleteStatus sends an authorized DELETE and reports only the status code;
+// the body is drained and dropped because Argo CD error bodies can echo
+// credentials back.
+func (c *HTTPArgoClient) deleteStatus(ctx context.Context, endpoint string) (int, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
+	if err != nil {
+		return 0, err
 	}
 	request.Header.Set("Authorization", c.authorization())
 	// The same grpc-gateway media-type requirement that DeleteApplication hits.
 	request.Header.Set("Content-Type", "application/json")
 	response, err := c.client.Do(request)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer response.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-	if response.StatusCode == http.StatusNotFound ||
-		response.StatusCode == http.StatusForbidden {
-		return ErrResourceNotFound
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return argoAPIError{status: response.StatusCode}
-	}
-	return nil
+	return response.StatusCode, nil
 }
 
 func resourceQuery(argoNamespace string, ref ResourceRef) url.Values {

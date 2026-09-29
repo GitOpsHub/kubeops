@@ -3,12 +3,21 @@ package model
 import "time"
 
 const (
-	ProviderAWS      = "aws"
-	ProviderGCP      = "gcp"
-	ProviderAzure    = "azure"
-	ProviderDocker   = "docker"
-	ProviderMinikube = "minikube"
+	ProviderAWS   = "aws"
+	ProviderGCP   = "gcp"
+	ProviderAzure = "azure"
 )
+
+// SupportedProvider reports whether KubeOps can discover clusters for a
+// provider. Older databases may still hold docker/minikube rows from when
+// local kubeconfig discovery existed; callers use this to ignore them.
+func SupportedProvider(provider string) bool {
+	switch provider {
+	case ProviderAWS, ProviderGCP, ProviderAzure:
+		return true
+	}
+	return false
+}
 
 const (
 	OnboardingProgressing = "progressing"
@@ -28,8 +37,6 @@ type CloudSource struct {
 	RoleARN                   string   `json:"-" yaml:"role_arn,omitempty"`
 	ImpersonateServiceAccount string   `json:"-" yaml:"impersonate_service_account,omitempty"`
 	TenantID                  string   `json:"-" yaml:"tenant_id,omitempty"`
-	KubeconfigPath            string   `json:"-" yaml:"kubeconfig_path,omitempty"`
-	Contexts                  []string `json:"-" yaml:"contexts,omitempty"`
 	// ClientID names the Azure app registration whose federated identity
 	// credential trusts this deployment's OIDC issuer.
 	ClientID string `json:"-" yaml:"client_id,omitempty"`
@@ -156,17 +163,12 @@ type AzureNetworking struct {
 	PrivateDNSZone   string   `json:"privateDnsZone,omitempty"`
 }
 
-type LocalNetworking struct {
-	APIServer string `json:"apiServer,omitempty"`
-}
-
 type ClusterNetworking struct {
 	Provider       string           `json:"provider"`
 	EndpointAccess string           `json:"endpointAccess"`
 	AWS            *AWSNetworking   `json:"aws,omitempty"`
 	GCP            *GCPNetworking   `json:"gcp,omitempty"`
 	Azure          *AzureNetworking `json:"azure,omitempty"`
-	Local          *LocalNetworking `json:"local,omitempty"`
 }
 
 type ClusterDetails struct {

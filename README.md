@@ -1,6 +1,6 @@
 # KubeOps
 
-KubeOps inventories managed Kubernetes clusters across AWS EKS, Google GKE, Azure AKS, and local Docker or Minikube environments. A Go service polls configured sources every five minutes, stores normalized inventory and sync history in PostgreSQL, and serves a React dashboard.
+KubeOps inventories managed Kubernetes clusters across AWS EKS, Google GKE, and Azure AKS, and onboards applications onto them through Argo CD. A Go service keeps every configured cloud source synced automatically (every five minutes by default), stores normalized inventory and sync history in PostgreSQL, and serves a React dashboard.
 
 ## Repository layout
 
@@ -11,61 +11,27 @@ KubeOps inventories managed Kubernetes clusters across AWS EKS, Google GKE, Azur
 
 ## Local development
 
-Prerequisites: Node.js 22.12+, npm, Go 1.26+, Docker, `kubectl`, Helm,
-the Argo CD CLI, and OpenSSL. Local application onboarding expects the
-`docker-desktop` and `minikube` kubeconfig contexts by default.
+Prerequisites: Node.js 22.12+, npm, Go 1.26+, and Docker (for PostgreSQL).
 
 ```sh
 cp .env.example .env
+cp config/cloud-sources.example.yaml config/cloud-sources.yaml
 cd frontend && npm install
 cd ..
 make dev
 ```
 
-`make dev` starts PostgreSQL, installs or upgrades Argo CD in both local
-clusters, creates scoped KubeOps API tokens and verified local TLS endpoints,
-creates separate `kubeops` UI login passwords, generates the ignored
-`config/argo-targets.yaml`, and runs the API, UI, and Argo port-forwards
-together. Cluster details include an **Open Argo CD** link and a password-copy
-control. Press Ctrl-C to stop the local processes. Override the defaults with
-`KUBEOPS_DOCKER_CONTEXT`, `KUBEOPS_MINIKUBE_CONTEXT`,
-`KUBEOPS_DOCKER_ARGO_PORT`, or `KUBEOPS_MINIKUBE_ARGO_PORT`.
+`make dev` starts PostgreSQL and then runs the API and UI together; open
+`http://localhost:5173`. Database migrations run automatically when the API
+starts. Run `make dev-backend` or `make dev-frontend` to start only one of them.
+`make db-destroy` discards the local PostgreSQL data.
 
-Argo CD is reached over `kubectl` port-forwards on localhost, one per target
-in `config/argo-targets.yaml`: `18081` for docker-desktop and `18082` for
-minikube. Remote clusters are opt-in — set `KUBEOPS_GKE_CONTEXT` or
-`KUBEOPS_AKS_CONTEXT` in `.env` (with optional `KUBEOPS_GKE_ARGO_PORT` and
-`KUBEOPS_AKS_ARGO_PORT`, default `18083` and `18084`) to forward a GKE or AKS
-Argo CD as well. A target whose kube context is missing is skipped rather than
-failing the others. `make dev` supervises the forwards and restarts any that
-drop, so a laptop suspend or a rescheduled Argo CD server pod no longer leaves
-every Argo CD operation failing with connection refused.
-
-To discard and recreate the complete local environment, run:
-
-```sh
-make dev-recreate
-```
-
-This is destructive: it removes the PostgreSQL volume and all stored data,
-resets the Docker Desktop Kubernetes cluster, and deletes the configured
-Minikube profile before recreating both clusters and rerunning `dev-setup`.
-It does not modify remote Kubernetes contexts such as GKE. Set
-`KUBEOPS_MINIKUBE_CONTEXT` when the Minikube profile is not named `minikube`.
-Use `make db-destroy` when only the local PostgreSQL data should be discarded.
-
-Set `ARGO_GITHUB_READ_TOKEN` to a dedicated read-only GitHub token when Argo CD
-must clone private `GitOpsHub` values repositories or pull the private GHCR Helm
-chart. Set `GITHUB_REPOSITORY_USERNAME` to the GitHub username associated with
-that token. The setup intentionally does not copy a broad GitHub CLI credential
-into either cluster.
-
-Set the desired sources to `enabled: true`. Locally, authentication uses each provider’s standard credential chain:
+Set the sources you want to `enabled: true` in `config/cloud-sources.yaml`.
+Locally, authentication uses each provider’s standard credential chain:
 
 - AWS default credentials, optionally assuming `role_arn`
 - Google Application Default Credentials, optionally impersonating a service account
 - Azure `DefaultAzureCredential`, optionally scoped with `tenant_id`
-- Docker Desktop, kind, k3d, and Minikube through the configured kubeconfig
 
 Deployed environments federate an OIDC token into a cloud role instead, so no
 provider key is stored — see [Keyless cloud access](#keyless-cloud-access). The
@@ -76,31 +42,30 @@ Development tokens are valid for twelve hours, and their `sub` ends in
 `:environment:development`, so the cloud trust policies need an entry for that
 environment too.
 
-Local providers default to `~/.kube/config`. Docker discovery recognizes `docker-desktop`, `docker-for-desktop`, `kind-*`, and `k3d-*` contexts; Minikube recognizes `minikube`, `minikube-*`, and Minikube certificate paths. Set `contexts` explicitly when profiles use custom names.
+Application onboarding talks to the Argo CD instance in each target cluster.
+List them in `config/argo-targets.yaml` (see
+`config/argo-targets.example.yaml`) or seed them into the database with
+`backend/cmd/seed-argo-target`; every `server_url` must be reachable from the
+API. [`manifests/argocd/kubeops-values.yaml`](manifests/argocd/kubeops-values.yaml)
+holds the Argo CD Helm values that create the scoped `kubeops` account the API
+uses.
 
-To run only one application process:
+## Automatic sync
 
-```sh
-make dev-backend
-make dev-frontend
-```
+Every enabled cloud source is re-discovered once per `SYNC_INTERVAL` (default
+`5m`) with no one pressing a button:
 
-These start no port-forwards, so Argo CD is unreachable and onboarding, sync,
-and resource views fail with connection refused until the forwards are running.
-Start and manage them separately:
+- **Always-on backends** (`BACKGROUND_WORKERS=true`, the default off Vercel)
+  run their own scheduler and worker pool.
+- **Vercel** suspends functions between requests, so background workers are
+  off. Instead the UI calls `POST /api/cloud-sources/refresh` when it opens and
+  then once per interval while the tab is visible. The API discovers only the
+  sources whose last sync is older than `SYNC_INTERVAL`, inside that request,
+  so however many people have KubeOps open each source is discovered at most
+  once per interval. The daily Vercel Cron job described below covers the
+  hours when nobody has the UI open.
 
-```sh
-make argo-forward          # start the supervised forwards (safe to re-run)
-make argo-forward-status   # show which targets are reachable
-make argo-forward-stop     # tear them down
-```
-
-`make argo-forward` waits for each Argo CD endpoint to answer before reporting
-success and writes per-target logs to the ignored `.dev/argo-forwards/`
-directory. `make dev` manages the same forwards on its own, so the targets above
-are only needed when the API runs outside it.
-
-Open `http://localhost:5173`. Database migrations run automatically when the API starts.
+**Sync now** on the Cloud sources page still forces an immediate discovery.
 
 ## Validation
 
@@ -142,9 +107,10 @@ local URLs and paths with production values. At minimum it requires
 create that variable manually. Environment variable changes require a new
 deployment.
 
-Vercel automatically disables the continuous inventory and onboarding workers.
-Manual inventory syncs execute completely inside the initiating HTTP request.
-To keep the fleet view current without a person pressing "Sync now," set
+Vercel automatically disables the continuous inventory and onboarding workers;
+inventory syncs execute completely inside the HTTP request that starts them.
+While someone has the UI open it keeps sources fresh itself (see
+[Automatic sync](#automatic-sync)). To also sync while nobody is watching, set
 `CRON_SECRET` on the backend project and deploy — `backend/vercel.json`
 schedules a Vercel Cron job that calls `GET /api/cloud-sources/sync` (bulk
 pull of every enabled source) on the interval in its `schedule` field,
@@ -163,8 +129,8 @@ Because ignored local YAML files are not available in a Git deployment, set
 configuration files, and set `GLOBAL_HELM_DEFAULT_VALUES_YAML` when the chart
 defaults file is outside the backend project root. Keep the token variables
 referenced by `ARGO_TARGETS_YAML` as separate encrypted environment variables.
-Only configure cloud and Argo CD endpoints reachable from Vercel; Docker Desktop,
-Minikube, localhost URLs, and local kubeconfig files cannot be used there.
+Only configure cloud and Argo CD endpoints reachable from Vercel; localhost Argo
+CD URLs are dropped at startup there.
 
 Every provider named by an enabled source also needs a way to authenticate,
 because the provider SDKs fall back to local `aws`, `gcloud`, and `az` profiles
@@ -315,9 +281,9 @@ this.
 GitHub Container Registry creates new packages as private by default. An
 organization package administrator must change the package visibility to
 **Public** once after its first publication if anonymous Argo CD access is
-required. Keeping it private is also supported — `scripts/setup-local-argocd.sh`
-provisions the `kubeops-ghcr-helm-creds` repository secret so Argo CD can pull
-with credentials. Configure the fixed chart name, revision, and matching local defaults
+required. Keeping it private is also supported, as long as each Argo CD
+instance has a repository credential for `ghcr.io/gitopshub/charts` so it can
+pull with credentials. Configure the fixed chart name, revision, and matching local defaults
 file in `.env`.
 
 `GLOBAL_HELM_REVISION` is the chart version new onboardings are pinned to; it is
@@ -342,7 +308,8 @@ details drawer retrieves the password only from the dedicated access endpoint.
 Keep the API restricted to the trusted internal network because this version
 does not include authentication or RBAC.
 
-The UI uses browser history routes: `/` for the fleet inventory, `/applications` for the
+The UI uses browser history routes: `/` for the overview, `/clusters` for the fleet inventory,
+`/sources` for cloud sources and sync history, `/applications` for the
 searchable onboarded-application list (filters are kept in the URL query string),
 `/applications/new` for the onboarding form, and `/applications/{id}` for one application's
 deployment targets. Production static hosting must rewrite unknown application routes to
@@ -393,7 +360,9 @@ CORS preflight, and caps the body at 4 KiB.
 - `POST /api/clusters/{id}/node-pools/{pool}/scale` — set a managed node pool's desired size
 - `GET /api/cloud-sources` — source counts and latest status
 - `GET /api/sync-runs` — recent reconciliation history, optionally for one `sourceId`
-- `POST /api/cloud-sources/{id}/sync` — queue a source refresh
+- `POST /api/cloud-sources/{id}/sync` — sync one source now
+- `POST /api/cloud-sources/refresh` — sync every source older than `SYNC_INTERVAL`; the UI calls it automatically
+- `GET /api/cloud-sources/sync` — sync every source; Vercel Cron only, requires `CRON_SECRET`
 - `POST /api/application-onboardings` — create Argo CD Applications for selected clusters
 - `POST /api/application-onboardings/{id}/sync` — recreate missing Argo CD Applications and sync every target;
   an optional JSON body selects `targetIds` and sets `prune`, `dryRun`, `force`, and `applyOutOfSyncOnly`

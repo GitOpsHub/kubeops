@@ -48,7 +48,8 @@ function GkeLogo(props: IconProps) {
   )
 }
 
-function DockerLogo(props: IconProps) {
+/** Marks a container image, e.g. beside an application's image reference. */
+export function ContainerImageLogo(props: IconProps) {
   return (
     <svg viewBox="0 0 48 48" {...props}>
       <g fill="#2496ED">
@@ -59,25 +60,11 @@ function DockerLogo(props: IconProps) {
   )
 }
 
-function MinikubeLogo(props: IconProps) {
-  return (
-    <svg viewBox="0 0 48 48" {...props}>
-      <path fill="#FFC61C" d="M24 3 42 13.5v21L24 45 6 34.5v-21L24 3Z" />
-      <path
-        fill="#1F2937"
-        d="m13 15 6.8 4.2L24 16l4.2 3.2L35 15v18l-6.8-4.2L24 32l-4.2-3.2L13 33V15Zm5.2 7.1v4.3l5.8-3.8 5.8 3.8v-4.3L24 26l-5.8-3.9Z"
-      />
-    </svg>
-  )
-}
-
 export function ProviderLogo({ provider, ...props }: IconProps & { provider: Provider }) {
   const Icon = {
     aws: EksLogo,
     azure: AksLogo,
     gcp: GkeLogo,
-    docker: DockerLogo,
-    minikube: MinikubeLogo,
   }[provider]
 
   return <Icon aria-hidden="true" {...props} />

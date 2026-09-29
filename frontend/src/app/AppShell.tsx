@@ -2,6 +2,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import { getSyncRuns } from '../api/inventory'
 import { Dialog, DialogTitle } from '../components/ui/Dialog'
+import { useAutoSync } from '../hooks/useAutoSync'
 import { usePolledResource } from '../hooks/usePolledResource'
 import { useStoredPreference } from '../hooks/useStoredPreference'
 import type { ApplicationTopbarState, AppShellContext } from '../lib/app-shell'
@@ -28,13 +29,19 @@ export function AppShell() {
   const loadRuns = useCallback((signal: AbortSignal) => getSyncRuns(signal), [])
   const runs = usePolledResource(loadRuns, { intervalMs: syncPollMs })
   const latestRun = runs.data?.[0] ?? null
+  const autoSync = useAutoSync(runs.reload)
 
   // A route change always lands with the drawer closed.
   useEffect(() => setDrawerOpen(false), [pathname])
 
   const outletContext = useMemo<AppShellContext>(
-    () => ({ setApplicationTopbar, refreshSyncStatus: runs.reload }),
-    [runs.reload],
+    () => ({
+      setApplicationTopbar,
+      refreshSyncStatus: runs.reload,
+      lastAutoSyncAt: autoSync.lastSyncedAt,
+      syncIntervalMs: autoSync.intervalMs,
+    }),
+    [runs.reload, autoSync.lastSyncedAt, autoSync.intervalMs],
   )
 
   return (
@@ -48,6 +55,7 @@ export function AppShell() {
           collapsed={collapsed}
           onToggleCollapsed={() => setSidebar(collapsed ? 'expanded' : 'collapsed')}
           latestRun={latestRun}
+          syncing={autoSync.syncing}
           syncUnavailable={Boolean(runs.error)}
         />
       </aside>
@@ -65,6 +73,7 @@ export function AppShell() {
           collapsed={false}
           onNavigate={() => setDrawerOpen(false)}
           latestRun={latestRun}
+          syncing={autoSync.syncing}
           syncUnavailable={Boolean(runs.error)}
         />
       </Dialog>
@@ -73,6 +82,7 @@ export function AppShell() {
         <AppHeader
           applicationName={applicationTopbar?.name}
           latestRun={latestRun}
+          syncing={autoSync.syncing}
           onOpenNavigation={() => setDrawerOpen(true)}
         />
         <main className="app-content" id="main" tabIndex={-1}>

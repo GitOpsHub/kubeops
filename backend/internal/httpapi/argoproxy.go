@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -17,7 +16,6 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -91,26 +89,13 @@ func newTargetProxy(
 	authHeader func(*http.Request) string,
 	onUnauthorized func(),
 ) (*httputil.ReverseProxy, error) {
-	upstream, err := url.Parse(target.ServerURL)
-	if err != nil || upstream.Scheme == "" || upstream.Host == "" {
-		return nil, fmt.Errorf("invalid Argo CD server URL for %s: %q", target.SourceID, target.ServerURL)
+	upstream, err := target.Endpoint()
+	if err != nil {
+		return nil, err
 	}
-
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
-	if target.CAFile != "" {
-		certificate, err := os.ReadFile(target.CAFile)
-		if err != nil {
-			return nil, fmt.Errorf("read Argo CD CA file: %w", err)
-		}
-		pool, err := x509.SystemCertPool()
-		if err != nil {
-			return nil, fmt.Errorf("load system certificate pool: %w", err)
-		}
-		if !pool.AppendCertsFromPEM(certificate) {
-			return nil, errors.New("Argo CD CA file does not contain a valid PEM certificate")
-		}
-		transport.TLSClientConfig.RootCAs = pool
+	transport, err := target.Transport()
+	if err != nil {
+		return nil, err
 	}
 
 	mount := argoProxyPrefix + target.ProxyID()

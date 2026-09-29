@@ -11,6 +11,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/GitOpsHub/kubeops/backend/internal/cloudauth"
 	"github.com/GitOpsHub/kubeops/backend/internal/config"
@@ -73,6 +74,8 @@ type ApplicationOnboarder interface {
 type SourceSyncer interface {
 	Sync(context.Context, string, string) (model.SyncRun, error)
 	SyncAll(context.Context, string) ([]model.SyncRun, error)
+	SyncStale(context.Context, string) ([]model.SyncRun, error)
+	Interval() time.Duration
 }
 
 type ApplicationReconciler interface {
@@ -136,6 +139,7 @@ func newHandler(
 	mux.HandleFunc("GET /api/cloud-sources", api.sources)
 	mux.HandleFunc("GET /api/sync-runs", api.syncRuns)
 	mux.HandleFunc("POST /api/cloud-sources/{id}/sync", api.queueSync)
+	mux.HandleFunc("POST /api/cloud-sources/refresh", api.autoSync)
 	// Vercel Cron always invokes with GET; POST stays available for any other
 	// scheduler that presents the same bearer secret.
 	mux.HandleFunc("GET /api/cloud-sources/sync", api.cronSync)
@@ -436,13 +440,8 @@ func (api *API) clusters(w http.ResponseWriter, r *http.Request) {
 		Page:           intQuery(query.Get("page"), 1),
 		PageSize:       intQuery(query.Get("pageSize"), 25),
 	}
-	if filter.Provider != "" &&
-		filter.Provider != model.ProviderAWS &&
-		filter.Provider != model.ProviderGCP &&
-		filter.Provider != model.ProviderAzure &&
-		filter.Provider != model.ProviderDocker &&
-		filter.Provider != model.ProviderMinikube {
-		writeError(w, http.StatusBadRequest, "provider must be aws, gcp, azure, docker, or minikube")
+	if filter.Provider != "" && !model.SupportedProvider(filter.Provider) {
+		writeError(w, http.StatusBadRequest, "provider must be aws, gcp, or azure")
 		return
 	}
 	if filter.Page < 1 || filter.PageSize < 1 || filter.PageSize > 200 {
@@ -605,6 +604,33 @@ func (api *API) cronSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": runs})
+}
+
+// autoSync brings stale sources up to date inside the request. The UI calls it
+// when it opens and then once per sync interval, which is what keeps a
+// deployment without background workers current between cron runs. It needs
+// no secret because the syncer only discovers sources that are already due.
+func (api *API) autoSync(w http.ResponseWriter, r *http.Request) {
+	if api.syncer == nil {
+		writeError(w, http.StatusServiceUnavailable, "cloud source syncing is not available")
+		return
+	}
+	// The viewer may navigate away mid-discovery; cancelling with the client
+	// would record a spurious failure for every source in flight. The syncer's
+	// per-source timeout still bounds the work, and WithoutCancel keeps the
+	// identity token the request context carries.
+	runs, err := api.syncer.SyncStale(context.WithoutCancel(r.Context()), "auto")
+	if err != nil {
+		slog.Error("run automatic sync", "error", err)
+		if runs == nil {
+			writeError(w, http.StatusInternalServerError, "unable to run automatic cloud source sync")
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items":           runs,
+		"intervalSeconds": int(api.syncer.Interval().Seconds()),
+	})
 }
 
 func (api *API) createApplicationOnboarding(w http.ResponseWriter, r *http.Request) {

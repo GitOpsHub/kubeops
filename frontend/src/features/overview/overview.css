@@ -81,13 +81,6 @@
   background: var(--azure);
 }
 
-.provider-bars-fill--docker {
-  background: var(--docker);
-}
-
-.provider-bars-fill--minikube {
-  background: var(--minikube);
-}
 
 .provider-bars-count {
   font-family: var(--font-display);
@@ -238,10 +231,6 @@
 }
 
 @media (max-width: 480px) {
-  .overview-stats {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .provider-bars li {
     grid-template-columns: 24px minmax(0, 1fr) 40px;
   }

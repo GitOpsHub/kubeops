@@ -13,6 +13,7 @@ type Props = {
   onToggleCollapsed?: () => void
   onNavigate?: () => void
   latestRun: SyncRun | null
+  syncing: boolean
   syncUnavailable: boolean
 }
 
@@ -26,6 +27,7 @@ export function SidebarContent({
   onToggleCollapsed,
   onNavigate,
   latestRun,
+  syncing,
   syncUnavailable,
 }: Props) {
   return (
@@ -60,7 +62,7 @@ export function SidebarContent({
       </nav>
 
       <div className="sidebar-footer">
-        <SyncReadout run={latestRun} unavailable={syncUnavailable} />
+        <SyncReadout run={latestRun} unavailable={syncUnavailable} syncing={syncing} />
         <div className="sidebar-controls">
           <ThemeToggle />
           {onToggleCollapsed && (

@@ -3,12 +3,15 @@ package config
 import (
 	"bufio"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -89,6 +92,39 @@ type ArgoTarget struct {
 func (t ArgoTarget) ProxyID() string {
 	sum := sha256.Sum256([]byte(t.SourceID + "\x00" + t.ProviderResourceID))
 	return hex.EncodeToString(sum[:8])
+}
+
+// Endpoint parses ServerURL, rejecting anything without a scheme and host.
+func (t ArgoTarget) Endpoint() (*url.URL, error) {
+	parsed, err := url.Parse(t.ServerURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return nil, fmt.Errorf("invalid Argo CD server URL for %s: %q", t.SourceID, t.ServerURL)
+	}
+	return parsed, nil
+}
+
+// Transport is the HTTP transport for this target's Argo CD API: TLS 1.2 or
+// later, trusting the system roots plus the target's own CA bundle when it
+// has one. TLS verification cannot be disabled.
+func (t ArgoTarget) Transport() (*http.Transport, error) {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	if t.CAFile == "" {
+		return transport, nil
+	}
+	certificate, err := os.ReadFile(t.CAFile)
+	if err != nil {
+		return nil, fmt.Errorf("read Argo CD CA file: %w", err)
+	}
+	pool, err := x509.SystemCertPool()
+	if err != nil {
+		return nil, fmt.Errorf("load system certificate pool: %w", err)
+	}
+	if !pool.AppendCertsFromPEM(certificate) {
+		return nil, errors.New("Argo CD CA file does not contain a valid PEM certificate")
+	}
+	transport.TLSClientConfig.RootCAs = pool
+	return transport, nil
 }
 
 type OnboardingConfig struct {
@@ -448,9 +484,7 @@ func (c Config) Address() string {
 
 // MergeCloudSources combines YAML/env-parsed sources with database-managed
 // ones (see store.ListCloudSourcesConfig), keyed by ID. A database row wins
-// over a YAML entry with the same ID; YAML-only entries (local dev sources
-// such as docker-desktop or minikube, which are specific to one developer's
-// machine and have no business in a shared database) pass through
+// over a YAML entry with the same ID; YAML-only entries pass through
 // unchanged. This lets a cloud source be added or corrected by inserting a
 // row directly instead of editing cloud-sources.yaml and redeploying.
 func MergeCloudSources(yamlSources, dbSources []model.CloudSource) []model.CloudSource {
@@ -494,9 +528,8 @@ func MergeArgoTargets(yamlTargets, dbTargets []ArgoTarget) []ArgoTarget {
 }
 
 // DropLocalArgoTargets removes targets whose server_url is a loopback address
-// (e.g. the localhost:1808x port-forwards scripts/argo-port-forward.sh sets
-// up for local dev). Those addresses only resolve on the developer's own
-// machine, so a deployed function that merges them in unfiltered would
+// (e.g. a kubectl port-forward left in a developer's argo-targets.yaml).
+// Those addresses only resolve on the developer's own machine, so a deployed function that merges them in unfiltered would
 // generate an Argo CD link it can never reach and fail every proxied request
 // with a 502. Call this after MergeArgoTargets so a stale local-only DB row
 // is caught the same as a YAML one.
@@ -585,11 +618,7 @@ func parseCloudSources(content []byte) ([]model.CloudSource, error) {
 		if source.ID == "" || source.Name == "" || source.ScopeID == "" {
 			return nil, fmt.Errorf("cloud source %d requires id, name, and scope_id", i+1)
 		}
-		if source.Provider != model.ProviderAWS &&
-			source.Provider != model.ProviderGCP &&
-			source.Provider != model.ProviderAzure &&
-			source.Provider != model.ProviderDocker &&
-			source.Provider != model.ProviderMinikube {
+		if !model.SupportedProvider(source.Provider) {
 			return nil, fmt.Errorf("cloud source %q has unsupported provider %q", source.ID, source.Provider)
 		}
 		if _, exists := seen[source.ID]; exists {

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GitOpsHub/kubeops/backend/internal/cloudauth"
 	"github.com/GitOpsHub/kubeops/backend/internal/config"
@@ -113,6 +114,9 @@ type fakeSourceSyncer struct {
 	allRuns    []model.SyncRun
 	allErr     error
 	allCalled  int
+	staleCalls int
+	staleRuns  []model.SyncRun
+	staleErr   error
 }
 
 func (f *fakeSourceSyncer) Sync(
@@ -130,6 +134,14 @@ func (f *fakeSourceSyncer) SyncAll(_ context.Context, trigger string) ([]model.S
 	f.allTrigger = trigger
 	return f.allRuns, f.allErr
 }
+
+func (f *fakeSourceSyncer) SyncStale(_ context.Context, trigger string) ([]model.SyncRun, error) {
+	f.staleCalls++
+	f.trigger = trigger
+	return f.staleRuns, f.staleErr
+}
+
+func (f *fakeSourceSyncer) Interval() time.Duration { return 5 * time.Minute }
 
 type fakeApplicationOnboarder struct {
 	input      onboarding.CreateInput
@@ -567,6 +579,75 @@ func TestCronSyncRunsAllSourcesWithMatchingSecret(t *testing.T) {
 	}
 	if len(body.Items) != 2 {
 		t.Fatalf("expected 2 runs, got %#v", body.Items)
+	}
+}
+
+func TestAutoSync(t *testing.T) {
+	tests := []struct {
+		name       string
+		syncer     *fakeSourceSyncer
+		wantStatus int
+		wantItems  int
+	}{
+		{
+			name: "syncs stale sources without a secret",
+			syncer: &fakeSourceSyncer{staleRuns: []model.SyncRun{
+				{ID: "run-1", SourceID: "aws-platform", Trigger: "auto", Status: "succeeded"},
+			}},
+			wantStatus: http.StatusOK,
+			wantItems:  1,
+		},
+		{
+			name:       "nothing due",
+			syncer:     &fakeSourceSyncer{staleRuns: []model.SyncRun{}},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name: "one source errors but others ran",
+			syncer: &fakeSourceSyncer{
+				staleRuns: []model.SyncRun{{ID: "run-1", SourceID: "gcp-platform", Status: "succeeded"}},
+				staleErr:  errors.New("sync aws-platform: database unavailable"),
+			},
+			wantStatus: http.StatusOK,
+			wantItems:  1,
+		},
+		{
+			name:       "staleness lookup fails",
+			syncer:     &fakeSourceSyncer{staleErr: errors.New("database unavailable")},
+			wantStatus: http.StatusInternalServerError,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			handler := NewHandlerWithOnboarding(
+				config.Config{}, &fakeRepository{}, nil, nil, test.syncer,
+			)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(
+				response,
+				httptest.NewRequest(http.MethodPost, "/api/cloud-sources/refresh", nil),
+			)
+
+			if response.Code != test.wantStatus {
+				t.Fatalf("expected status %d, got %d", test.wantStatus, response.Code)
+			}
+			if test.syncer.staleCalls != 1 || test.syncer.trigger != "auto" {
+				t.Fatalf("unexpected sync call: %#v", test.syncer)
+			}
+			if test.wantStatus != http.StatusOK {
+				return
+			}
+			var body struct {
+				Items           []model.SyncRun `json:"items"`
+				IntervalSeconds int             `json:"intervalSeconds"`
+			}
+			if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if len(body.Items) != test.wantItems || body.IntervalSeconds != 300 {
+				t.Fatalf("unexpected body: %#v", body)
+			}
+		})
 	}
 }
 

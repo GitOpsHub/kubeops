@@ -1,6 +1,6 @@
 import { request } from './client'
 
-export type Provider = 'aws' | 'gcp' | 'azure' | 'docker' | 'minikube'
+export type Provider = 'aws' | 'gcp' | 'azure'
 
 export type Cluster = {
   id: string
@@ -39,7 +39,7 @@ export type SyncRun = {
   sourceId: string
   sourceName: string
   provider: Provider
-  trigger: 'startup' | 'scheduled' | 'manual' | 'cron'
+  trigger: 'startup' | 'scheduled' | 'manual' | 'cron' | 'auto'
   status: 'queued' | 'running' | 'succeeded' | 'failed'
   discoveredCount: number
   changedCount: number
@@ -118,9 +118,6 @@ export type ClusterNetworking = {
     loadBalancerSku?: string
     privateDnsZone?: string
   }
-  local?: {
-    apiServer?: string
-  }
 }
 
 export type ClusterDetails = {
@@ -169,6 +166,18 @@ export function queueSourceSync(sourceId: string) {
   return request<SyncRun>(`/cloud-sources/${encodeURIComponent(sourceId)}/sync`, {
     method: 'POST',
   })
+}
+
+export type AutoSyncResult = {
+  /** Runs this request performed; empty when every source was already fresh. */
+  items: SyncRun[]
+  /** How often each source is due for discovery (the backend's SYNC_INTERVAL). */
+  intervalSeconds: number
+}
+
+/** Asks the API to discover every source whose last sync is older than its interval. */
+export function refreshStaleSources(signal?: AbortSignal) {
+  return request<AutoSyncResult>('/cloud-sources/refresh', { method: 'POST', signal })
 }
 
 export function getClusterDetails(clusterId: string, signal?: AbortSignal) {

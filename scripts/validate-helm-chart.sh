@@ -33,8 +33,6 @@ all_profiles=(
   aks
   aks-full
   gateway
-  minikube
-  docker-desktop
 )
 
 profiles=("${all_profiles[@]}")

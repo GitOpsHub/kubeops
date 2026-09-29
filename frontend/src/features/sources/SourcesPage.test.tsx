@@ -37,7 +37,7 @@ describe('cloud sources page', () => {
 
     const aws = await screen.findByRole('listitem', { name: 'AWS Platform' })
     expect(within(aws).getByText('succeeded')).toBeInTheDocument()
-    expect(within(aws).getByText(/last run scheduled, 4 clusters/)).toBeInTheDocument()
+    expect(within(aws).getByText(/Synced .* · 4 clusters found/)).toBeInTheDocument()
 
     const gcp = screen.getByRole('listitem', { name: 'Google Cloud Platform' })
     expect(within(gcp).getByText('failed')).toBeInTheDocument()
@@ -46,6 +46,33 @@ describe('cloud sources page', () => {
     // A disabled source cannot be synced.
     const azure = screen.getByRole('listitem', { name: 'Azure Lab' })
     expect(within(azure).getByRole('button', { name: 'Sync now' })).toBeDisabled()
+  })
+
+  it('collapses a long provider error to its first clause', async () => {
+    const detail =
+      'list EKS clusters in us-east-1: operation error EKS: ListClusters, StatusCode: 403'
+    mockAPI({
+      sources: [buildSource({ lastSyncStatus: 'failed', lastSyncError: detail })],
+      syncRuns: [],
+    })
+    const user = userEvent.setup()
+    renderSources()
+
+    const aws = await screen.findByRole('listitem', { name: 'AWS Platform' })
+    const summary = within(aws).getByText('list EKS clusters in us-east-1')
+    expect(within(aws).getByText(/^Failed /)).toBeInTheDocument()
+    expect(within(aws).getByText(detail)).not.toBeVisible()
+    await user.click(summary)
+    expect(within(aws).getByText(detail)).toBeVisible()
+  })
+
+  it('syncs stale sources automatically and states the cadence', async () => {
+    const { state } = mockAPI()
+    renderSources()
+
+    await screen.findByRole('listitem', { name: 'AWS Platform' })
+    await waitFor(() => expect(state.autoSyncCalls).toBe(1))
+    expect(screen.getByText(/syncs automatically every 5 min/)).toBeInTheDocument()
   })
 
   it('queues a sync and refreshes the run list and the sidebar', async () => {

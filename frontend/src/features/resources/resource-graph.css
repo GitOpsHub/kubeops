@@ -254,8 +254,8 @@
 }
 
 .graph-card--virtual {
-  border-color: color-mix(in srgb, var(--docker) 24%, var(--border));
-  border-left-color: var(--docker);
+  border-color: color-mix(in srgb, var(--container) 24%, var(--border));
+  border-left-color: var(--container);
   background: color-mix(in srgb, var(--surface) 94%, var(--accent-soft));
 }
 
@@ -315,9 +315,9 @@
 }
 
 .graph-card--category-pod .graph-card-mark {
-  color: var(--docker);
-  background: color-mix(in srgb, var(--docker) 11%, transparent);
-  border-color: color-mix(in srgb, var(--docker) 24%, transparent);
+  color: var(--container);
+  background: color-mix(in srgb, var(--container) 11%, transparent);
+  border-color: color-mix(in srgb, var(--container) 24%, transparent);
 }
 
 .graph-card--category-identity .graph-card-mark {
