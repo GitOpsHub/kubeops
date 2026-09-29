@@ -986,36 +986,69 @@ func TestOffboardResolvesTargetsOnRemovedClusters(t *testing.T) {
 		}, wantStatus: "failed"},
 	}
 	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			target := model.ApplicationDeployment{
-				ID: "target-1", ClusterID: "cluster-1", ClusterName: "prod",
-				SourceID: "aws", ProviderResourceID: "arn:cluster/prod",
-				ArgoApplication: "payments",
-				Status:          "healthy", SyncStatus: "Synced", HealthStatus: "Healthy",
+		// Either Argo CD rejects the delete, or no Argo CD target is configured
+		// for the cluster any more (its source or localhost target was dropped).
+		for _, argoConfigured := range []bool{true, false} {
+			name := test.name + "/argo unreachable"
+			if !argoConfigured {
+				name = test.name + "/argo not configured"
 			}
-			repository := &fakeRepository{
-				clusters: test.clusters,
-				record: model.ApplicationOnboarding{
-					ID: "onboarding-1", Name: "payments",
-					Targets: []model.ApplicationDeployment{target},
-				},
-			}
-			client := &fakeArgoClient{deleteErr: errors.New("connection refused")}
-			service := &Service{
-				store: repository,
-				config: config.OnboardingConfig{
-					ArgoNamespace: "argo-cd", RequestTimeout: time.Second,
-				},
-				clients: map[string]ArgoClient{targetKey("aws", "arn:cluster/prod"): client},
-			}
+			t.Run(name, func(t *testing.T) {
+				target := model.ApplicationDeployment{
+					ID: "target-1", ClusterID: "cluster-1", ClusterName: "prod",
+					SourceID: "aws", ProviderResourceID: "arn:cluster/prod",
+					ArgoApplication: "payments",
+					Status:          "healthy", SyncStatus: "Synced", HealthStatus: "Healthy",
+				}
+				repository := &fakeRepository{
+					clusters: test.clusters,
+					record: model.ApplicationOnboarding{
+						ID: "onboarding-1", Name: "payments",
+						Targets: []model.ApplicationDeployment{target},
+					},
+				}
+				clients := map[string]ArgoClient{}
+				if argoConfigured {
+					clients[targetKey("aws", "arn:cluster/prod")] =
+						&fakeArgoClient{deleteErr: errors.New("connection refused")}
+				}
+				service := &Service{
+					store: repository,
+					config: config.OnboardingConfig{
+						ArgoNamespace: "argo-cd", RequestTimeout: time.Second,
+					},
+					clients: clients,
+				}
 
-			if _, err := service.Offboard(context.Background(), "onboarding-1"); err != nil {
-				t.Fatal(err)
-			}
-			if got := repository.updates[target.ID].Status; got != test.wantStatus {
-				t.Fatalf("target status = %q, want %q", got, test.wantStatus)
-			}
-		})
+				if _, err := service.Offboard(context.Background(), "onboarding-1"); err != nil {
+					t.Fatal(err)
+				}
+				if got := repository.updates[target.ID].Status; got != test.wantStatus {
+					t.Fatalf("target status = %q, want %q", got, test.wantStatus)
+				}
+			})
+		}
+	}
+}
+
+// Sync must not treat a gone cluster as done: only offboarding resolves
+// vacuously.
+func TestSyncKeepsFailureWhenArgoTargetIsGone(t *testing.T) {
+	target := model.ApplicationDeployment{
+		ID: "target-1", ClusterID: "cluster-1", ClusterName: "prod",
+		SourceID: "aws", ProviderResourceID: "arn:cluster/prod", ArgoApplication: "payments",
+	}
+	repository := &fakeRepository{record: model.ApplicationOnboarding{
+		ID: "onboarding-1", Name: "payments", Targets: []model.ApplicationDeployment{target},
+	}}
+	service := &Service{
+		store:  repository,
+		config: config.OnboardingConfig{ArgoNamespace: "argo-cd", RequestTimeout: time.Second},
+	}
+
+	_, _ = service.Sync(context.Background(), "onboarding-1")
+	if got := repository.updates[target.ID].Status; got != "failed" {
+		t.Fatalf("target status = %q, want failed", got)
 	}
 }
 
