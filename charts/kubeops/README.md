@@ -2,9 +2,8 @@
 
 This chart deploys one containerized HTTP application. The core is
 cloud-neutral — standard Kubernetes APIs only — and every provider-specific
-behaviour is an opt-in block. It supports EKS, GKE, AKS, other conformant
-managed Kubernetes services, Minikube, and Docker Desktop with Kubernetes
-enabled. KubeOps uses it as the fixed global chart while each onboarded
+behaviour is an opt-in block. It supports EKS, GKE, AKS, and other conformant
+managed Kubernetes services. KubeOps uses it as the fixed global chart while each onboarded
 application keeps only its environment-specific `values.yaml` in a private
 repository.
 
@@ -45,24 +44,12 @@ echo "$GITHUB_TOKEN" | helm registry login ghcr.io \
 | `ci/aks-values.yaml` | AKS, Azure Load Balancer Service |
 | `ci/aks-full-values.yaml` | AKS with application routing Ingress, Azure Disk + Files + Blob, Workload Identity |
 | `ci/gateway-values.yaml` | Gateway API instead of Ingress, shared storage, in-chart config and RBAC |
-| `ci/minikube-values.yaml` | Minikube, NodePort, small requests |
-| `ci/docker-desktop-values.yaml` | Docker Desktop with Kubernetes enabled |
 
 ```sh
 helm upgrade --install my-app ./charts/kubeops \
   --namespace my-app --create-namespace \
   --values ./charts/kubeops/ci/eks-full-values.yaml
 ```
-
-Local clusters use `NodePort`, one replica, and smaller requests:
-
-```sh
-minikube service my-app-service --namespace my-app
-kubectl port-forward --namespace my-app service/my-app-service 8080:80
-```
-
-A plain Docker Engine does not provide Kubernetes, so it cannot install a Helm
-chart.
 
 ## Ingress
 

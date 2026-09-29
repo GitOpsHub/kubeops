@@ -229,17 +229,13 @@ func (s *Store) UpsertSources(ctx context.Context, sources []model.CloudSource) 
 		if regions == nil {
 			regions = []string{}
 		}
-		contexts := source.Contexts
-		if contexts == nil {
-			contexts = []string{}
-		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO cloud_sources (
 				id, provider, name, scope_id, regions, enabled,
 				role_arn, impersonate_service_account, workload_identity_provider,
-				tenant_id, client_id, kubeconfig_path, contexts
+				tenant_id, client_id
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 			ON CONFLICT (id) DO UPDATE SET
 				provider = EXCLUDED.provider,
 				name = EXCLUDED.name,
@@ -251,12 +247,10 @@ func (s *Store) UpsertSources(ctx context.Context, sources []model.CloudSource) 
 				workload_identity_provider = EXCLUDED.workload_identity_provider,
 				tenant_id = EXCLUDED.tenant_id,
 				client_id = EXCLUDED.client_id,
-				kubeconfig_path = EXCLUDED.kubeconfig_path,
-				contexts = EXCLUDED.contexts,
 				updated_at = NOW()`,
 			source.ID, source.Provider, source.Name, source.ScopeID, regions, source.Enabled,
 			source.RoleARN, source.ImpersonateServiceAccount, source.WorkloadIdentityProvider,
-			source.TenantID, source.ClientID, source.KubeconfigPath, contexts,
+			source.TenantID, source.ClientID,
 		); err != nil {
 			return err
 		}
@@ -270,13 +264,19 @@ func (s *Store) UpsertSources(ctx context.Context, sources []model.CloudSource) 
 // to merge database-managed sources into the config loaded from YAML/env, so
 // a cloud source can be added or updated by inserting a row directly instead
 // of editing cloud-sources.yaml and redeploying.
+//
+// Rows for providers KubeOps no longer discovers (docker and minikube, from
+// before local kubeconfig discovery was removed) are skipped, so a database
+// that still holds them does not hand the syncer a source it cannot sync.
 func (s *Store) ListCloudSourcesConfig(ctx context.Context) ([]model.CloudSource, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, provider, name, scope_id, regions, enabled,
 			role_arn, impersonate_service_account, workload_identity_provider,
-			tenant_id, client_id, kubeconfig_path, contexts
+			tenant_id, client_id
 		FROM cloud_sources
-		ORDER BY provider, name`)
+		WHERE provider = ANY($1)
+		ORDER BY provider, name`,
+		[]string{model.ProviderAWS, model.ProviderGCP, model.ProviderAzure})
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +289,6 @@ func (s *Store) ListCloudSourcesConfig(ctx context.Context) ([]model.CloudSource
 			&source.ID, &source.Provider, &source.Name, &source.ScopeID, &source.Regions,
 			&source.Enabled, &source.RoleARN, &source.ImpersonateServiceAccount,
 			&source.WorkloadIdentityProvider, &source.TenantID, &source.ClientID,
-			&source.KubeconfigPath, &source.Contexts,
 		); err != nil {
 			return nil, err
 		}
@@ -774,6 +773,29 @@ func failStaleSyncs(
 // source indefinitely.
 func (s *Store) RecoverStaleSyncs(ctx context.Context, staleAfter time.Duration) error {
 	return failStaleSyncs(ctx, s.pool, staleAfter, abandonedSyncMessage, "")
+}
+
+// StaleSourceIDs returns the enabled sources among sourceIDs that have never
+// synced or last finished a sync more than olderThan ago, leaving out any with
+// a run already in flight so a second caller does not start a duplicate.
+func (s *Store) StaleSourceIDs(ctx context.Context, sourceIDs []string, olderThan time.Duration) ([]string, error) {
+	if len(sourceIDs) == 0 {
+		return []string{}, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT s.id
+		FROM cloud_sources s
+		WHERE s.enabled AND s.id = ANY($1)
+		  AND (s.last_sync_at IS NULL OR s.last_sync_at < NOW() - make_interval(secs => $2))
+		  AND NOT EXISTS (
+			SELECT 1 FROM sync_runs r
+			WHERE r.source_id = s.id AND r.status IN ('queued', 'running')
+		  )
+		ORDER BY s.id`, sourceIDs, olderThan.Seconds())
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[string])
 }
 
 func (s *Store) QueueAll(ctx context.Context, trigger string, sourceIDs []string) error {

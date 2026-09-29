@@ -1,4 +1,4 @@
-.PHONY: db-up db-down db-destroy dev dev-setup dev-recreate dev-argocd argo-forward argo-forward-stop argo-forward-status dev-frontend dev-backend test test-db test-integration test-chart lint build
+.PHONY: db-up db-down db-destroy dev dev-frontend dev-backend test test-db test-integration test-chart lint build
 
 # Integration tests TRUNCATE every table, so they run against their own
 # database rather than the `kubeops` database the local dev stack uses.
@@ -14,30 +14,9 @@ db-down:
 db-destroy:
 	docker compose down --volumes --remove-orphans
 
-dev: dev-setup
-	./scripts/dev-local.sh
-
-dev-setup: db-up dev-argocd
-
-# Argo CD port-forwards on their own, for when the API runs outside `make dev`.
-argo-forward:
-	./scripts/argo-port-forward.sh start
-
-argo-forward-stop:
-	./scripts/argo-port-forward.sh stop
-
-argo-forward-status:
-	./scripts/argo-port-forward.sh status
-
-dev-recreate:
-	$(MAKE) db-destroy
-	docker desktop kubernetes reset-cluster
-	minikube delete --profile "$${KUBEOPS_MINIKUBE_CONTEXT:-minikube}"
-	minikube start --profile "$${KUBEOPS_MINIKUBE_CONTEXT:-minikube}" --driver=docker
-	$(MAKE) dev-setup
-
-dev-argocd:
-	./scripts/setup-local-argocd.sh
+# Starts PostgreSQL, then the API and UI together. Ctrl-C stops both.
+dev: db-up
+	$(MAKE) -j2 dev-backend dev-frontend
 
 dev-frontend:
 	cd frontend && npm run dev
@@ -60,7 +39,7 @@ test-db: db-up
 		|| docker compose exec -T postgres createdb -U kubeops $(TEST_DB_NAME)
 
 test-integration: test-db
-	cd backend && TEST_DATABASE_URL='$(TEST_DATABASE_URL)' go test ./internal/store -run 'TestInventoryLifecycle|TestOverviewAggregates|TestClusterSortAndSyncRunScope|TestApplicationOperations|TestGetKubespinArgoDetails|TestArgoTargetsAndCloudSourcesConfigRoundTrip' -count=1
+	cd backend && TEST_DATABASE_URL='$(TEST_DATABASE_URL)' go test ./internal/store -run 'TestInventoryLifecycle|TestOverviewAggregates|TestClusterSortAndSyncRunScope|TestApplicationOperations|TestGetKubespinArgoDetails|TestArgoTargetsAndCloudSourcesConfigRoundTrip|TestStaleSourceIDs' -count=1
 
 # Lints and renders every platform profile in charts/kubeops/ci, validates the
 # result against the Kubernetes API schemas, and asserts the chart still rejects

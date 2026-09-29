@@ -64,7 +64,7 @@ func (r ManagementRegistry) Details(
 ) (model.ClusterDetails, error) {
 	manager, ok := r[cluster.Provider]
 	if !ok {
-		return localDetails(cluster), nil
+		return inventoryOnlyDetails(cluster), nil
 	}
 	return manager.Details(ctx, source, cluster)
 }
@@ -83,19 +83,19 @@ func (r ManagementRegistry) ScaleNodePool(
 	return manager.ScaleNodePool(ctx, source, cluster, poolID, desired)
 }
 
-func localDetails(cluster model.Cluster) model.ClusterDetails {
-	apiServer, _ := cluster.Metadata["apiServer"].(string)
+// inventoryOnlyDetails answers for a cluster whose provider has no manager,
+// so the detail drawer still opens rather than failing outright.
+func inventoryOnlyDetails(cluster model.Cluster) model.ClusterDetails {
 	return model.ClusterDetails{
 		Cluster: cluster,
 		Capability: model.ClusterCapability{
 			CanScaleNodes: false,
-			Reason:        "Local clusters are inventory-only",
+			Reason:        "This provider is inventory-only",
 		},
 		NodePools: []model.NodePool{},
 		Networking: model.ClusterNetworking{
 			Provider:       cluster.Provider,
 			EndpointAccess: cluster.EndpointAccess,
-			Local:          &model.LocalNetworking{APIServer: apiServer},
 		},
 	}
 }

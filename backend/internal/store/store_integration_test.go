@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -94,14 +95,6 @@ func TestInventoryLifecycle(t *testing.T) {
 		{
 			ID: "azure-test", Provider: model.ProviderAzure, Name: "Azure Test",
 			ScopeID: "test-subscription", Regions: []string{"*"}, Enabled: true,
-		},
-		{
-			ID: "docker-test", Provider: model.ProviderDocker, Name: "Docker Test",
-			ScopeID: "local-docker", Regions: []string{"local"}, Enabled: true,
-		},
-		{
-			ID: "minikube-test", Provider: model.ProviderMinikube, Name: "Minikube Test",
-			ScopeID: "local-minikube", Regions: []string{"local"}, Enabled: true,
 		},
 	}
 	if err := repository.UpsertSources(ctx, sources); err != nil {
@@ -209,8 +202,8 @@ func TestInventoryLifecycle(t *testing.T) {
 	}
 
 	page, err := repository.ListClusters(ctx, model.ClusterFilter{Page: 1, PageSize: 25})
-	if err != nil || page.Total != 6 {
-		t.Fatalf("expected six active clusters, got %#v, %v", page, err)
+	if err != nil || page.Total != 4 {
+		t.Fatalf("expected four active clusters, got %#v, %v", page, err)
 	}
 	accessInput := model.EncryptedArgoAccess{
 		SourceID: page.Items[0].SourceID, ProviderResourceID: page.Items[0].ProviderResourceID,
@@ -324,20 +317,20 @@ func TestInventoryLifecycle(t *testing.T) {
 	}
 
 	active, err := repository.ListClusters(ctx, model.ClusterFilter{Page: 1, PageSize: 25})
-	if err != nil || active.Total != 5 {
-		t.Fatalf("expected five active clusters, got %#v, %v", active, err)
+	if err != nil || active.Total != 3 {
+		t.Fatalf("expected three active clusters, got %#v, %v", active, err)
 	}
 	all, err := repository.ListClusters(ctx, model.ClusterFilter{
 		Page: 1, PageSize: 25, IncludeRemoved: true,
 	})
-	if err != nil || all.Total != 6 {
+	if err != nil || all.Total != 4 {
 		t.Fatalf("expected one removed cluster to be retained, got %#v, %v", all, err)
 	}
 
 	runs, err := repository.ListSyncRuns(ctx, 10, nil)
-	if err != nil || len(runs) != 7 || runs[0].RemovedCount != 1 ||
-		runs[6].ID != interruptedRunID || runs[6].Status != "failed" ||
-		runs[6].Error != abandonedSyncMessage {
+	if err != nil || len(runs) != 5 || runs[0].RemovedCount != 1 ||
+		runs[4].ID != interruptedRunID || runs[4].Status != "failed" ||
+		runs[4].Error != abandonedSyncMessage {
 		t.Fatalf("unexpected sync history: %#v, %v", runs, err)
 	}
 
@@ -586,6 +579,14 @@ func TestArgoTargetsAndCloudSourcesConfigRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// A row left over from local kubeconfig discovery must not reach the
+	// syncer, which has no provider for it.
+	if _, err := repository.pool.Exec(ctx, `
+		INSERT INTO cloud_sources (id, provider, name, scope_id, regions, enabled)
+		VALUES ('docker-legacy', 'docker', 'Docker', 'local', '{local}', true)`); err != nil {
+		t.Fatal(err)
+	}
+
 	configured, err := repository.ListCloudSourcesConfig(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -641,5 +642,53 @@ func TestArgoTargetsAndCloudSourcesConfigRoundTrip(t *testing.T) {
 
 	if _, err := repository.ListArgoTargets(ctx, nil); err == nil {
 		t.Fatal("expected an error when a row exists but no decryption key is configured")
+	}
+}
+
+func TestStaleSourceIDs(t *testing.T) {
+	databaseURL := integrationDatabaseURL(t)
+
+	ctx := context.Background()
+	repository, err := Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		repository.pool.Exec(context.Background(), truncateIntegrationData)
+		repository.Close()
+	})
+	if _, err := repository.pool.Exec(ctx, truncateIntegrationData); err != nil {
+		t.Fatal(err)
+	}
+
+	sources := []model.CloudSource{
+		{ID: "never-synced", Provider: model.ProviderAWS, Name: "Never", ScopeID: "1", Enabled: true},
+		{ID: "fresh", Provider: model.ProviderAWS, Name: "Fresh", ScopeID: "2", Enabled: true},
+		{ID: "old", Provider: model.ProviderGCP, Name: "Old", ScopeID: "3", Enabled: true},
+		{ID: "old-running", Provider: model.ProviderGCP, Name: "Running", ScopeID: "4", Enabled: true},
+		{ID: "disabled", Provider: model.ProviderAzure, Name: "Disabled", ScopeID: "5", Enabled: false},
+		{ID: "unscoped", Provider: model.ProviderAzure, Name: "Unscoped", ScopeID: "6", Enabled: true},
+	}
+	if err := repository.UpsertSources(ctx, sources); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.pool.Exec(ctx, `
+		UPDATE cloud_sources SET last_sync_at = CASE id
+			WHEN 'fresh' THEN NOW() - INTERVAL '1 minute'
+			ELSE NOW() - INTERVAL '1 hour' END
+		WHERE id <> 'never-synced'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.StartSync(ctx, "old-running", "manual", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repository.StaleSourceIDs(ctx,
+		[]string{"never-synced", "fresh", "old", "old-running", "disabled"}, 5*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"never-synced", "old"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("StaleSourceIDs = %v, want %v", got, want)
 	}
 }

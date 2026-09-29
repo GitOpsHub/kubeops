@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -54,6 +53,7 @@ func WithSourceTimeout(timeout time.Duration) Option {
 type Repository interface {
 	RecoverStaleSyncs(context.Context, time.Duration) error
 	QueueAll(context.Context, string, []string) error
+	StaleSourceIDs(context.Context, []string, time.Duration) ([]string, error)
 	StartSync(context.Context, string, string, time.Duration) (model.SyncRun, error)
 	ClaimNextSync(context.Context) (*model.SyncRun, error)
 	CompleteSync(context.Context, model.SyncRun, []model.Cluster) error
@@ -157,7 +157,14 @@ func (s *Service) Sync(ctx context.Context, sourceID, trigger string) (model.Syn
 	if err != nil {
 		return model.SyncRun{}, err
 	}
+	return s.discover(ctx, run, source)
+}
 
+// discover runs discovery for a run this instance owns and records how it
+// went. A provider error is the run's outcome, not an error; only a failure to
+// record the outcome is returned. The writes outlive ctx so a run cancelled
+// mid-discovery is still closed rather than left for stale recovery.
+func (s *Service) discover(ctx context.Context, run model.SyncRun, source model.CloudSource) (model.SyncRun, error) {
 	syncCtx, cancel := context.WithTimeout(ctx, s.sourceTimeout)
 	defer cancel()
 	clusters, discoverErr := s.providers.Discover(syncCtx, source)
@@ -180,30 +187,44 @@ func (s *Service) Sync(ctx context.Context, sourceID, trigger string) (model.Syn
 	return run, nil
 }
 
-// SyncAll runs Sync for every enabled source inside the caller's request. It
-// is the durable, request-driven equivalent of the scheduler's ticker for
-// deployments where BACKGROUND_WORKERS is off (Vercel): an external scheduler
-// (e.g. Vercel Cron) hits an endpoint that calls this instead of a user
-// pressing "Sync now" per source. A discovery failure is recorded on that
+// SyncAll runs Sync for every enabled source inside the caller's request. An
+// external scheduler (Vercel Cron) calls it on deployments where
+// BACKGROUND_WORKERS is off. A discovery failure is recorded on that
 // source's run; any other error is collected and returned alongside the runs
 // of the remaining sources, which are still attempted.
 func (s *Service) SyncAll(ctx context.Context, trigger string) ([]model.SyncRun, error) {
-	deployed := os.Getenv("VERCEL") != ""
+	return s.syncEach(ctx, s.sourceIDs(), trigger)
+}
+
+// SyncStale is the request-driven counterpart of the scheduler's ticker: it
+// syncs only the enabled sources whose last sync is older than the sync
+// interval. The UI calls it while someone has KubeOps open, so a deployment
+// without background workers keeps its inventory fresh without anyone
+// pressing "Sync now". The staleness check is also what makes it safe to
+// expose without authentication: however often it is called, each source is
+// discovered at most once per interval.
+func (s *Service) SyncStale(ctx context.Context, trigger string) ([]model.SyncRun, error) {
+	stale, err := s.store.StaleSourceIDs(ctx, s.sourceIDs(), s.interval)
+	if err != nil {
+		return nil, err
+	}
+	return s.syncEach(ctx, stale, trigger)
+}
+
+// Interval is how often each source is due for discovery.
+func (s *Service) Interval() time.Duration {
+	return s.interval
+}
+
+func (s *Service) syncEach(ctx context.Context, sourceIDs []string, trigger string) ([]model.SyncRun, error) {
 	var (
 		mu   sync.Mutex
-		runs = make([]model.SyncRun, 0, len(s.sources))
+		runs = make([]model.SyncRun, 0, len(sourceIDs))
 		errs []error
 	)
 	var group errgroup.Group
 	group.SetLimit(syncAllConcurrency)
-	for _, sourceID := range s.sourceIDs() {
-		// Local-only sources (docker-desktop, minikube) can never succeed from
-		// a deployed function; skip them on the unattended cron path instead
-		// of repeatedly marking them failed. A person clicking "Sync now"
-		// still gets a clear error via Sync.
-		if deployed && isLocalProvider(s.sources[sourceID].Provider) {
-			continue
-		}
+	for _, sourceID := range sourceIDs {
 		group.Go(func() error {
 			run, err := s.Sync(ctx, sourceID, trigger)
 			mu.Lock()
@@ -221,10 +242,6 @@ func (s *Service) SyncAll(ctx context.Context, trigger string) ([]model.SyncRun,
 	_ = group.Wait()
 	sort.Slice(runs, func(i, j int) bool { return runs[i].SourceID < runs[j].SourceID })
 	return runs, errors.Join(errs...)
-}
-
-func isLocalProvider(provider string) bool {
-	return provider == model.ProviderDocker || provider == model.ProviderMinikube
 }
 
 func (s *Service) work(ctx context.Context, worker int) {
@@ -253,21 +270,15 @@ func (s *Service) runNext(ctx context.Context, worker int) error {
 	}
 
 	slog.Info("discovering clusters", "worker", worker, "source", source.ID, "provider", source.Provider)
-	syncCtx, cancel := context.WithTimeout(ctx, s.sourceTimeout)
-	defer cancel()
-	clusters, err := s.providers.Discover(syncCtx, source)
+	result, err := s.discover(ctx, *run, source)
 	if err != nil {
-		message := sanitizeError(err)
-		if failErr := s.store.FailSync(ctx, *run, message); failErr != nil {
-			return failErr
-		}
-		slog.Warn("cluster discovery failed", "source", source.ID, "error", message)
-		return nil
-	}
-	if err := s.store.CompleteSync(ctx, *run, clusters); err != nil {
 		return err
 	}
-	slog.Info("cluster discovery completed", "source", source.ID, "clusters", len(clusters))
+	if result.Status == "failed" {
+		slog.Warn("cluster discovery failed", "source", source.ID, "error", result.Error)
+		return nil
+	}
+	slog.Info("cluster discovery completed", "source", source.ID, "clusters", result.DiscoveredCount)
 	return nil
 }
 

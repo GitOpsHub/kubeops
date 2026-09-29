@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-KubeOps is a monorepo for Kubernetes application onboarding and multi-cloud/local cluster inventory. Keep the React UI in `frontend/` and the Go API in `backend/`.
+KubeOps is a monorepo for Kubernetes application onboarding and multi-cloud (EKS, GKE, AKS) cluster inventory. Keep the React UI in `frontend/` and the Go API in `backend/`.
 
 - `frontend/src/` contains pages, components, hooks, API clients, and styles. Keep tests beside their subjects as `*.test.ts` or `*.test.tsx`; place static files in `frontend/public/`.
 - `backend/cmd/` contains entry points; `backend/internal/` contains handlers, services, and Kubernetes integrations. Name Go tests `*_test.go`.
@@ -27,6 +27,7 @@ Never add a static cloud credential to configuration, tests, or fixtures. See th
 
 Run these commands from the repository root:
 
+- `make dev` — start PostgreSQL, the API, and the UI together.
 - `make dev-frontend` — start the React development server.
 - `make dev-backend` — start the Go API.
 - `make db-up` — start the local PostgreSQL 18 container.

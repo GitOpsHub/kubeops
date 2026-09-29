@@ -3,12 +3,14 @@ package syncer
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/GitOpsHub/kubeops/backend/internal/model"
 	"github.com/GitOpsHub/kubeops/backend/internal/provider"
+	"github.com/GitOpsHub/kubeops/backend/internal/store"
 )
 
 type fakeStore struct {
@@ -23,6 +25,17 @@ type fakeStore struct {
 	// startErr fails StartSync for the named sources.
 	startErr   map[string]error
 	staleAfter time.Duration
+	// due is what StaleSourceIDs reports; dueAsked records its arguments.
+	due       []string
+	dueErr    error
+	dueAsked  []string
+	dueMaxAge time.Duration
+}
+
+func (f *fakeStore) StaleSourceIDs(_ context.Context, sourceIDs []string, olderThan time.Duration) ([]string, error) {
+	f.dueAsked = sourceIDs
+	f.dueMaxAge = olderThan
+	return f.due, f.dueErr
 }
 
 func (f *fakeStore) RecoverStaleSyncs(_ context.Context, staleAfter time.Duration) error {
@@ -87,8 +100,6 @@ func TestRunNextNormalizesAllProviderResults(t *testing.T) {
 		model.ProviderAWS,
 		model.ProviderGCP,
 		model.ProviderAzure,
-		model.ProviderDocker,
-		model.ProviderMinikube,
 	} {
 		t.Run(providerName, func(t *testing.T) {
 			repository := &fakeStore{run: &model.SyncRun{ID: "run", SourceID: providerName}}
@@ -261,5 +272,60 @@ func TestSyncAllContinuesPastFailingSource(t *testing.T) {
 	}
 	if want := 90*time.Second + staleMargin; repository.staleAfter != want {
 		t.Fatalf("staleAfter = %s, want %s", repository.staleAfter, want)
+	}
+}
+
+func TestSyncStale(t *testing.T) {
+	sources := []model.CloudSource{
+		{ID: "aws", Provider: "aws", Name: "AWS", ScopeID: "account", Enabled: true},
+		{ID: "gcp", Provider: "gcp", Name: "GCP", ScopeID: "project", Enabled: true},
+		{ID: "off", Provider: "aws", Name: "Off", ScopeID: "account", Enabled: false},
+	}
+	registry := provider.Registry{
+		"aws": fakeDiscoverer{provider: "aws"},
+		"gcp": fakeDiscoverer{provider: "gcp"},
+	}
+	tests := []struct {
+		name    string
+		store   *fakeStore
+		want    []string
+		wantErr bool
+	}{
+		{name: "syncs only due sources", store: &fakeStore{due: []string{"gcp"}}, want: []string{"gcp"}},
+		{name: "nothing due", store: &fakeStore{due: []string{}}, want: []string{}},
+		{
+			name:  "a source another caller is syncing is skipped",
+			store: &fakeStore{due: []string{"aws", "gcp"}, startErr: map[string]error{"aws": store.ErrSyncAlreadyActive}},
+			want:  []string{"gcp"},
+		},
+		{name: "lookup failure", store: &fakeStore{dueErr: errors.New("database unavailable")}, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := New(test.store, registry, sources, 7*time.Minute, 1)
+			runs, err := service.SyncStale(context.Background(), "auto")
+			if test.wantErr {
+				if err == nil || runs != nil {
+					t.Fatalf("expected an error and no runs, got %#v, %v", runs, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(test.store.dueAsked, []string{"aws", "gcp"}) || test.store.dueMaxAge != 7*time.Minute {
+				t.Fatalf("asked for %v older than %s", test.store.dueAsked, test.store.dueMaxAge)
+			}
+			got := make([]string, 0, len(runs))
+			for _, run := range runs {
+				if run.Trigger != "auto" || run.Status != "succeeded" {
+					t.Fatalf("unexpected run: %#v", run)
+				}
+				got = append(got, run.SourceID)
+			}
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("synced %v, want %v", got, test.want)
+			}
+		})
 	}
 }

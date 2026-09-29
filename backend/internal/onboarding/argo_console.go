@@ -520,29 +520,19 @@ func (c *HTTPArgoClient) TerminateOperation(
 ) error {
 	endpoint := c.serverURL + "/api/v1/applications/" + url.PathEscape(name) +
 		"/operation?appNamespace=" + url.QueryEscape(argoNamespace)
-	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
+	status, err := c.deleteStatus(ctx, endpoint)
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Authorization", c.authorization())
-	// The same grpc-gateway media-type requirement that DeleteApplication hits.
-	request.Header.Set("Content-Type", "application/json")
-	response, err := c.client.Do(request)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
 	switch {
-	case response.StatusCode >= 200 && response.StatusCode < 300:
+	case status >= 200 && status < 300:
 		return nil
-	case response.StatusCode == http.StatusBadRequest,
-		response.StatusCode == http.StatusConflict,
-		response.StatusCode == http.StatusPreconditionFailed:
+	case status == http.StatusBadRequest,
+		status == http.StatusConflict,
+		status == http.StatusPreconditionFailed:
 		return ErrNoOperation
-	case response.StatusCode == http.StatusNotFound,
-		response.StatusCode == http.StatusForbidden:
+	case status == http.StatusNotFound, status == http.StatusForbidden:
 		return ErrApplicationNotFound
 	}
-	return argoAPIError{status: response.StatusCode}
+	return argoAPIError{status: status}
 }

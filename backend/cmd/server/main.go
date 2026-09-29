@@ -52,8 +52,7 @@ func main() {
 	// YAML/env, so a cloud source or a cluster's Argo CD access can be added
 	// by inserting a row directly (e.g. via the Neon console or
 	// cmd/seed-argo-target) instead of editing cloud-sources.yaml /
-	// argo-targets.yaml and redeploying. YAML-only entries (local dev
-	// sources tied to one developer's machine) still work unchanged.
+	// argo-targets.yaml and redeploying.
 	dbSources, err := repository.ListCloudSourcesConfig(startupCtx)
 	if err != nil {
 		slog.Error("load cloud sources from database", "error", err)
@@ -104,14 +103,16 @@ func main() {
 		)
 	}
 
+	aws := provider.AWS{Identity: identity}
+	gcp := provider.GCP{Identity: identity}
+	azure := provider.Azure{Identity: identity}
+
 	syncService := syncer.New(
 		repository,
 		provider.Registry{
-			model.ProviderAWS:      provider.AWS{Identity: identity},
-			model.ProviderGCP:      provider.GCP{Identity: identity},
-			model.ProviderAzure:    provider.Azure{Identity: identity},
-			model.ProviderDocker:   provider.LocalKubernetes{Provider: model.ProviderDocker},
-			model.ProviderMinikube: provider.LocalKubernetes{Provider: model.ProviderMinikube},
+			model.ProviderAWS:   aws,
+			model.ProviderGCP:   gcp,
+			model.ProviderAzure: azure,
 		},
 		cfg.CloudSources,
 		cfg.SyncInterval,
@@ -136,9 +137,9 @@ func main() {
 	}
 
 	clusterManagers := provider.ManagementRegistry{
-		model.ProviderAWS:   provider.AWS{Identity: identity},
-		model.ProviderGCP:   provider.GCP{Identity: identity},
-		model.ProviderAzure: provider.Azure{Identity: identity},
+		model.ProviderAWS:   aws,
+		model.ProviderGCP:   gcp,
+		model.ProviderAzure: azure,
 	}
 
 	server := &http.Server{

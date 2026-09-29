@@ -320,6 +320,18 @@ func TestParseCloudSourcesRejectsIncompleteFederation(t *testing.T) {
 	}
 }
 
+func TestParseCloudSourcesRejectsUnsupportedProviders(t *testing.T) {
+	for _, provider := range []string{"docker", "minikube", "kind"} {
+		t.Run(provider, func(t *testing.T) {
+			content := "sources:\n  - id: local\n    provider: " + provider +
+				"\n    name: Local\n    scope_id: local\n"
+			if _, err := parseCloudSources([]byte(content)); err == nil {
+				t.Fatalf("expected provider %q to be rejected", provider)
+			}
+		})
+	}
+}
+
 func TestParseCloudSourcesAcceptsFederation(t *testing.T) {
 	sources, err := parseCloudSources([]byte(`sources:
   - id: gcp-platform
@@ -377,12 +389,6 @@ func TestFederationModeReportsCredentialPath(t *testing.T) {
 			source: model.CloudSource{Provider: model.ProviderAWS, RoleARN: "arn:aws:iam::1:role/KubeOps"},
 			want:   "default-chain",
 		},
-		{
-			name:   "local providers never federate",
-			cfg:    federating,
-			source: model.CloudSource{Provider: model.ProviderDocker},
-			want:   "default-chain",
-		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -413,13 +419,13 @@ func TestMergeCloudSourcesDatabaseWinsOnConflict(t *testing.T) {
 			},
 		},
 		{
-			name: "yaml-only local dev sources pass through unchanged",
+			name: "yaml-only sources pass through unchanged",
 			yaml: []model.CloudSource{
-				{ID: "docker-local", Name: "Docker Kubernetes"},
+				{ID: "aws-dev", Name: "AWS Dev"},
 			},
 			db: nil,
 			want: []model.CloudSource{
-				{ID: "docker-local", Name: "Docker Kubernetes"},
+				{ID: "aws-dev", Name: "AWS Dev"},
 			},
 		},
 		{

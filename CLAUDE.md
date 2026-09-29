@@ -13,7 +13,8 @@ Run from the repository root:
 make test
 ```
 
-- `make dev-backend` / `make dev-frontend` — start the API and UI.
+- `make dev` — PostgreSQL plus the API and UI; `make dev-backend` /
+  `make dev-frontend` start one of them.
 - `make db-up` — start the local PostgreSQL 18 container. The backend will not
   start without it.
 - `make test-integration` — migrations and inventory lifecycle against the
@@ -27,9 +28,8 @@ make test
 Cloud sources and Argo CD targets can come from either `config/cloud-sources.yaml`
 / `config/argo-targets.yaml` (or their `*_YAML` env equivalents) or from the
 `cloud_sources` / `argo_targets` database tables; at startup `main.go` merges
-both by ID, **database wins on conflict**. YAML stays the natural way to
-configure local-dev-only sources (`docker-desktop`, `minikube`) that have no
-business in a shared database; the database is how a shared/production
+both by ID, **database wins on conflict**. YAML suits a developer's own
+sources; the database is how a shared/production
 cloud source or a cluster's Argo CD access gets added without a redeploy —
 insert a `cloud_sources` row directly (its federation columns are identifiers,
 not credentials) or run `backend/cmd/seed-argo-target` (it encrypts the Argo
@@ -59,8 +59,12 @@ carry credential material are tagged `json:"-"` and must stay that way.
 **Serverless constraints shape the config layer.** The filesystem is read-only
 apart from the temp directory, and the process can be suspended after any
 request. Hence the inline `*_YAML` environment variables alongside file paths,
-and `BACKGROUND_WORKERS` defaulting to off when `VERCEL` is set — manual syncs
-then run synchronously inside their HTTP request.
+and `BACKGROUND_WORKERS` defaulting to off when `VERCEL` is set — syncs then
+run synchronously inside their HTTP request. Automatic sync there is
+UI-driven: the shell calls `POST /api/cloud-sources/refresh`, which discovers
+only sources older than `SYNC_INTERVAL`; a daily Vercel Cron covers idle hours.
+Only AWS, GCP, and Azure are supported providers; local kubeconfig discovery
+(docker, minikube) was removed and legacy rows are ignored.
 
 **The API has no authentication.** The router applies only CORS and request
 logging, and the Argo CD reverse proxy injects an admin bearer token for anyone

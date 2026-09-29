@@ -31,22 +31,3 @@ sources:
     # the deployment's OIDC token instead of a client secret.
     # client_id: 11111111-1111-1111-1111-111111111111
 
-  - id: docker-local
-    provider: docker
-    name: Docker Kubernetes
-    scope_id: local-docker
-    regions: [local]
-    enabled: false
-    kubeconfig_path: ~/.kube/config
-    # Optional. If omitted, docker-desktop, kind-*, and k3d-* contexts are detected.
-    contexts: [docker-desktop]
-
-  - id: minikube-local
-    provider: minikube
-    name: Minikube
-    scope_id: local-minikube
-    regions: [local]
-    enabled: false
-    kubeconfig_path: ~/.kube/config
-    # Optional. If omitted, minikube and minikube-* contexts are detected.
-    contexts: [minikube]
