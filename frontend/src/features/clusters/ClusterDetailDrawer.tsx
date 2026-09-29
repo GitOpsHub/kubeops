@@ -17,6 +17,7 @@ import { buttonClass } from '../../components/ui/button-class'
 import { Dialog, DialogClose, DialogDescription, DialogTitle } from '../../components/ui/Dialog'
 import { Skeleton } from '../../components/ui/Skeleton'
 import { providerLabels } from '../../lib/providers'
+import { clusterStatus } from '../../lib/status'
 import './cluster-drawer.css'
 
 type PendingScale = {
@@ -89,7 +90,7 @@ function networkFacts(details: ClusterDetails): NetworkFact[] {
       { label: 'Private DNS zone', value: network.privateDnsZone },
     ])
   }
-  return common.concat([{ label: 'API server', value: details.networking.local?.apiServer }])
+  return common
 }
 
 function settled(status: string) {
@@ -254,7 +255,7 @@ export function ClusterDetailDrawer({
                 <dt>Status</dt>
                 <dd>
                   <StatusBadge
-                    status={cluster.removedAt ? 'removed' : cluster.status}
+                    status={clusterStatus(cluster)}
                     tone={cluster.removedAt ? 'idle' : undefined}
                   />
                 </dd>

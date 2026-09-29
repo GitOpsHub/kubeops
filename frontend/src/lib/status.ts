@@ -17,22 +17,45 @@ const tones: Record<string, Tone> = {
   partial: 'warn',
   failed: 'err',
   offboarded: 'idle',
-  // Cluster inventory and sync runs.
+  // Cluster inventory (EKS status, GKE status, AKS provisioning state) and
+  // sync runs.
   active: 'ok',
   running: 'ok',
   succeeded: 'ok',
   updating: 'warn',
+  upgrading: 'warn',
+  scaling: 'warn',
+  provisioning: 'warn',
+  reconciling: 'warn',
+  starting: 'warn',
+  stopping: 'warn',
   pending: 'warn',
   queued: 'warn',
   stale: 'warn',
   degraded: 'err',
+  error: 'err',
+  canceled: 'err',
   deleting: 'err',
+  stopped: 'idle',
   removed: 'idle',
   unknown: 'idle',
 }
 
 /** Statuses describing work still in flight, so their indicator breathes. */
-const inFlight = new Set(['progressing', 'creating', 'updating', 'pending', 'running', 'queued'])
+const inFlight = new Set([
+  'progressing',
+  'creating',
+  'updating',
+  'upgrading',
+  'scaling',
+  'provisioning',
+  'reconciling',
+  'starting',
+  'stopping',
+  'pending',
+  'running',
+  'queued',
+])
 
 const brokenValues = new Set(['outofsync', 'error', 'degraded', 'missing'])
 
@@ -102,4 +125,18 @@ export function rollupState(targets: ApplicationDeployment[]) {
     targets.find((target) => target.status === 'progressing' || target.status === 'creating') ??
     targets[0]
   return { syncStatus: worst.syncStatus, healthStatus: worst.healthStatus }
+}
+
+/**
+ * A cluster's health in one vocabulary across providers. The steady state is
+ * ACTIVE on EKS, RUNNING on GKE, and Succeeded on AKS; all three read as
+ * active (a "running" badge would also pulse as if work were in flight).
+ * Removed clusters read as removed whatever their last status was.
+ */
+export function clusterStatus(cluster: { status: string; removedAt: string | null }) {
+  if (cluster.removedAt) return 'removed'
+  const status = normalise(cluster.status)
+  if (status === 'running' || status === 'succeeded') return 'active'
+  if (!status || status === 'status_unspecified') return 'unknown'
+  return status
 }

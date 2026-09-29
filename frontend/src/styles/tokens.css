@@ -97,8 +97,7 @@
   --aws: #ff9900;
   --gcp: #4285f4;
   --azure: #0078d4;
-  --docker: #2496ed;
-  --minikube: #d9a300;
+  --container: #2496ed;
 
   /* Log and code panes stay dark in both themes: terminals read that way. */
   --code-bg: #0e1116;
@@ -158,8 +157,7 @@
     --aws: #ffb340;
     --gcp: #7aa7f8;
     --azure: #4aa3e8;
-    --docker: #5cb4f2;
-    --minikube: #ffd75e;
+    --container: #5cb4f2;
 
     --code-bg: #07080a;
 
@@ -210,8 +208,7 @@
   --aws: #ffb340;
   --gcp: #7aa7f8;
   --azure: #4aa3e8;
-  --docker: #5cb4f2;
-  --minikube: #ffd75e;
+  --container: #5cb4f2;
 
   --code-bg: #07080a;
 

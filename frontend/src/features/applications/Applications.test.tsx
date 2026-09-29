@@ -1225,7 +1225,10 @@ describe('application onboarding form', () => {
     await user.click(screen.getByRole('button', { name: 'Onboard' }))
 
     await waitFor(() => {
-      const posted = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')
+      const posted = fetchMock.mock.calls.find(
+        ([url, init]) =>
+          init?.method === 'POST' && String(url).endsWith('/application-onboardings'),
+      )
       expect(posted).toBeDefined()
       expect(JSON.parse(String(posted?.[1]?.body)).valuesYaml).toBe(
         'replicaCount: 2\nimage:\n  repository: nginx\n',

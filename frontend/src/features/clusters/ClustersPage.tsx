@@ -13,9 +13,11 @@ import { SegmentedControl } from '../../components/ui/SegmentedControl'
 import { SkeletonRows } from '../../components/ui/Skeleton'
 import { StatCard } from '../../components/ui/StatCard'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
+import { useReloadAfterAutoSync, useSyncInterval } from '../../hooks/useAutoSync'
 import { usePolledResource } from '../../hooks/usePolledResource'
 import { isOlderThan, plural, relativeTime } from '../../lib/format'
 import { emptyProviderCounts, providerLabels, providers, staleAfterMs } from '../../lib/providers'
+import { clusterStatus } from '../../lib/status'
 import { ClusterDetailDrawer } from './ClusterDetailDrawer'
 import './clusters.css'
 
@@ -50,6 +52,8 @@ export function ClustersPage() {
     [page, pageSize, providerParam, search],
   )
   const inventory = usePolledResource(load, { intervalMs: pollIntervalMs })
+  useReloadAfterAutoSync(inventory.reload)
+  const staleMs = staleAfterMs(useSyncInterval())
   const sources = useMemo(() => inventory.data?.sources ?? [], [inventory.data])
   const clusters = inventory.data?.clusterPage.items ?? []
   const total = inventory.data?.clusterPage.total ?? 0
@@ -68,7 +72,7 @@ export function ClustersPage() {
   const staleSources = sources.filter(
     (item) =>
       item.enabled &&
-      (item.lastSyncStatus === 'failed' || isOlderThan(item.lastSyncAt, staleAfterMs)),
+      (item.lastSyncStatus === 'failed' || isOlderThan(item.lastSyncAt, staleMs)),
   ).length
 
   function updateFilter(action: () => void) {
@@ -125,6 +129,7 @@ export function ClustersPage() {
     {
       id: 'provider',
       header: 'Provider',
+      className: 'col-provider',
       cell: (cluster) => (
         <span className="provider-cell">
           <ProviderLogo provider={cluster.provider} className="provider-cell-logo" />
@@ -135,6 +140,7 @@ export function ClustersPage() {
     {
       id: 'location',
       header: 'Location',
+      className: 'col-location',
       cell: (cluster) => (
         <span className="cell-stack">
           <span className="mono">{cluster.location}</span>
@@ -148,25 +154,21 @@ export function ClustersPage() {
       id: 'nodes',
       header: 'Nodes',
       align: 'end',
-      className: 'cell-numeric',
+      className: 'cell-numeric col-nodes',
       cell: (cluster) => cluster.nodeCount ?? '—',
     },
     {
       id: 'health',
       header: 'Health',
-      cell: (cluster) => (
-        <StatusBadge
-          status={cluster.removedAt ? 'removed' : 'active'}
-          tone={cluster.removedAt ? 'idle' : undefined}
-        />
-      ),
+      cell: (cluster) => <StatusBadge status={clusterStatus(cluster)} />,
     },
     {
       id: 'seen',
       header: 'Last seen',
+      className: 'col-seen',
       cell: (cluster) => (
         <span
-          className={isOlderThan(cluster.lastSeenAt, staleAfterMs) ? 'seen-stale' : 'cell-muted'}
+          className={isOlderThan(cluster.lastSeenAt, staleMs) ? 'seen-stale' : 'cell-muted'}
         >
           {relativeTime(cluster.lastSeenAt)}
         </span>

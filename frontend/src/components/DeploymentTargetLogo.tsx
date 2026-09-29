@@ -10,8 +10,6 @@ import { KubernetesLogo, ProviderLogo } from './BrandIcons'
 function targetProvider(target: ApplicationDeployment): Provider | null {
   const fingerprint =
     `${target.sourceId} ${target.providerResourceId} ${target.clusterName}`.toLowerCase()
-  if (fingerprint.includes('minikube')) return 'minikube'
-  if (fingerprint.includes('docker')) return 'docker'
   if (fingerprint.includes('azure') || fingerprint.includes('aks')) return 'azure'
   if (
     fingerprint.includes('google') ||

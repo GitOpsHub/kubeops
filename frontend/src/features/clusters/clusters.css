@@ -90,8 +90,27 @@
   opacity: 0.6;
 }
 
+/* On narrow screens the name must never collapse to its icon. The provider
+   column goes first (the badge on the cluster logo already says it), then
+   last-seen, location, and node count, all of which the detail drawer shows. */
 @media (max-width: 720px) {
   .cluster-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .data-table .col-cluster {
+    min-width: 170px;
+  }
+
+  .data-table .col-provider,
+  .data-table .col-seen {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .data-table .col-location,
+  .data-table .col-nodes {
+    display: none;
   }
 }

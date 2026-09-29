@@ -1,5 +1,5 @@
 import type { ApplicationOnboarding } from '../../api/onboarding'
-import { ProviderLogo } from '../../components/BrandIcons'
+import { ContainerImageLogo } from '../../components/BrandIcons'
 import { StatusBadge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { Menu, MenuItem } from '../../components/ui/Menu'
@@ -33,7 +33,7 @@ export function DetailHeader({
     <header className="detail-header">
       <div className="detail-identity">
         <span className="detail-mark" aria-hidden="true">
-          <ProviderLogo provider="docker" />
+          <ContainerImageLogo />
         </span>
         <div className="detail-identity-copy">
           <div className="detail-title-row">

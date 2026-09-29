@@ -16,6 +16,7 @@ import { PageHeader } from '../../components/ui/PageHeader'
 import { SkeletonRows } from '../../components/ui/Skeleton'
 import { usePolledResource } from '../../hooks/usePolledResource'
 import { plural } from '../../lib/format'
+import { clusterStatus } from '../../lib/status'
 import { dnsLabel, plannedResources } from './onboarding-plan'
 import '../../components/ui/DataTable.css'
 import './onboarding.css'
@@ -404,7 +405,7 @@ export function OnboardingPage() {
                           <td className="mono">{cluster.location || 'Unknown'}</td>
                           <td className="mono">{cluster.kubernetesVersion || 'Unknown'}</td>
                           <td>
-                            <StatusBadge status={cluster.status} />
+                            <StatusBadge status={clusterStatus(cluster)} />
                           </td>
                         </tr>
                       ))}

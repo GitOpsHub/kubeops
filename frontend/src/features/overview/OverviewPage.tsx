@@ -23,6 +23,7 @@ import { PageHeader } from '../../components/ui/PageHeader'
 import { RefreshIndicator } from '../../components/ui/RefreshIndicator'
 import { Skeleton } from '../../components/ui/Skeleton'
 import { StatCard } from '../../components/ui/StatCard'
+import { useReloadAfterAutoSync, useSyncInterval } from '../../hooks/useAutoSync'
 import { usePolledResource } from '../../hooks/usePolledResource'
 import { isOlderThan, plural, relativeTime } from '../../lib/format'
 import {
@@ -31,6 +32,7 @@ import {
   providerNames,
   providers,
   staleAfterMs,
+  syncTriggerLabel,
 } from '../../lib/providers'
 import {
   groupApplications,
@@ -81,10 +83,10 @@ async function loadOverview(signal: AbortSignal): Promise<OverviewData> {
   }
 }
 
-function sourceNeedsAttention(source: CloudSource) {
+function sourceNeedsAttention(source: CloudSource, staleMs: number) {
   return (
     source.enabled &&
-    (source.lastSyncStatus === 'failed' || isOlderThan(source.lastSyncAt, staleAfterMs))
+    (source.lastSyncStatus === 'failed' || isOlderThan(source.lastSyncAt, staleMs))
   )
 }
 
@@ -95,6 +97,8 @@ const healthOrder: OnboardingStatus[] = [...onboardingStatuses].sort(
 export function OverviewPage() {
   const load = useCallback((signal: AbortSignal) => loadOverview(signal), [])
   const overview = usePolledResource(load, { intervalMs: pollIntervalMs })
+  useReloadAfterAutoSync(overview.reload)
+  const staleMs = staleAfterMs(useSyncInterval())
   const data = overview.data
 
   const summary = useMemo(() => {
@@ -108,10 +112,12 @@ export function OverviewPage() {
     const attentionApps = (data.groups ?? [])
       .filter((group) => group.status === 'failed' || group.status === 'partial')
       .sort((left, right) => statusSeverity[left.status] - statusSeverity[right.status])
-    const attentionSources = (data.sources ?? []).filter(sourceNeedsAttention)
+    const attentionSources = (data.sources ?? []).filter((source) =>
+      sourceNeedsAttention(source, staleMs),
+    )
     const failedRuns = (data.runs ?? []).filter((run) => run.status === 'failed')
     return { providerCounts, statusCounts, attentionApps, attentionSources, failedRuns }
-  }, [data])
+  }, [data, staleMs])
 
   const providerMax = summary ? Math.max(1, ...Object.values(summary.providerCounts)) : 1
   const fleetTotal = summary
@@ -383,8 +389,10 @@ export function OverviewPage() {
                       <span className="overview-list-copy">
                         <strong>{run.sourceName}</strong>
                         <small>
-                          {run.trigger} · {plural(run.discoveredCount, 'cluster')} discovered
-                          {run.error ? ` · ${run.error}` : ''}
+                          {syncTriggerLabel(run.trigger)} ·{' '}
+                          {run.status === 'failed'
+                            ? (run.error ?? 'failed')
+                            : `${plural(run.discoveredCount, 'cluster')} discovered`}
                         </small>
                       </span>
                       <time dateTime={run.queuedAt} className="overview-list-time">

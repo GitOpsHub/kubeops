@@ -8,10 +8,20 @@ import { MenuIcon } from './nav-icons'
 type Props = {
   applicationName?: string
   latestRun: SyncRun | null
+  syncing: boolean
   onOpenNavigation: () => void
 }
 
-export function AppHeader({ applicationName, latestRun, onOpenNavigation }: Props) {
+function headerSyncLabel(run: SyncRun | null, syncing: boolean) {
+  if (syncing) return 'Syncing…'
+  if (!run) return 'No sync yet'
+  const when = relativeTime(run.completedAt ?? run.queuedAt)
+  if (run.status === 'failed') return `Sync failed ${when}`
+  if (run.status !== 'succeeded') return `Sync ${run.status}`
+  return `Synced ${when}`
+}
+
+export function AppHeader({ applicationName, latestRun, syncing, onOpenNavigation }: Props) {
   const { pathname } = useLocation()
   const crumbs = breadcrumbsFor(pathname, applicationName)
 
@@ -47,8 +57,11 @@ export function AppHeader({ applicationName, latestRun, onOpenNavigation }: Prop
       </nav>
 
       <Link className="app-header-sync" to="/sources" title="Cloud source sync activity">
-        <span className={`sync-dot sync-dot--${latestRun?.status ?? 'idle'}`} aria-hidden="true" />
-        {latestRun ? `Last sync ${relativeTime(latestRun.queuedAt)}` : 'No sync yet'}
+        <span
+          className={`sync-dot sync-dot--${syncing ? 'running' : (latestRun?.status ?? 'idle')}`}
+          aria-hidden="true"
+        />
+        {headerSyncLabel(latestRun, syncing)}
       </Link>
     </header>
   )

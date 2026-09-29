@@ -17,21 +17,56 @@ import { EmptyState } from '../../components/ui/EmptyState'
 import { PageHeader } from '../../components/ui/PageHeader'
 import { RefreshIndicator } from '../../components/ui/RefreshIndicator'
 import { SkeletonRows } from '../../components/ui/Skeleton'
+import { useReloadAfterAutoSync, useSyncInterval } from '../../hooks/useAutoSync'
 import { usePolledResource } from '../../hooks/usePolledResource'
 import type { AppShellContext } from '../../lib/app-shell'
 import { isOlderThan, plural, relativeTime } from '../../lib/format'
-import { providerLabels, providerNames, staleAfterMs } from '../../lib/providers'
+import {
+  describeInterval,
+  syncTriggerLabel,
+  providerLabels,
+  providerNames,
+  staleAfterMs,
+} from '../../lib/providers'
 import './sources.css'
 
 const pollIntervalMs = 15_000
 
 /** A succeeded sync that is too old to trust reads as stale, not healthy. */
-function displayedStatus(source: CloudSource) {
+function displayedStatus(source: CloudSource, staleMs: number) {
   if (!source.enabled) return 'disabled'
-  if (source.lastSyncStatus === 'succeeded' && isOlderThan(source.lastSyncAt, staleAfterMs)) {
+  if (source.lastSyncStatus === 'succeeded' && isOlderThan(source.lastSyncAt, staleMs)) {
     return 'stale'
   }
   return source.lastSyncStatus || 'unknown'
+}
+
+function lastSyncLabel(source: CloudSource) {
+  if (!source.lastSyncAt) return 'Never synced'
+  const when = relativeTime(source.lastSyncAt)
+  return source.lastSyncStatus === 'failed' ? `Failed ${when}` : `Synced ${when}`
+}
+
+/**
+ * Provider errors run to several hundred characters of SDK detail. The first
+ * clause is usually enough to know what broke, so that is what shows; the rest
+ * is one click away.
+ */
+function SyncError({ message }: { message: string }) {
+  const summary = message.split(/:\s/)[0]
+  if (summary.length === message.length) {
+    return (
+      <p className="source-error" role="note">
+        {message}
+      </p>
+    )
+  }
+  return (
+    <details className="source-error">
+      <summary>{summary}</summary>
+      <p>{message}</p>
+    </details>
+  )
 }
 
 export function SourcesPage() {
@@ -44,6 +79,9 @@ export function SourcesPage() {
     return { sources, runs }
   }, [])
   const inventory = usePolledResource(load, { intervalMs: pollIntervalMs })
+  useReloadAfterAutoSync(inventory.reload)
+  const syncIntervalMs = useSyncInterval()
+  const staleMs = staleAfterMs(syncIntervalMs)
   const sources = inventory.data?.sources ?? []
   const runs = useMemo(() => inventory.data?.runs ?? [], [inventory.data])
 
@@ -72,7 +110,12 @@ export function SourcesPage() {
       <PageHeader
         id="sources-heading"
         title="Cloud sources"
-        description="The accounts, projects, and subscriptions KubeOps discovers clusters in."
+        description={
+          <>
+            The accounts, projects, and subscriptions KubeOps discovers clusters in. Each one
+            syncs automatically every {describeInterval(syncIntervalMs)}.
+          </>
+        }
         meta={
           <RefreshIndicator
             lastUpdated={inventory.lastUpdated}
@@ -144,27 +187,23 @@ export function SourcesPage() {
                     <span>{source.clusterCount === 1 ? 'cluster' : 'clusters'}</span>
                   </div>
                   <div className="source-sync">
-                    <StatusBadge status={displayedStatus(source)} />
+                    <StatusBadge status={displayedStatus(source, staleMs)} />
                     <span>
-                      {source.lastSyncAt
-                        ? `Synced ${relativeTime(source.lastSyncAt)}`
-                        : 'Never synced'}
-                      {run &&
-                        ` · last run ${run.trigger}, ${plural(run.discoveredCount, 'cluster')}`}
+                      {lastSyncLabel(source)}
+                      {run?.status === 'succeeded' &&
+                        ` · ${plural(run.discoveredCount, 'cluster')} found`}
                     </span>
                   </div>
                   <Button
                     size="sm"
+                    variant="ghost"
                     onClick={() => void syncSource(source)}
-                    disabled={!source.enabled || syncing === source.id}
+                    disabled={!source.enabled}
+                    loading={syncing === source.id}
                   >
                     {syncing === source.id ? 'Syncing…' : 'Sync now'}
                   </Button>
-                  {error && (
-                    <p className="source-error" role="note">
-                      {error}
-                    </p>
-                  )}
+                  {error && <SyncError message={error} />}
                 </li>
               )
             })}
@@ -193,9 +232,10 @@ export function SourcesPage() {
                 <span className="run-copy">
                   <strong>{run.sourceName}</strong>
                   <small>
-                    {run.trigger} · {run.discoveredCount} discovered · {run.changedCount} changed ·{' '}
-                    {run.removedCount} removed
-                    {run.error ? ` · ${run.error}` : ''}
+                    {syncTriggerLabel(run.trigger)} ·{' '}
+                    {run.status === 'failed'
+                      ? (run.error ?? 'failed')
+                      : `${run.discoveredCount} discovered · ${run.changedCount} changed · ${run.removedCount} removed`}
                   </small>
                 </span>
                 <StatusBadge status={run.status} />

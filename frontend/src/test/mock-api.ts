@@ -79,6 +79,8 @@ export type MockState = {
   syncedSources: string[]
   /** Makes `POST /cloud-sources/:id/sync` fail with this message. */
   syncError: string | null
+  /** How many times the shell asked for an automatic refresh. */
+  autoSyncCalls: number
 }
 
 export function buildResource(overrides: Partial<ResourceNode> = {}): ResourceNode {
@@ -116,6 +118,7 @@ export function mockAPI(initial: Partial<MockState> = {}) {
     syncRuns: initial.syncRuns ?? [buildSyncRun()],
     syncedSources: [],
     syncError: initial.syncError ?? null,
+    autoSyncCalls: 0,
   }
 
   const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (request, init) => {
@@ -362,6 +365,11 @@ export function mockAPI(initial: Partial<MockState> = {}) {
 
     if (path === '/sync-runs') {
       return Response.json({ items: state.syncRuns })
+    }
+
+    if (path === '/cloud-sources/refresh' && init?.method === 'POST') {
+      state.autoSyncCalls += 1
+      return Response.json({ items: [], intervalSeconds: 300 })
     }
 
     const sourceSyncMatch = path.match(/^\/cloud-sources\/([^/]+)\/sync$/)
