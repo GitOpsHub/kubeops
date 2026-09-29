@@ -684,11 +684,7 @@ func (s *Service) Offboard(ctx context.Context, id string) (model.ApplicationOnb
 			// context because the failed delete may have consumed callCtx's
 			// entire timeout.
 			if s.clusterRemoved(context.WithoutCancel(callCtx), target.ClusterID) {
-				slog.Info("offboarded target on a removed cluster",
-					"onboarding", record.ID, "target", target.ID,
-					"cluster", target.ClusterName, "application", target.ArgoApplication)
-				return "offboarded", "Unknown", "Missing",
-					"Cluster no longer exists; GitHub values were preserved"
+				return offboardedFromRemovedCluster(record, target)
 			}
 			slog.Error("delete Argo CD application",
 				"onboarding", record.ID, "target", target.ID,
@@ -703,6 +699,17 @@ func (s *Service) Offboard(ctx context.Context, id string) (model.ApplicationOnb
 		return model.ApplicationOnboarding{}, err
 	}
 	return s.Get(ctx, id)
+}
+
+func offboardedFromRemovedCluster(
+	record model.ApplicationOnboarding,
+	target model.ApplicationDeployment,
+) (string, string, string, string) {
+	slog.Info("offboarded target on a removed cluster",
+		"onboarding", record.ID, "target", target.ID,
+		"cluster", target.ClusterName, "application", target.ArgoApplication)
+	return "offboarded", "Unknown", "Missing",
+		"Cluster no longer exists; GitHub values were preserved"
 }
 
 // clusterRemoved reports whether the inventory no longer carries the cluster —
@@ -743,10 +750,19 @@ func (s *Service) forEachTarget(
 			defer s.recoverTarget(ctx, target, operation, errs)
 			client, err := s.resolveClient(ctx, target.SourceID, target.ProviderResourceID, target.ClusterName)
 			if err != nil {
+				status, message := "failed", "Argo CD target configuration is no longer available"
+				syncStatus, healthStatus := target.SyncStatus, target.HealthStatus
+				// A cluster that left the inventory usually took its Argo CD
+				// access with it (a removed source, a dropped localhost target),
+				// so this is the common way to reach a gone cluster. Offboarding
+				// must still finish there, or the application can never be
+				// offboarded; other operations keep the failure.
+				if operation == "offboard" && s.clusterRemoved(ctx, target.ClusterID) {
+					status, syncStatus, healthStatus, message = offboardedFromRemovedCluster(record, target)
+				}
 				if updateErr := s.store.UpdateApplicationDeployment(
-					context.WithoutCancel(ctx), target.ID, "failed",
-					target.SyncStatus, target.HealthStatus,
-					"Argo CD target configuration is no longer available",
+					context.WithoutCancel(ctx), target.ID, status,
+					syncStatus, healthStatus, message,
 				); updateErr != nil {
 					errs <- fmt.Errorf("%s target %s: %w", operation, target.ID, updateErr)
 				}
