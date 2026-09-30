@@ -21,6 +21,7 @@ import type { AppShellContext } from '../../lib/app-shell'
 import { ResourceExplorer } from '../resources/ResourceExplorer'
 import {
   endpointLinks,
+  failedTargetReasons,
   getApplicationReleases,
   releaseScope,
   type ApplicationEndpoint,
@@ -108,11 +109,12 @@ export function ApplicationDetailPage() {
     try {
       const next = await syncApplicationOnboarding(record.id)
       replaceRelease(next)
+      const failures = failedTargetReasons(next.targets)
       setFeedback(
-        next.targets.some((target) => target.status === 'failed')
+        failures
           ? {
               tone: 'error',
-              message: 'Synchronization could not start for one or more deployment targets.',
+              message: `Synchronization could not start for one or more deployment targets — ${failures}.`,
             }
           : { tone: 'success', message: 'Synchronization started for every deployment target.' },
       )
@@ -136,11 +138,12 @@ export function ApplicationDetailPage() {
       replaceRelease(next)
       setScaling(false)
       setActiveTab('resources')
+      const failures = failedTargetReasons(next.targets)
       setFeedback(
-        next.targets.some((target) => target.status === 'failed')
+        failures
           ? {
               tone: 'error',
-              message: `The ${replicas}-pod value was committed, but synchronization failed for one or more clusters.`,
+              message: `The ${replicas}-pod value was committed, but synchronization failed — ${failures}.`,
             }
           : {
               tone: 'success',

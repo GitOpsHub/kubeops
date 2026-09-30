@@ -115,11 +115,11 @@ func (s *Service) Logs(
 	if err := validateLogQuery(&query); err != nil {
 		return nil, err
 	}
-	target, client, err := s.target(ctx, onboardingID, targetID)
+	target, access, err := s.target(ctx, onboardingID, targetID)
 	if err != nil {
 		return nil, err
 	}
-	return client.Logs(ctx, target.ArgoApplication, s.config.ArgoNamespace, query)
+	return access.client.Logs(ctx, target.ArgoApplication, access.namespace, query)
 }
 
 // TargetStatus returns the live Argo CD state of one deployment, which the
@@ -128,13 +128,13 @@ func (s *Service) TargetStatus(
 	ctx context.Context,
 	onboardingID, targetID string,
 ) (ArgoAppStatus, error) {
-	target, client, err := s.target(ctx, onboardingID, targetID)
+	target, access, err := s.target(ctx, onboardingID, targetID)
 	if err != nil {
 		return ArgoAppStatus{}, err
 	}
 	callCtx, cancel := context.WithTimeout(ctx, s.config.RequestTimeout)
 	defer cancel()
-	return client.ApplicationStatus(callCtx, target.ArgoApplication, s.config.ArgoNamespace)
+	return access.client.ApplicationStatus(callCtx, target.ArgoApplication, access.namespace)
 }
 
 func (s *Service) TargetEvents(
@@ -145,13 +145,13 @@ func (s *Service) TargetEvents(
 	if err := validateEventQuery(query); err != nil {
 		return nil, err
 	}
-	target, client, err := s.target(ctx, onboardingID, targetID)
+	target, access, err := s.target(ctx, onboardingID, targetID)
 	if err != nil {
 		return nil, err
 	}
 	callCtx, cancel := context.WithTimeout(ctx, s.config.RequestTimeout)
 	defer cancel()
-	return client.ApplicationEvents(callCtx, target.ArgoApplication, s.config.ArgoNamespace, query)
+	return access.client.ApplicationEvents(callCtx, target.ArgoApplication, access.namespace, query)
 }
 
 // Container is one container of a Pod template, for choosing which log
@@ -170,13 +170,13 @@ func (s *Service) Containers(
 	onboardingID, targetID string,
 	ref ResourceRef,
 ) ([]Container, error) {
-	target, client, err := s.target(ctx, onboardingID, targetID)
+	target, access, err := s.target(ctx, onboardingID, targetID)
 	if err != nil {
 		return nil, err
 	}
 	callCtx, cancel := context.WithTimeout(ctx, s.config.RequestTimeout)
 	defer cancel()
-	manifest, err := client.ResourceManifest(callCtx, target.ArgoApplication, s.config.ArgoNamespace, ref)
+	manifest, err := access.client.ResourceManifest(callCtx, target.ArgoApplication, access.namespace, ref)
 	if err != nil {
 		return nil, err
 	}

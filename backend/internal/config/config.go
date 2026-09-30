@@ -79,10 +79,17 @@ type ArgoTarget struct {
 	TokenEnv           string `yaml:"token_env"`
 	CAFile             string `yaml:"ca_file,omitempty"`
 	UIURL              string `yaml:"ui_url,omitempty"`
-	Username           string `yaml:"username,omitempty"`
-	PasswordEnv        string `yaml:"password_env,omitempty"`
-	Token              string `yaml:"-"`
-	Password           string `yaml:"-"`
+	// ArgoNamespace is the namespace this cluster's Argo CD control plane runs
+	// in, when it differs from ARGO_NAMESPACE. It is per target because the
+	// namespace is a property of the installation, not of kubeops: the
+	// local-dev scripts install the Helm chart into "argo-cd" while an upstream
+	// install uses "argocd", and an Application created in the wrong one is
+	// rejected outright.
+	ArgoNamespace string `yaml:"argo_namespace,omitempty"`
+	Username      string `yaml:"username,omitempty"`
+	PasswordEnv   string `yaml:"password_env,omitempty"`
+	Token         string `yaml:"-"`
+	Password      string `yaml:"-"`
 }
 
 // ProxyID is the URL path segment that addresses this target through the Argo CD
@@ -128,13 +135,18 @@ func (t ArgoTarget) Transport() (*http.Transport, error) {
 }
 
 type OnboardingConfig struct {
-	HelmRepoURL       string
-	HelmChart         string
-	HelmRevision      string
-	HelmDefaultsFile  string
-	HelmDefaultsYAML  string
-	ArgoProject       string
-	ArgoNamespace     string
+	HelmRepoURL      string
+	HelmChart        string
+	HelmRevision     string
+	HelmDefaultsFile string
+	HelmDefaultsYAML string
+	ArgoProject      string
+	ArgoNamespace    string
+	// KubespinNamespace is the namespace Argo CD runs in on the clusters
+	// kubespin provisions, whose access arrives through cluster_argocd_details.
+	// That table carries no namespace, and kubespin installs upstream Argo CD,
+	// so those clusters cannot share ARGO_NAMESPACE with a local-dev install.
+	KubespinNamespace string
 	ArgoTargetsFile   string
 	ArgoTargets       []ArgoTarget
 	ArgoCredentialKey []byte
@@ -360,6 +372,7 @@ func loadOnboardingConfig() (OnboardingConfig, error) {
 		HelmDefaultsYAML:  string(defaultsYAML),
 		ArgoProject:       valueOrDefault("ARGO_PROJECT", "default"),
 		ArgoNamespace:     valueOrDefault("ARGO_NAMESPACE", "argo-cd"),
+		KubespinNamespace: valueOrDefault("KUBESPIN_ARGO_NAMESPACE", "argocd"),
 		ArgoTargetsFile:   targetsFile,
 		ArgoTargets:       targets,
 		ArgoCredentialKey: credentialKey,

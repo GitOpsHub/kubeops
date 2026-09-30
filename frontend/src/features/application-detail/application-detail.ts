@@ -27,6 +27,24 @@ export function releaseSyncStatus(targets: ApplicationDeployment[]): SyncSummary
 }
 
 /**
+ * Why each cluster failed, as the API recorded it on the target. A banner that
+ * only counts failures throws away the one detail that says what to do next —
+ * a rejected Application reads differently from an unreachable Argo CD — so the
+ * reasons are named per cluster. A cluster that failed without a reason is
+ * still named.
+ */
+export function failedTargetReasons(targets: ApplicationDeployment[]) {
+  return targets
+    .filter((target) => target.status === 'failed')
+    .map((target) => {
+      const cluster = target.clusterName.trim() || target.argoApplication.trim() || 'unknown cluster'
+      const reason = (target.message ?? '').trim().replace(/\.$/, '')
+      return reason ? `${cluster}: ${reason}` : cluster
+    })
+    .join('; ')
+}
+
+/**
  * Public URLs the application answers on, read off the Services and Ingresses
  * Argo CD reports. A port list of only non-TCP entries falls back to 443,
  * and CIDRs or user@host forms are skipped rather than turned into links.

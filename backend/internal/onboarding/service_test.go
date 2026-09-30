@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1250,8 +1251,18 @@ func TestSafeCreateErrorSeparatesUnreachableFromRejected(t *testing.T) {
 	if got := safeCreateError(unreachable); got != "Argo CD could not be reached" {
 		t.Fatalf("connection refused was misreported: %q", got)
 	}
-	if got := safeCreateError(argoAPIError{status: 400}); got != "Argo CD did not accept the application" {
+	// The status is the whole diagnosis of a rejection, and the stored message is
+	// the only place it survives.
+	if got := safeCreateError(argoAPIError{status: 400}); got != "Argo CD rejected the application (HTTP 400)" {
 		t.Fatalf("API rejection was misreported: %q", got)
+	}
+	if got := safeCreateError(fmt.Errorf("create application: %w", argoAPIError{status: 403})); got !=
+		"Argo CD rejected the application (HTTP 403)" {
+		t.Fatalf("wrapped API rejection was misreported: %q", got)
+	}
+	if got := safeCreateError(errors.New("decode Argo CD response: unexpected EOF")); got !=
+		"Argo CD did not accept the application" {
+		t.Fatalf("unclassified failure was misreported: %q", got)
 	}
 	if got := safeCreateError(ErrApplicationConflict); got != "an Argo CD application with this name already exists" {
 		t.Fatalf("conflict was misreported: %q", got)
@@ -1406,7 +1417,7 @@ func TestEnrichLinksTokenOnlyTargetWithoutUsername(t *testing.T) {
 	}
 }
 
-func TestResolveClientPrefersStaticTargetOverKubespin(t *testing.T) {
+func TestResolveAccessPrefersStaticTargetOverKubespin(t *testing.T) {
 	staticClient := &fakeArgoClient{}
 	repository := &fakeRepository{
 		kubespinLookups: map[string]int{},
@@ -1415,24 +1426,34 @@ func TestResolveClientPrefersStaticTargetOverKubespin(t *testing.T) {
 		},
 	}
 	service := &Service{
-		store:   repository,
-		config:  config.OnboardingConfig{RequestTimeout: time.Second},
+		store: repository,
+		config: config.OnboardingConfig{
+			RequestTimeout: time.Second, ArgoNamespace: "argo-cd",
+			KubespinNamespace: "argocd",
+		},
 		clients: map[string]ArgoClient{targetKey("aws", "arn:cluster/prod"): staticClient},
+		linkTargets: map[string]config.ArgoTarget{
+			targetKey("aws", "arn:cluster/prod"): {SourceID: "aws", ProviderResourceID: "arn:cluster/prod"},
+		},
 	}
 
-	client, err := service.resolveClient(context.Background(), "aws", "arn:cluster/prod", "prod")
+	access, err := service.resolveAccess(context.Background(), "aws", "arn:cluster/prod", "prod")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client != ArgoClient(staticClient) {
+	if access.client != ArgoClient(staticClient) {
 		t.Fatal("expected the statically configured client to win")
+	}
+	// A target that names no namespace of its own shares ARGO_NAMESPACE.
+	if access.namespace != "argo-cd" {
+		t.Fatalf("unexpected namespace: %q", access.namespace)
 	}
 	if repository.kubespinLookups["prod"] != 0 {
 		t.Fatal("a static target hit must not query kubespin's Argo CD details")
 	}
 }
 
-func TestResolveClientFallsBackToKubespinAndCachesTheClient(t *testing.T) {
+func TestResolveAccessFallsBackToKubespinAndCachesTheClient(t *testing.T) {
 	var sessionCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/session" {
@@ -1451,24 +1472,35 @@ func TestResolveClientFallsBackToKubespinAndCachesTheClient(t *testing.T) {
 		},
 	}
 	service := &Service{
-		store:   repository,
-		config:  config.OnboardingConfig{RequestTimeout: time.Second},
+		store: repository,
+		config: config.OnboardingConfig{
+			RequestTimeout: time.Second, ArgoNamespace: "argo-cd",
+			KubespinNamespace: "argocd",
+		},
 		clients: map[string]ArgoClient{},
 	}
 
-	first, err := service.resolveClient(context.Background(), "aws", "arn:cluster/prod", "prod")
+	first, err := service.resolveAccess(context.Background(), "aws", "arn:cluster/prod", "prod")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first == nil {
+	if first.client == nil {
 		t.Fatal("expected a client resolved from kubespin's Argo CD details")
 	}
-	second, err := service.resolveClient(context.Background(), "aws", "arn:cluster/prod", "prod")
+	// kubespin installs upstream Argo CD, so these clusters must not inherit the
+	// local-dev ARGO_NAMESPACE.
+	if first.namespace != "argocd" {
+		t.Fatalf("unexpected namespace: %q", first.namespace)
+	}
+	second, err := service.resolveAccess(context.Background(), "aws", "arn:cluster/prod", "prod")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first != second {
+	if first.client != second.client {
 		t.Fatal("expected the resolved client to be cached across calls")
+	}
+	if second.namespace != "argocd" {
+		t.Fatalf("unexpected cached namespace: %q", second.namespace)
 	}
 	if repository.kubespinLookups["prod"] != 1 {
 		t.Fatalf("expected exactly one database lookup, got %d", repository.kubespinLookups["prod"])
@@ -1478,11 +1510,43 @@ func TestResolveClientFallsBackToKubespinAndCachesTheClient(t *testing.T) {
 	}
 }
 
-func TestResolveClientReturnsErrorWhenNothingIsConfigured(t *testing.T) {
+// A target that names its own namespace overrides ARGO_NAMESPACE, and the
+// namespace reaches the Application that is created: Argo CD rejects an
+// Application whose metadata.namespace is not its own control-plane namespace,
+// which is what a cluster provisioned with upstream Argo CD ("argocd") hits
+// against a configuration written for a local Helm install ("argo-cd").
+func TestSyncCreatesTheApplicationInTheTargetsOwnArgoNamespace(t *testing.T) {
+	target := model.ApplicationDeployment{
+		ID: "target-1", SourceID: "aws", ProviderResourceID: "arn:cluster/prod",
+		ClusterName: "demo", ArgoApplication: "payments-dev-us-east-1",
+	}
+	key := targetKey(target.SourceID, target.ProviderResourceID)
+	client := &fakeArgoClient{}
+	service := &Service{
+		store: &fakeRepository{record: model.ApplicationOnboarding{
+			ID: "onboarding-1", Targets: []model.ApplicationDeployment{target},
+		}},
+		config: config.OnboardingConfig{
+			ArgoNamespace: "argo-cd", KubespinNamespace: "argocd",
+			RequestTimeout: time.Second,
+		},
+		clients:     map[string]ArgoClient{key: client},
+		linkTargets: map[string]config.ArgoTarget{key: {ArgoNamespace: "argocd"}},
+	}
+
+	if _, err := service.Sync(context.Background(), "onboarding-1"); err != nil {
+		t.Fatal(err)
+	}
+	if client.created.ArgoNamespace != "argocd" {
+		t.Fatalf("unexpected application namespace: %q", client.created.ArgoNamespace)
+	}
+}
+
+func TestResolveAccessReturnsErrorWhenNothingIsConfigured(t *testing.T) {
 	repository := &fakeRepository{}
 	service := &Service{store: repository, clients: map[string]ArgoClient{}}
 
-	if _, err := service.resolveClient(context.Background(), "aws", "arn:cluster/prod", "prod"); err == nil {
+	if _, err := service.resolveAccess(context.Background(), "aws", "arn:cluster/prod", "prod"); err == nil {
 		t.Fatal("expected an error when neither a static target nor a kubespin entry exists")
 	}
 }

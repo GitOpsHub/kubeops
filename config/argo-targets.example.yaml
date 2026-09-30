@@ -3,6 +3,9 @@ targets:
     provider_resource_id: arn:aws:eks:us-east-1:123456789012:cluster/prod-us-east
     server_url: https://argo-cd.prod-us-east.example.com
     token_env: ARGO_PROD_US_EAST_TOKEN
+    # Optional namespace of this cluster's Argo CD control plane, when it is not
+    # the one ARGO_NAMESPACE names. Applications are created in this namespace.
+    # argo_namespace: argocd
     # Optional PEM certificate bundle for a private certificate authority.
     # ca_file: /etc/kubeops/certs/prod-us-east-ca.pem
     # Optional UI access. When configured, all three fields are required.

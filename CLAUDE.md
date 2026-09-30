@@ -40,6 +40,14 @@ cluster token, or cloud credential is ever stored in the database. DB secrets
 today: the encrypted Argo CD UI password (`argo_cluster_access`), and the
 encrypted Argo API token/UI password in `argo_targets`.
 
+The namespace Argo CD itself runs in is a property of each installation, not a
+global setting: `ARGO_NAMESPACE` is only the default, a YAML/DB target may
+override it with `argo_namespace`, and clusters whose access comes from
+kubespin use `KUBESPIN_ARGO_NAMESPACE` (`argocd`) because
+`cluster_argocd_details` records no namespace. Argo CD rejects an Application
+created in any other namespace, so this must travel with the client
+(`onboarding.argoAccess`) rather than be read from config at the call site.
+
 **`backend/internal/cloudauth` owns all cloud credentials.** Provider code calls
 `AWSConfig`, `GCPClientOptions`, or `AzureCredential`; it never builds an SDK
 credential directly. Deployed environments federate a short-lived OIDC token into

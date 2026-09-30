@@ -168,7 +168,7 @@ type sessionArgoClient struct {
 // NewSessionArgoClient builds an ArgoClient for a server that authenticates by
 // username/password rather than a static API token. The plaintext password is
 // held only on this struct for the process lifetime of the cached client (see
-// onboarding.Service.resolveClient); it is never logged and never placed on a
+// onboarding.Service.resolveAccess); it is never logged and never placed on a
 // struct with a JSON marshaler.
 //
 // kubespin's Argo CD servers present Argo CD's own self-signed default
