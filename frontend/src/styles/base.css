@@ -184,9 +184,12 @@ pre,
   color: var(--text-subtle);
 }
 
-/* A labelled control: caption above, control below. */
+/* A labelled control: caption above, control below. Packed to the top so a
+   field in a grid row is not stretched to match a taller neighbour (one with
+   a hint), which would inflate its control. */
 .field {
   display: grid;
+  align-content: start;
   gap: 6px;
   min-width: 0;
 }
