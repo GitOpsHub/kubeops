@@ -242,7 +242,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 		if cluster.RemovedAt != nil {
 			return model.ApplicationOnboarding{}, ValidationError{Message: "removed clusters cannot receive applications"}
 		}
-		if _, err := s.resolveClient(ctx, cluster.SourceID, cluster.ProviderResourceID, cluster.Name); err != nil {
+		if _, err := s.resolveAccess(ctx, cluster.SourceID, cluster.ProviderResourceID, cluster.Name); err != nil {
 			return model.ApplicationOnboarding{}, ValidationError{Message: argoTargetErrorMessage(cluster.Name, err)}
 		}
 	}
@@ -324,7 +324,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 			// Already validated above; a cache hit unless the target's Argo CD
 			// session expired between validation and this call, in which case
 			// sessionArgoClient's own relogin handles it transparently.
-			client, clientErr := s.resolveClient(callCtx, target.SourceID, target.ProviderResourceID, target.ClusterName)
+			access, clientErr := s.resolveAccess(callCtx, target.SourceID, target.ProviderResourceID, target.ClusterName)
 			if clientErr != nil {
 				if updateErr := s.store.UpdateApplicationDeployment(
 					context.WithoutCancel(ctx), target.ID, "failed",
@@ -335,7 +335,9 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 				return
 			}
 			target.HasRegionValues = valuesRepository.RegionValues[target.Region]
-			state, createErr := client.CreateApplication(callCtx, s.applicationSpec(onboarding, target))
+			state, createErr := access.client.CreateApplication(
+				callCtx, s.applicationSpec(onboarding, target, access.namespace),
+			)
 			status, message := stateToDeployment(state)
 			if createErr != nil {
 				// The client only ever sees the sanitised message, so the real
@@ -374,24 +376,24 @@ func (s *Service) target(
 	ctx context.Context,
 	onboardingID string,
 	targetID string,
-) (model.ApplicationDeployment, ArgoClient, error) {
+) (model.ApplicationDeployment, argoAccess, error) {
 	record, err := s.store.GetApplicationOnboarding(ctx, onboardingID)
 	if err != nil {
-		return model.ApplicationDeployment{}, nil, err
+		return model.ApplicationDeployment{}, argoAccess{}, err
 	}
 	for _, target := range record.Targets {
 		if target.ID != targetID {
 			continue
 		}
-		client, err := s.resolveClient(ctx, target.SourceID, target.ProviderResourceID, target.ClusterName)
+		access, err := s.resolveAccess(ctx, target.SourceID, target.ProviderResourceID, target.ClusterName)
 		if err != nil {
-			return model.ApplicationDeployment{}, nil, ValidationError{
+			return model.ApplicationDeployment{}, argoAccess{}, ValidationError{
 				Message: argoTargetErrorMessage(target.ClusterName, err),
 			}
 		}
-		return target, client, nil
+		return target, access, nil
 	}
-	return model.ApplicationDeployment{}, nil, ErrTargetNotFound
+	return model.ApplicationDeployment{}, argoAccess{}, ErrTargetNotFound
 }
 
 // errArgoTargetUnavailable reports that a cluster has neither a statically
@@ -414,38 +416,64 @@ func argoTargetErrorMessage(clusterName string, err error) string {
 	return fmt.Sprintf("cluster %q has an Argo CD target configured, but it could not be reached", clusterName)
 }
 
-// resolveClient returns the Argo CD client for a cluster. A statically
-// configured target (config.ArgoTarget) always wins and is never queried
-// against the database. Otherwise it falls back to kubespin's
-// cluster_argocd_details, matched by cluster name, and caches the resulting
-// client for the process lifetime — clusters remain discovered exclusively
-// through the ordinary cloud-provider sync; kubespin only supplies Argo CD
-// access for a cluster kubeops already knows about.
-func (s *Service) resolveClient(
+// argoAccess is one cluster's Argo CD: the client, and the namespace that
+// installation's control plane runs in. The namespace travels with the client
+// because it belongs to the installation rather than to kubeops — the local-dev
+// scripts install the chart into "argo-cd" while kubespin provisions upstream
+// Argo CD in "argocd" — and Argo CD rejects an Application created in any
+// namespace but its own unless apps-in-any-namespace is enabled.
+type argoAccess struct {
+	client    ArgoClient
+	namespace string
+}
+
+// resolveAccess returns the Argo CD client for a cluster and the namespace to
+// address it in. A statically configured target (config.ArgoTarget) always wins
+// and is never queried against the database. Otherwise it falls back to
+// kubespin's cluster_argocd_details, matched by cluster name, and caches the
+// resulting client for the process lifetime — clusters remain discovered
+// exclusively through the ordinary cloud-provider sync; kubespin only supplies
+// Argo CD access for a cluster kubeops already knows about.
+func (s *Service) resolveAccess(
 	ctx context.Context,
 	sourceID, providerResourceID, clusterName string,
-) (ArgoClient, error) {
+) (argoAccess, error) {
 	key := targetKey(sourceID, providerResourceID)
 	if client, ok := s.clients[key]; ok {
-		return client, nil
+		return argoAccess{client: client, namespace: s.staticNamespace(key)}, nil
 	}
 	if cached, ok := s.dynamicClients.Load(key); ok {
-		return cached.(ArgoClient), nil
+		return argoAccess{
+			client:    cached.(ArgoClient),
+			namespace: s.config.KubespinNamespace,
+		}, nil
 	}
 
 	details, err := s.store.GetKubespinArgoDetails(ctx, clusterName)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errArgoTargetUnavailable
+		return argoAccess{}, errArgoTargetUnavailable
 	}
 	if err != nil {
-		return nil, fmt.Errorf("look up kubespin Argo CD access: %w", err)
+		return argoAccess{}, fmt.Errorf("look up kubespin Argo CD access: %w", err)
 	}
 	client, err := NewSessionArgoClient(ctx, details.Endpoint, details.Username, details.Password, s.config)
 	if err != nil {
-		return nil, fmt.Errorf("connect to Argo CD for cluster %q: %w", clusterName, err)
+		return argoAccess{}, fmt.Errorf("connect to Argo CD for cluster %q: %w", clusterName, err)
 	}
 	actual, _ := s.dynamicClients.LoadOrStore(key, client)
-	return actual.(ArgoClient), nil
+	return argoAccess{
+		client:    actual.(ArgoClient),
+		namespace: s.config.KubespinNamespace,
+	}, nil
+}
+
+// staticNamespace is the namespace a configured target names for its own Argo
+// CD, falling back to ARGO_NAMESPACE for the targets that share one.
+func (s *Service) staticNamespace(key string) string {
+	if namespace := strings.TrimSpace(s.linkTargets[key].ArgoNamespace); namespace != "" {
+		return namespace
+	}
+	return s.config.ArgoNamespace
 }
 
 // Resources lists the Kubernetes objects Argo CD manages for one deployment.
@@ -454,16 +482,16 @@ func (s *Service) Resources(
 	onboardingID string,
 	targetID string,
 ) ([]ResourceNode, error) {
-	target, client, err := s.target(ctx, onboardingID, targetID)
+	target, access, err := s.target(ctx, onboardingID, targetID)
 	if err != nil {
 		return nil, err
 	}
 	callCtx, cancel := context.WithTimeout(ctx, s.config.RequestTimeout)
 	defer cancel()
-	nodes, err := client.ApplicationResources(
-		callCtx, target.ArgoApplication, s.config.ArgoNamespace,
+	nodes, err := access.client.ApplicationResources(
+		callCtx, target.ArgoApplication, access.namespace,
 	)
-	return nodes, annotateApplicationNotFound(err, target.ArgoApplication, s.config.ArgoNamespace)
+	return nodes, annotateApplicationNotFound(err, target.ArgoApplication, access.namespace)
 }
 
 // annotateApplicationNotFound names the application and namespace that were
@@ -489,13 +517,13 @@ func (s *Service) ResourceManifest(
 	targetID string,
 	ref ResourceRef,
 ) (string, error) {
-	target, client, err := s.target(ctx, onboardingID, targetID)
+	target, access, err := s.target(ctx, onboardingID, targetID)
 	if err != nil {
 		return "", err
 	}
 	callCtx, cancel := context.WithTimeout(ctx, s.config.RequestTimeout)
 	defer cancel()
-	return client.ResourceManifest(callCtx, target.ArgoApplication, s.config.ArgoNamespace, ref)
+	return access.client.ResourceManifest(callCtx, target.ArgoApplication, access.namespace, ref)
 }
 
 type ResourceManifestComparison struct {
@@ -511,22 +539,22 @@ func (s *Service) ResourceManifests(
 	targetID string,
 	ref ResourceRef,
 ) (ResourceManifestComparison, error) {
-	target, client, err := s.target(ctx, onboardingID, targetID)
+	target, access, err := s.target(ctx, onboardingID, targetID)
 	if err != nil {
 		return ResourceManifestComparison{}, err
 	}
 	callCtx, cancel := context.WithTimeout(ctx, s.config.RequestTimeout)
 	defer cancel()
-	live, err := client.ResourceManifest(
-		callCtx, target.ArgoApplication, s.config.ArgoNamespace, ref,
+	live, err := access.client.ResourceManifest(
+		callCtx, target.ArgoApplication, access.namespace, ref,
 	)
 	if err != nil {
 		return ResourceManifestComparison{}, annotateApplicationNotFound(
-			err, target.ArgoApplication, s.config.ArgoNamespace,
+			err, target.ArgoApplication, access.namespace,
 		)
 	}
-	desired, err := client.DesiredResourceManifest(
-		callCtx, target.ArgoApplication, s.config.ArgoNamespace, ref,
+	desired, err := access.client.DesiredResourceManifest(
+		callCtx, target.ArgoApplication, access.namespace, ref,
 	)
 	if err != nil && !errors.Is(err, ErrResourceNotFound) {
 		return ResourceManifestComparison{}, err
@@ -545,14 +573,14 @@ func (s *Service) DeleteResource(
 	targetID string,
 	ref ResourceRef,
 ) error {
-	target, client, err := s.target(ctx, onboardingID, targetID)
+	target, access, err := s.target(ctx, onboardingID, targetID)
 	if err != nil {
 		return err
 	}
 	callCtx, cancel := context.WithTimeout(ctx, s.config.RequestTimeout)
 	defer cancel()
-	if err := client.DeleteResource(
-		callCtx, target.ArgoApplication, s.config.ArgoNamespace, ref,
+	if err := access.client.DeleteResource(
+		callCtx, target.ArgoApplication, access.namespace, ref,
 	); err != nil {
 		slog.Error("delete Argo CD managed resource",
 			"onboarding", onboardingID, "target", targetID,
@@ -648,21 +676,21 @@ func (s *Service) SyncWithOptions(
 	}
 	if err := s.forEachTarget(ctx, record, "sync", func(
 		callCtx context.Context,
-		client ArgoClient,
+		access argoAccess,
 		target model.ApplicationDeployment,
 	) (string, string, string, string) {
-		if _, createErr := client.CreateApplication(
-			callCtx, s.applicationSpec(record, target),
+		if _, createErr := access.client.CreateApplication(
+			callCtx, s.applicationSpec(record, target, access.namespace),
 		); createErr != nil && !errors.Is(createErr, ErrApplicationConflict) {
 			slog.Error("ensure Argo CD application",
 				"onboarding", record.ID, "target", target.ID,
 				"cluster", target.ClusterName, "application", target.ArgoApplication,
-				"error", createErr)
+				"argoNamespace", access.namespace, "error", createErr)
 			return "failed", "Unknown", "Unknown", safeCreateError(createErr)
 		}
 
-		state, syncErr := client.SyncApplication(
-			callCtx, target.ArgoApplication, s.config.ArgoNamespace, options,
+		state, syncErr := access.client.SyncApplication(
+			callCtx, target.ArgoApplication, access.namespace, options,
 		)
 		if syncErr != nil {
 			slog.Error("sync Argo CD application",
@@ -690,11 +718,11 @@ func (s *Service) Offboard(ctx context.Context, id string) (model.ApplicationOnb
 	}
 	if err := s.forEachTarget(ctx, record, "offboard", func(
 		callCtx context.Context,
-		client ArgoClient,
+		access argoAccess,
 		target model.ApplicationDeployment,
 	) (string, string, string, string) {
-		deleteErr := client.DeleteApplication(
-			callCtx, target.ArgoApplication, s.config.ArgoNamespace,
+		deleteErr := access.client.DeleteApplication(
+			callCtx, target.ArgoApplication, access.namespace,
 		)
 		if deleteErr != nil && !errors.Is(deleteErr, ErrApplicationNotFound) {
 			// A cluster deleted out from under its onboarding takes its Argo CD
@@ -744,7 +772,7 @@ func (s *Service) clusterRemoved(ctx context.Context, clusterID string) bool {
 
 type targetOperation func(
 	context.Context,
-	ArgoClient,
+	argoAccess,
 	model.ApplicationDeployment,
 ) (status, syncStatus, healthStatus, message string)
 
@@ -762,7 +790,7 @@ func (s *Service) forEachTarget(
 		go func() {
 			defer wait.Done()
 			defer s.recoverTarget(ctx, target, operation, errs)
-			client, err := s.resolveClient(ctx, target.SourceID, target.ProviderResourceID, target.ClusterName)
+			access, err := s.resolveAccess(ctx, target.SourceID, target.ProviderResourceID, target.ClusterName)
 			if err != nil {
 				if updateErr := s.store.UpdateApplicationDeployment(
 					context.WithoutCancel(ctx), target.ID, "failed",
@@ -774,7 +802,7 @@ func (s *Service) forEachTarget(
 				return
 			}
 			callCtx, cancel := context.WithTimeout(ctx, s.config.RequestTimeout)
-			status, syncStatus, healthStatus, message := run(callCtx, client, target)
+			status, syncStatus, healthStatus, message := run(callCtx, access, target)
 			cancel()
 			if updateErr := s.store.UpdateApplicationDeployment(
 				context.WithoutCancel(ctx), target.ID,
@@ -828,6 +856,7 @@ func (s *Service) recoverTarget(
 func (s *Service) applicationSpec(
 	record model.ApplicationOnboarding,
 	target model.ApplicationDeployment,
+	argoNamespace string,
 ) ApplicationSpec {
 	cloneURL := record.ValuesRepositoryCloneURL
 	if cloneURL == "" {
@@ -844,7 +873,7 @@ func (s *Service) applicationSpec(
 		Project: s.config.ArgoProject, RepoURL: record.ChartRepoURL,
 		Chart: record.ChartName, Revision: record.ChartRevision,
 		ValuesRepoURL: cloneURL, ValuesRevision: record.ValuesRevision,
-		Environment: environment, Region: region, ArgoNamespace: s.config.ArgoNamespace,
+		Environment: environment, Region: region, ArgoNamespace: argoNamespace,
 	}
 }
 
@@ -1045,7 +1074,7 @@ func (s *Service) reconcileTarget(ctx context.Context, target model.ApplicationD
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	client, err := s.resolveClient(callCtx, target.SourceID, target.ProviderResourceID, target.ClusterName)
+	access, err := s.resolveAccess(callCtx, target.SourceID, target.ProviderResourceID, target.ClusterName)
 	if errors.Is(err, errArgoTargetUnavailable) {
 		if err := s.store.UpdateApplicationDeployment(
 			ctx, target.ID, "failed", target.SyncStatus, target.HealthStatus,
@@ -1061,7 +1090,7 @@ func (s *Service) reconcileTarget(ctx context.Context, target model.ApplicationD
 		return
 	}
 
-	state, getErr := client.GetApplication(callCtx, target.ArgoApplication, s.config.ArgoNamespace)
+	state, getErr := access.client.GetApplication(callCtx, target.ArgoApplication, access.namespace)
 	status, message := stateToDeployment(state)
 	switch {
 	case errors.Is(getErr, ErrApplicationNotFound):
@@ -1225,6 +1254,15 @@ func safeCreateError(err error) string {
 	}
 	if reach := unreachableError(err); reach != "" {
 		return reach
+	}
+	// The status is the whole diagnosis for a rejected create — 403 is the
+	// namespace or project Argo CD will not accept, 400 a malformed spec — and
+	// this message is the only trace a target keeps of the failure. The status
+	// alone carries no request detail, unlike the response body the client
+	// deliberately discards.
+	var apiErr argoAPIError
+	if errors.As(err, &apiErr) {
+		return fmt.Sprintf("Argo CD rejected the application (HTTP %d)", apiErr.status)
 	}
 	return "Argo CD did not accept the application"
 }

@@ -62,7 +62,7 @@ func (s *Service) dryRun(ctx context.Context, record model.ApplicationOnboarding
 					fail()
 				}
 			}()
-			client, err := s.resolveClient(ctx, target.SourceID, target.ProviderResourceID, target.ClusterName)
+			access, err := s.resolveAccess(ctx, target.SourceID, target.ProviderResourceID, target.ClusterName)
 			if err != nil {
 				slog.Error("resolve Argo CD client for dry run",
 					"onboarding", record.ID, "target", target.ID, "error", err)
@@ -71,8 +71,8 @@ func (s *Service) dryRun(ctx context.Context, record model.ApplicationOnboarding
 			}
 			callCtx, cancel := context.WithTimeout(ctx, s.config.RequestTimeout)
 			defer cancel()
-			if _, err := client.SyncApplication(
-				callCtx, target.ArgoApplication, s.config.ArgoNamespace, options,
+			if _, err := access.client.SyncApplication(
+				callCtx, target.ArgoApplication, access.namespace, options,
 			); err != nil {
 				slog.Error("dry-run sync Argo CD application",
 					"onboarding", record.ID, "target", target.ID,
@@ -90,13 +90,13 @@ func (s *Service) dryRun(ctx context.Context, record model.ApplicationOnboarding
 
 // TerminateOperation stops the sync running on one target.
 func (s *Service) TerminateOperation(ctx context.Context, onboardingID, targetID string) error {
-	target, client, err := s.target(ctx, onboardingID, targetID)
+	target, access, err := s.target(ctx, onboardingID, targetID)
 	if err != nil {
 		return err
 	}
 	callCtx, cancel := context.WithTimeout(ctx, s.config.RequestTimeout)
 	defer cancel()
-	if err := client.TerminateOperation(callCtx, target.ArgoApplication, s.config.ArgoNamespace); err != nil {
+	if err := access.client.TerminateOperation(callCtx, target.ArgoApplication, access.namespace); err != nil {
 		return err
 	}
 	slog.Info("terminated Argo CD operation", "onboarding", onboardingID, "target", targetID)
