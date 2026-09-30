@@ -670,9 +670,20 @@ func (api *API) writeResourceError(w http.ResponseWriter, r *http.Request, err e
 		writeError(w, http.StatusNotFound, "application onboarding not found")
 	case errors.Is(err, onboarding.ErrTargetNotFound):
 		writeError(w, http.StatusNotFound, "deployment target not found")
-	case errors.Is(err, onboarding.ErrResourceNotFound),
-		errors.Is(err, onboarding.ErrApplicationNotFound):
+	case errors.Is(err, onboarding.ErrResourceNotFound):
+		slog.Warn(action, "error", err,
+			"onboarding", r.PathValue("id"), "target", r.PathValue("targetId"))
 		writeError(w, http.StatusNotFound, "resource not found in Argo CD")
+	case errors.Is(err, onboarding.ErrApplicationNotFound):
+		// A missing application is not a missing resource: the deployment target
+		// points at an application Argo CD will not show us, so every resource
+		// read fails, not just the one that was asked for. Both branches log
+		// because nothing else on the not-found path does — a 404 here used to
+		// leave no trace at all in the deployment logs.
+		slog.Warn(action, "error", err,
+			"onboarding", r.PathValue("id"), "target", r.PathValue("targetId"))
+		writeError(w, http.StatusNotFound,
+			"Argo CD has no application for this deployment target")
 	case errors.Is(err, onboarding.ErrPodLogsForbidden):
 		writeError(w, http.StatusForbidden, "Pod log access is not configured in Argo CD")
 	case errors.As(err, &validationError):

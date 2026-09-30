@@ -467,6 +467,57 @@ func TestResourceManifestsAllowsControllerGeneratedResourceWithoutDesiredObject(
 	}
 }
 
+// A missing Argo CD application is reported by identity so a deployment log
+// says which application and namespace were looked up, while still matching
+// ErrApplicationNotFound for the status mapping in the HTTP layer.
+func TestResourceReadsNameTheMissingApplication(t *testing.T) {
+	target := model.ApplicationDeployment{
+		ID: "target-1", SourceID: "gcp", ProviderResourceID: "projects/test/clusters/gke",
+		ArgoApplication: "nginx",
+	}
+	newService := func() *Service {
+		return &Service{
+			store: &fakeRepository{record: model.ApplicationOnboarding{
+				ID: "onboarding-1", Targets: []model.ApplicationDeployment{target},
+			}},
+			config: config.OnboardingConfig{
+				ArgoNamespace: "argo-cd", RequestTimeout: time.Second,
+			},
+			clients: map[string]ArgoClient{
+				targetKey(target.SourceID, target.ProviderResourceID): &fakeArgoClient{
+					resourceErr: ErrApplicationNotFound,
+				},
+			},
+		}
+	}
+	ref := ResourceRef{Version: "v1", Kind: "Pod", Namespace: "nginx", Name: "nginx-123"}
+
+	for _, test := range []struct {
+		name string
+		call func(*Service) error
+	}{
+		{name: "resource tree", call: func(s *Service) error {
+			_, err := s.Resources(context.Background(), "onboarding-1", target.ID)
+			return err
+		}},
+		{name: "resource manifests", call: func(s *Service) error {
+			_, err := s.ResourceManifests(context.Background(), "onboarding-1", target.ID, ref)
+			return err
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.call(newService())
+			if !errors.Is(err, ErrApplicationNotFound) {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !strings.Contains(err.Error(), `"nginx"`) ||
+				!strings.Contains(err.Error(), `"argo-cd"`) {
+				t.Fatalf("error names neither application nor namespace: %v", err)
+			}
+		})
+	}
+}
+
 func TestDefaultsIncludeValuesRepositoryCoordinates(t *testing.T) {
 	service := &Service{config: config.OnboardingConfig{
 		HelmRepoURL:      "oci://ghcr.io/gitopshub/charts",
