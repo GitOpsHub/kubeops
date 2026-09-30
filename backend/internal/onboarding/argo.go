@@ -89,7 +89,22 @@ type NetworkExposure struct {
 	Ports     []string `json:"ports,omitempty"`
 }
 
+// RepositoryCredentials is what an Argo CD instance needs to read the private
+// sources of every onboarded application: a credential template matching each
+// values repository by URL prefix, and the OCI registry holding the chart.
+// An empty GitURLPrefix or ChartRegistry skips that entry.
+type RepositoryCredentials struct {
+	GitURLPrefix  string
+	ChartRegistry string
+	Username      string
+	Password      string
+}
+
 type ArgoClient interface {
+	// EnsureRepositoryCredentials is part of the interface rather than an
+	// optional extension so that no client can silently skip it: without it a
+	// freshly provisioned Argo CD rejects every application with a bare 400.
+	EnsureRepositoryCredentials(context.Context, RepositoryCredentials) error
 	CreateApplication(context.Context, ApplicationSpec) (ApplicationState, error)
 	GetApplication(context.Context, string, string) (ApplicationState, error)
 	SyncApplication(context.Context, string, string, SyncOptions) (ApplicationState, error)
@@ -340,6 +355,65 @@ func (t *sessionRoundTripper) RoundTrip(request *http.Request) (*http.Response, 
 	}
 	retry.Header.Set("Authorization", "Bearer "+token)
 	return base.RoundTrip(retry)
+}
+
+// EnsureRepositoryCredentials upserts the credentials rather than creating them
+// once, so a rotated token replaces the old one and an Argo CD that was
+// reinstalled or had its secrets wiped is repaired on the next call.
+func (c *HTTPArgoClient) EnsureRepositoryCredentials(
+	ctx context.Context,
+	creds RepositoryCredentials,
+) error {
+	if creds.GitURLPrefix != "" {
+		if err := c.postUpsert(ctx, "/api/v1/repocreds", map[string]any{
+			"url":      creds.GitURLPrefix,
+			"type":     "git",
+			"username": creds.Username,
+			"password": creds.Password,
+		}); err != nil {
+			return fmt.Errorf("register values repository credentials: %w", err)
+		}
+	}
+	if creds.ChartRegistry != "" {
+		if err := c.postUpsert(ctx, "/api/v1/repositories", map[string]any{
+			"repo":      creds.ChartRegistry,
+			"type":      "helm",
+			"name":      "kubeops-charts",
+			"enableOCI": true,
+			"username":  creds.Username,
+			"password":  creds.Password,
+		}); err != nil {
+			return fmt.Errorf("register chart repository: %w", err)
+		}
+	}
+	return nil
+}
+
+// postUpsert reports only the status: the request carries a credential and
+// Argo CD error bodies can echo it back.
+func (c *HTTPArgoClient) postUpsert(ctx context.Context, path string, payload map[string]any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	request, err := http.NewRequestWithContext(
+		ctx, http.MethodPost, c.serverURL+path+"?upsert=true", bytes.NewReader(body),
+	)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", c.authorization())
+	request.Header.Set("Content-Type", "application/json")
+	response, err := c.client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return argoAPIError{status: response.StatusCode}
+	}
+	return nil
 }
 
 func (c *HTTPArgoClient) CreateApplication(

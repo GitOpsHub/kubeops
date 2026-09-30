@@ -38,7 +38,10 @@ HTTP endpoint for either table — the API has no authentication. The syncer
 still just polls whatever providers this merged set names; no kubeconfig,
 cluster token, or cloud credential is ever stored in the database. DB secrets
 today: the encrypted Argo CD UI password (`argo_cluster_access`), and the
-encrypted Argo API token/UI password in `argo_targets`.
+encrypted Argo API token/UI password in `argo_targets`. The one credential
+kubeops hands out is `GITHUB_TOKEN`: it is upserted into each target's Argo CD
+before every create/sync so Argo CD can read the private chart and values
+repositories, and only for `ghcr.io` charts and the configured GitHub org.
 
 The namespace Argo CD itself runs in is a property of each installation, not a
 global setting: `ARGO_NAMESPACE` is only the default, a YAML/DB target may

@@ -238,6 +238,9 @@ type fakeArgoClient struct {
 	syncOptions  SyncOptions
 	terminated   string
 	terminateErr error
+	// Repository credentials registered before each create.
+	repoCreds    []RepositoryCredentials
+	repoCredsErr error
 }
 
 type fakeValuesRepositoryManager struct {
@@ -309,6 +312,16 @@ func (f *fakeValuesRepositoryManager) UpdateReplicas(
 ) (ValuesUpdate, error) {
 	f.replicas = replicas
 	return f.update, f.err
+}
+
+func (f *fakeArgoClient) EnsureRepositoryCredentials(
+	_ context.Context,
+	creds RepositoryCredentials,
+) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.repoCreds = append(f.repoCreds, creds)
+	return f.repoCredsErr
 }
 
 func (f *fakeArgoClient) CreateApplication(
@@ -1698,5 +1711,133 @@ func TestPanickingTargetOperationFailsOnlyThatTarget(t *testing.T) {
 	if update := repository.updates[target.ID]; update.Status != "failed" ||
 		update.Message != "internal error while contacting Argo CD" {
 		t.Fatalf("panic was not recorded as the target's failure: %#v", update)
+	}
+}
+
+func TestRepositoryCredentialsOnlyGoToGitHubHosts(t *testing.T) {
+	tests := []struct {
+		name      string
+		token     string
+		chartRepo string
+		want      RepositoryCredentials
+		wantOK    bool
+	}{
+		{
+			name: "no token", chartRepo: "ghcr.io/gitopshub/charts",
+		},
+		{
+			name: "ghcr chart", token: "gh-token", chartRepo: "ghcr.io/gitopshub/charts",
+			want: RepositoryCredentials{
+				GitURLPrefix: "https://github.com/GitOpsHub/", ChartRegistry: "ghcr.io/gitopshub/charts",
+				Username: "x-access-token", Password: "gh-token",
+			},
+			wantOK: true,
+		},
+		{
+			name: "ghcr chart with oci scheme", token: "gh-token", chartRepo: "oci://GHCR.io/gitopshub/charts",
+			want: RepositoryCredentials{
+				GitURLPrefix: "https://github.com/GitOpsHub/", ChartRegistry: "oci://GHCR.io/gitopshub/charts",
+				Username: "x-access-token", Password: "gh-token",
+			},
+			wantOK: true,
+		},
+		{
+			// The GitHub token must never be offered to a registry it is not for.
+			name: "other registry", token: "gh-token", chartRepo: "registry.example.test/charts",
+			want: RepositoryCredentials{
+				GitURLPrefix: "https://github.com/GitOpsHub/", Username: "x-access-token", Password: "gh-token",
+			},
+			wantOK: true,
+		},
+		{
+			name: "lookalike registry", token: "gh-token", chartRepo: "ghcr.io.example.test/charts",
+			want: RepositoryCredentials{
+				GitURLPrefix: "https://github.com/GitOpsHub/", Username: "x-access-token", Password: "gh-token",
+			},
+			wantOK: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := &Service{config: config.OnboardingConfig{
+				GitHubToken: tt.token, GitHubWebURL: "https://github.com", GitHubOrg: "GitOpsHub",
+			}}
+			got, ok := service.repositoryCredentials(model.ApplicationOnboarding{ChartRepoURL: tt.chartRepo})
+			if ok != tt.wantOK || got != tt.want {
+				t.Fatalf("got %#v, %v; want %#v, %v", got, ok, tt.want, tt.wantOK)
+			}
+		})
+	}
+}
+
+// A freshly provisioned Argo CD holds no credentials for the private chart and
+// values repositories, and rejects every application with a bare 400 until it
+// does. Sync must register them first, and say so when that is refused too.
+func TestSyncRegistersRepositoryCredentialsBeforeCreating(t *testing.T) {
+	tests := []struct {
+		name        string
+		credsErr    error
+		createErr   error
+		wantStatus  string
+		wantMessage string
+	}{
+		{
+			name:       "registered",
+			wantStatus: "healthy",
+		},
+		{
+			// Credentials an operator added by hand still let the create through.
+			name: "registration refused but create succeeds", credsErr: argoAPIError{status: 403},
+			wantStatus: "healthy",
+		},
+		{
+			name: "registration and create refused", credsErr: argoAPIError{status: 403},
+			createErr:   argoAPIError{status: 400},
+			wantStatus:  "failed",
+			wantMessage: "Argo CD rejected the application (HTTP 400); registering its repository credentials also failed (HTTP 403)",
+		},
+		{
+			name: "create refused after registration", createErr: argoAPIError{status: 400},
+			wantStatus:  "failed",
+			wantMessage: "Argo CD rejected the application (HTTP 400)",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target := model.ApplicationDeployment{
+				ID: "target-1", SourceID: "aws", ProviderResourceID: "arn:cluster/prod",
+				ClusterName: "demo", ArgoApplication: "payments-dev-us-east-1",
+			}
+			key := targetKey(target.SourceID, target.ProviderResourceID)
+			repository := &fakeRepository{record: model.ApplicationOnboarding{
+				ID: "onboarding-1", ChartRepoURL: "ghcr.io/gitopshub/charts",
+				Targets: []model.ApplicationDeployment{target},
+			}}
+			client := &fakeArgoClient{
+				state:        ApplicationState{SyncStatus: "Synced", HealthStatus: "Healthy"},
+				repoCredsErr: tt.credsErr,
+				createErr:    tt.createErr,
+			}
+			service := &Service{
+				store: repository,
+				config: config.OnboardingConfig{
+					ArgoNamespace: "argo-cd", RequestTimeout: time.Second,
+					GitHubToken: "gh-token", GitHubWebURL: "https://github.com", GitHubOrg: "GitOpsHub",
+				},
+				clients: map[string]ArgoClient{key: client},
+			}
+
+			if _, err := service.Sync(context.Background(), "onboarding-1"); err != nil {
+				t.Fatal(err)
+			}
+			if len(client.repoCreds) != 1 || client.repoCreds[0].ChartRegistry != "ghcr.io/gitopshub/charts" ||
+				client.repoCreds[0].GitURLPrefix != "https://github.com/GitOpsHub/" {
+				t.Fatalf("unexpected registrations: %#v", client.repoCreds)
+			}
+			got := repository.updates["target-1"]
+			if got.Status != tt.wantStatus || got.Message != tt.wantMessage {
+				t.Fatalf("got %q %q; want %q %q", got.Status, got.Message, tt.wantStatus, tt.wantMessage)
+			}
+		})
 	}
 }
