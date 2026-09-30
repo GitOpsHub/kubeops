@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -1067,13 +1068,22 @@ func TestDeleteApplicationResourceRequiresFullReference(t *testing.T) {
 
 func TestApplicationResourceErrorsMapToStatus(t *testing.T) {
 	for _, test := range []struct {
-		name string
-		err  error
-		want int
+		name             string
+		err              error
+		want             int
+		wantBodyExcludes string
 	}{
 		{name: "missing onboarding", err: pgx.ErrNoRows, want: http.StatusNotFound},
 		{name: "missing target", err: onboarding.ErrTargetNotFound, want: http.StatusNotFound},
 		{name: "missing resource", err: onboarding.ErrResourceNotFound, want: http.StatusNotFound},
+		{
+			name: "missing application",
+			err:  fmt.Errorf("application %q: %w", "nginx", onboarding.ErrApplicationNotFound),
+			want: http.StatusNotFound,
+			// The application name reaches the logs, never the client: the API has
+			// no authentication.
+			wantBodyExcludes: "nginx",
+		},
 		{name: "logs forbidden", err: onboarding.ErrPodLogsForbidden, want: http.StatusForbidden},
 		{name: "argo unreachable", err: errors.New("dial tcp: refused"), want: http.StatusBadGateway},
 	} {
@@ -1091,6 +1101,10 @@ func TestApplicationResourceErrorsMapToStatus(t *testing.T) {
 
 			if response.Code != test.want {
 				t.Fatalf("unexpected status: %d %s", response.Code, response.Body.String())
+			}
+			if test.wantBodyExcludes != "" &&
+				strings.Contains(response.Body.String(), test.wantBodyExcludes) {
+				t.Fatalf("internal detail reached the client: %s", response.Body.String())
 			}
 		})
 	}

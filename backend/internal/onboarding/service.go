@@ -460,7 +460,26 @@ func (s *Service) Resources(
 	}
 	callCtx, cancel := context.WithTimeout(ctx, s.config.RequestTimeout)
 	defer cancel()
-	return client.ApplicationResources(callCtx, target.ArgoApplication, s.config.ArgoNamespace)
+	nodes, err := client.ApplicationResources(
+		callCtx, target.ArgoApplication, s.config.ArgoNamespace,
+	)
+	return nodes, annotateApplicationNotFound(err, target.ArgoApplication, s.config.ArgoNamespace)
+}
+
+// annotateApplicationNotFound names the application and namespace that were
+// looked up. The HTTP layer never returns err to the caller, so this text is
+// for the deployment logs only, where it supplies the one detail that makes an
+// Argo CD 404 actionable: most often ARGO_NAMESPACE does not match the
+// namespace the application actually lives in, and the application name and
+// namespace are identifiers, not credentials.
+func annotateApplicationNotFound(err error, application, argoNamespace string) error {
+	if !errors.Is(err, ErrApplicationNotFound) {
+		return err
+	}
+	return fmt.Errorf(
+		"application %q not found in Argo CD namespace %q: %w",
+		application, argoNamespace, err,
+	)
 }
 
 // ResourceManifest returns the live manifest of a single resource.
@@ -502,7 +521,9 @@ func (s *Service) ResourceManifests(
 		callCtx, target.ArgoApplication, s.config.ArgoNamespace, ref,
 	)
 	if err != nil {
-		return ResourceManifestComparison{}, err
+		return ResourceManifestComparison{}, annotateApplicationNotFound(
+			err, target.ArgoApplication, s.config.ArgoNamespace,
+		)
 	}
 	desired, err := client.DesiredResourceManifest(
 		callCtx, target.ArgoApplication, s.config.ArgoNamespace, ref,
