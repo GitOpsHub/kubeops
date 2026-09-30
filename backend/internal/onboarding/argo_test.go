@@ -483,3 +483,99 @@ func TestSessionArgoClientRelogin(t *testing.T) {
 		})
 	}
 }
+
+func TestHTTPArgoClientEnsuresRepositoryCredentials(t *testing.T) {
+	tests := []struct {
+		name      string
+		creds     RepositoryCredentials
+		status    int
+		wantPaths []string
+		wantErr   string
+	}{
+		{
+			name: "values template and chart registry",
+			creds: RepositoryCredentials{
+				GitURLPrefix: "https://github.com/GitOpsHub/", ChartRegistry: "ghcr.io/gitopshub/charts",
+				Username: "x-access-token", Password: "gh-token",
+			},
+			status:    http.StatusOK,
+			wantPaths: []string{"/api/v1/repocreds", "/api/v1/repositories"},
+		},
+		{
+			name: "values template only",
+			creds: RepositoryCredentials{
+				GitURLPrefix: "https://github.com/GitOpsHub/", Username: "x-access-token", Password: "gh-token",
+			},
+			status:    http.StatusOK,
+			wantPaths: []string{"/api/v1/repocreds"},
+		},
+		{
+			// The body echoes the credential back; only the status may surface.
+			name: "rejected registration",
+			creds: RepositoryCredentials{
+				GitURLPrefix: "https://github.com/GitOpsHub/", Username: "x-access-token", Password: "gh-token",
+			},
+			status:    http.StatusForbidden,
+			wantPaths: []string{"/api/v1/repocreds"},
+			wantErr:   "register values repository credentials: Argo CD API returned status 403",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var paths []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Query().Get("upsert") != "true" {
+					t.Errorf("registration must be an upsert: %s %s", r.Method, r.URL)
+				}
+				if r.Header.Get("Authorization") != "Bearer test-token" {
+					t.Error("missing bearer token")
+				}
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				if body["password"] != "gh-token" || body["username"] != "x-access-token" {
+					t.Errorf("unexpected credential: %#v", body)
+				}
+				switch r.URL.Path {
+				case "/api/v1/repocreds":
+					if body["url"] != "https://github.com/GitOpsHub/" || body["type"] != "git" {
+						t.Errorf("unexpected credential template: %#v", body)
+					}
+				case "/api/v1/repositories":
+					if body["repo"] != "ghcr.io/gitopshub/charts" || body["type"] != "helm" ||
+						body["enableOCI"] != true {
+						t.Errorf("unexpected chart repository: %#v", body)
+					}
+				}
+				mu.Lock()
+				paths = append(paths, r.URL.Path)
+				mu.Unlock()
+				if tt.status != http.StatusOK {
+					http.Error(w, "password=gh-token", tt.status)
+					return
+				}
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			defer server.Close()
+			client, err := NewHTTPArgoClient(config.ArgoTarget{
+				SourceID: "aws", ServerURL: server.URL, Token: "test-token",
+			}, config.OnboardingConfig{RequestTimeout: time.Second})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			err = client.EnsureRepositoryCredentials(context.Background(), tt.creds)
+			if tt.wantErr == "" && err != nil {
+				t.Fatal(err)
+			}
+			if tt.wantErr != "" && (err == nil || err.Error() != tt.wantErr) {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if fmt.Sprint(paths) != fmt.Sprint(tt.wantPaths) {
+				t.Fatalf("unexpected requests: %v", paths)
+			}
+		})
+	}
+}

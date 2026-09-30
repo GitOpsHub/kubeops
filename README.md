@@ -281,9 +281,14 @@ this.
 GitHub Container Registry creates new packages as private by default. An
 organization package administrator must change the package visibility to
 **Public** once after its first publication if anonymous Argo CD access is
-required. Keeping it private is also supported, as long as each Argo CD
-instance has a repository credential for `ghcr.io/gitopshub/charts` so it can
-pull with credentials. Configure the fixed chart name, revision, and matching local defaults
+required. Keeping it private is also supported: before every create and sync,
+KubeOps upserts `GITHUB_TOKEN` into the target cluster's Argo CD as an OCI Helm
+repository for a `ghcr.io` chart and as a credential template for
+`<GITHUB_WEB_URL>/<GITHUB_ORG>/`, which covers every private values repository.
+Upserting on every call means a rotated token or a reinstalled Argo CD is
+repaired by the next sync. The token is never offered to any other registry, and
+without `GITHUB_TOKEN` (GitHub App mode) nothing is registered, so each Argo CD
+needs those credentials added by hand. Configure the fixed chart name, revision, and matching local defaults
 file in `.env`.
 
 `GLOBAL_HELM_REVISION` is the chart version new onboardings are pinned to; it is
@@ -292,8 +297,8 @@ this value changes what the next onboarding gets and leaves existing
 applications where they are. Move one of those by editing the chart revision on
 its Argo CD Application. Set `GITHUB_TOKEN`
 to a PAT authorized for the `GitOpsHub` organization and private repository
-creation (`repo` for a classic PAT; `delete_repo` is recommended for compensation
-cleanup). A GitHub App ID, installation ID, and private-key file remain supported
+creation (`repo` for a classic PAT, plus `read:packages` so Argo CD can pull a
+private chart; `delete_repo` is recommended for compensation cleanup). A GitHub App ID, installation ID, and private-key file remain supported
 as an alternative. KubeOps uses the credential to create a private
 `GitOpsHub/<application-name>` repository and commit its root `values.yaml`. Add one
 entry to `config/argo-targets.yaml` for each inventory cluster, keyed by its cloud

@@ -335,6 +335,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 				return
 			}
 			target.HasRegionValues = valuesRepository.RegionValues[target.Region]
+			credErr := s.ensureRepositoryCredentials(callCtx, access, onboarding, target)
 			state, createErr := access.client.CreateApplication(
 				callCtx, s.applicationSpec(onboarding, target, access.namespace),
 			)
@@ -347,7 +348,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Applicat
 					"cluster", target.ClusterName, "application", input.Name,
 					"error", createErr)
 				status = "failed"
-				message = safeCreateError(createErr)
+				message = createFailureMessage(createErr, credErr)
 			}
 			if updateErr := s.store.UpdateApplicationDeployment(
 				context.WithoutCancel(ctx),
@@ -679,6 +680,10 @@ func (s *Service) SyncWithOptions(
 		access argoAccess,
 		target model.ApplicationDeployment,
 	) (string, string, string, string) {
+		// Registered on every sync, not only at onboarding: an application that
+		// already exists still needs them to render, and this is how a cluster
+		// whose Argo CD was reinstalled recovers.
+		credErr := s.ensureRepositoryCredentials(callCtx, access, record, target)
 		if _, createErr := access.client.CreateApplication(
 			callCtx, s.applicationSpec(record, target, access.namespace),
 		); createErr != nil && !errors.Is(createErr, ErrApplicationConflict) {
@@ -686,7 +691,7 @@ func (s *Service) SyncWithOptions(
 				"onboarding", record.ID, "target", target.ID,
 				"cluster", target.ClusterName, "application", target.ArgoApplication,
 				"argoNamespace", access.namespace, "error", createErr)
-			return "failed", "Unknown", "Unknown", safeCreateError(createErr)
+			return "failed", "Unknown", "Unknown", createFailureMessage(createErr, credErr)
 		}
 
 		state, syncErr := access.client.SyncApplication(
@@ -1262,6 +1267,78 @@ func stateToDeployment(state ApplicationState) (string, string) {
 		return "healthy", ""
 	}
 	return "progressing", state.Message
+}
+
+// repositoryCredentials is what an Argo CD instance needs to read record's
+// private sources with GITHUB_TOKEN. The token is only ever offered to the
+// hosts it belongs to — the GitHub organisation's repositories and GitHub's
+// own container registry — so a chart moved to another registry never
+// receives it. ok is false when there is nothing to register.
+func (s *Service) repositoryCredentials(
+	record model.ApplicationOnboarding,
+) (RepositoryCredentials, bool) {
+	if s.config.GitHubToken == "" {
+		return RepositoryCredentials{}, false
+	}
+	creds := RepositoryCredentials{Username: "x-access-token", Password: s.config.GitHubToken}
+	if s.config.GitHubWebURL != "" && s.config.GitHubOrg != "" {
+		creds.GitURLPrefix = strings.TrimSuffix(s.config.GitHubWebURL, "/") + "/" + s.config.GitHubOrg + "/"
+	}
+	if registryHost(record.ChartRepoURL) == "ghcr.io" {
+		creds.ChartRegistry = record.ChartRepoURL
+	}
+	if creds.GitURLPrefix == "" && creds.ChartRegistry == "" {
+		return RepositoryCredentials{}, false
+	}
+	return creds, true
+}
+
+// registryHost is the lower-cased host of an OCI chart repository, which Argo
+// CD accepts both bare ("ghcr.io/org/charts") and with an oci:// scheme.
+func registryHost(repoURL string) string {
+	host := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(repoURL)), "oci://")
+	if i := strings.IndexByte(host, '/'); i >= 0 {
+		host = host[:i]
+	}
+	return host
+}
+
+// ensureRepositoryCredentials registers record's repository credentials with a
+// target's Argo CD. A failure is returned rather than aborting the create: the
+// credentials may already be there from an earlier call or an operator, and
+// only the create can tell.
+func (s *Service) ensureRepositoryCredentials(
+	ctx context.Context,
+	access argoAccess,
+	record model.ApplicationOnboarding,
+	target model.ApplicationDeployment,
+) error {
+	creds, ok := s.repositoryCredentials(record)
+	if !ok {
+		return nil
+	}
+	err := access.client.EnsureRepositoryCredentials(ctx, creds)
+	if err != nil {
+		slog.Warn("register Argo CD repository credentials",
+			"onboarding", record.ID, "target", target.ID,
+			"cluster", target.ClusterName, "error", err)
+	}
+	return err
+}
+
+// createFailureMessage is safeCreateError plus, when Argo CD also refused the
+// repository credentials, that refusal: a rejected create is most often Argo CD
+// being unable to read a private source, and the credential status says why.
+func createFailureMessage(createErr, credErr error) string {
+	message := safeCreateError(createErr)
+	var createAPIErr, credAPIErr argoAPIError
+	if !errors.As(createErr, &createAPIErr) || !errors.As(credErr, &credAPIErr) {
+		return message
+	}
+	return fmt.Sprintf(
+		"%s; registering its repository credentials also failed (HTTP %d)",
+		message, credAPIErr.status,
+	)
 }
 
 func safeCreateError(err error) string {
